@@ -49,8 +49,19 @@ func main() {
 	}
 	ingestCmd.Flags().Bool("fast", false, "Skip all indexers (incremental and metrics)")
 
+	apiCmd := &cobra.Command{
+		Use:   "api",
+		Short: "Start the HTTP API server",
+		Run: func(command *cobra.Command, args []string) {
+			port, _ := command.Flags().GetInt("port")
+			cmd.RunAPI(port)
+		},
+	}
+	apiCmd.Flags().Int("port", 8080, "Port to listen on")
+
 	root.AddCommand(
 		ingestCmd,
+		apiCmd,
 		&cobra.Command{
 			Use:   "cache",
 			Short: "Fill RPC cache at max speed (no ClickHouse)",

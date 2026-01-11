@@ -3,6 +3,7 @@ package evmindexer
 import (
 	"context"
 	"fmt"
+	"icicle/pkg/chwrapper"
 	"os"
 	"path/filepath"
 	"strings"
@@ -40,8 +41,11 @@ func executeSQLFile(conn driver.Conn, sqlDir string, filename string, templatePa
 			namedParams = append(namedParams, clickhouse.Named(key, value))
 		}
 
-		// Execute statement with parameter binding
-		if err := conn.Exec(context.Background(), sql, namedParams...); err != nil {
+		// Execute statement with parameter binding and retry logic
+		err = chwrapper.WithRetry(func() error {
+			return conn.Exec(context.Background(), sql, namedParams...)
+		})
+		if err != nil {
 			// Check if it's a CREATE TABLE that already exists (not an error)
 			if !strings.Contains(err.Error(), "already exists") {
 				return fmt.Errorf("failed to execute SQL: %w\nStatement: %s", err, sql)

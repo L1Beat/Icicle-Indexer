@@ -159,9 +159,10 @@ func (vs *ValidatorSyncer) syncOnce(ctx context.Context) error {
 	log.Printf("Found %d regular/elastic subnet(s) to sync validators", len(regularSubnets))
 
 	// Step 6: For each L1 subnet, fetch and update validator state
+	// Add small delay between subnets to prevent connection pool exhaustion
 	totalValidators := primaryValidatorCount
 	l1ValidatorCount := 0
-	for _, subnet := range l1Subnets {
+	for i, subnet := range l1Subnets {
 		validatorCount, err := vs.syncSubnetValidators(ctx, subnet)
 		if err != nil {
 			log.Printf("WARNING: Failed to sync validators for subnet %s: %v", subnet, err)
@@ -169,11 +170,16 @@ func (vs *ValidatorSyncer) syncOnce(ctx context.Context) error {
 		}
 		l1ValidatorCount += validatorCount
 		totalValidators += validatorCount
+
+		// Stagger requests to prevent DB connection pool exhaustion
+		if i < len(l1Subnets)-1 {
+			time.Sleep(50 * time.Millisecond)
+		}
 	}
 
 	// Step 7: For each regular subnet, fetch and update validator state
 	regularValidatorCount := 0
-	for _, subnet := range regularSubnets {
+	for i, subnet := range regularSubnets {
 		validatorCount, err := vs.syncSubnetValidators(ctx, subnet)
 		if err != nil {
 			log.Printf("WARNING: Failed to sync validators for subnet %s: %v", subnet, err)
@@ -181,6 +187,11 @@ func (vs *ValidatorSyncer) syncOnce(ctx context.Context) error {
 		}
 		regularValidatorCount += validatorCount
 		totalValidators += validatorCount
+
+		// Stagger requests to prevent DB connection pool exhaustion
+		if i < len(regularSubnets)-1 {
+			time.Sleep(50 * time.Millisecond)
+		}
 	}
 
 	// Step 8: Sync balance transactions for L1 validators
