@@ -47,6 +47,54 @@ Check API and database connectivity.
 
 ---
 
+## Indexer Status
+
+### GET /indexer/status
+
+Get indexer sync status for all chains. Useful for monitoring and alerting.
+
+**Response:**
+```json
+{
+  "healthy": true,
+  "evm": [
+    {
+      "chain_id": 43114,
+      "name": "C-Chain",
+      "current_block": 75510573,
+      "latest_block": 75538000,
+      "blocks_behind": 27427,
+      "last_sync": "2025-01-11T08:49:15Z",
+      "is_synced": false
+    }
+  ],
+  "pchain": {
+    "current_block": 24160141,
+    "latest_block": 24160200,
+    "blocks_behind": 59,
+    "last_sync": "2025-01-11T16:10:16Z",
+    "is_synced": true
+  },
+  "last_update": "2025-01-11T16:15:00Z"
+}
+```
+
+**Fields:**
+- `healthy` - `false` if any chain is >100 blocks behind
+- `is_synced` - `true` if chain is <10 blocks behind
+- `blocks_behind` - Number of blocks behind the chain tip
+
+**Use for Telegram alerts:**
+```bash
+# Check if healthy
+curl -s http://your-server:8080/indexer/status | jq '.healthy'
+
+# Get blocks behind for C-Chain
+curl -s http://your-server:8080/indexer/status | jq '.evm[] | select(.chain_id == 43114) | .blocks_behind'
+```
+
+---
+
 ## EVM Chain Data
 
 All EVM endpoints are prefixed with `/evm/{chainId}/...`

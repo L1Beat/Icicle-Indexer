@@ -42,8 +42,9 @@ func NewServer(conn driver.Conn) *Server {
 }
 
 func (s *Server) registerRoutes() {
-	// Health
+	// Health & Status
 	s.router.HandleFunc("GET /health", s.handleHealth)
+	s.router.HandleFunc("GET /indexer/status", s.handleIndexerStatus)
 
 	// EVM Blocks - /evm/{chainId}/...
 	s.router.HandleFunc("GET /evm/{chainId}/blocks", s.handleListBlocks)
