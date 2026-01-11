@@ -54,7 +54,7 @@ func (s *Server) handleListTxs(w http.ResponseWriter, r *http.Request) {
 		var tx Transaction
 		var hashBytes [32]byte
 		var fromBytes [20]byte
-		var toBytes *[20]byte
+		var toBytes []byte // Use slice for nullable FixedString
 		var valueBig big.Int
 
 		if err := rows.Scan(
@@ -67,8 +67,8 @@ func (s *Server) handleListTxs(w http.ResponseWriter, r *http.Request) {
 
 		tx.Hash = "0x" + hex.EncodeToString(hashBytes[:])
 		tx.From = "0x" + hex.EncodeToString(fromBytes[:])
-		if toBytes != nil {
-			to := "0x" + hex.EncodeToString(toBytes[:])
+		if len(toBytes) > 0 {
+			to := "0x" + hex.EncodeToString(toBytes)
 			tx.To = &to
 		}
 		tx.Value = valueBig.String()
@@ -106,7 +106,7 @@ func (s *Server) handleGetTx(w http.ResponseWriter, r *http.Request) {
 	var tx Transaction
 	var dbHashBytes [32]byte
 	var fromBytes [20]byte
-	var toBytes *[20]byte
+	var toBytes []byte // Use slice for nullable FixedString
 	var valueBig big.Int
 
 	err = s.conn.QueryRow(ctx, `
@@ -128,8 +128,8 @@ func (s *Server) handleGetTx(w http.ResponseWriter, r *http.Request) {
 
 	tx.Hash = "0x" + hex.EncodeToString(dbHashBytes[:])
 	tx.From = "0x" + hex.EncodeToString(fromBytes[:])
-	if toBytes != nil {
-		to := "0x" + hex.EncodeToString(toBytes[:])
+	if len(toBytes) > 0 {
+		to := "0x" + hex.EncodeToString(toBytes)
 		tx.To = &to
 	}
 	tx.Value = valueBig.String()
@@ -181,7 +181,7 @@ func (s *Server) handleAddressTxs(w http.ResponseWriter, r *http.Request) {
 		var tx Transaction
 		var hashBytes [32]byte
 		var fromBytes [20]byte
-		var toBytes *[20]byte
+		var toBytes []byte // Use slice for nullable FixedString
 		var valueBig big.Int
 
 		if err := rows.Scan(
@@ -194,8 +194,8 @@ func (s *Server) handleAddressTxs(w http.ResponseWriter, r *http.Request) {
 
 		tx.Hash = "0x" + hex.EncodeToString(hashBytes[:])
 		tx.From = "0x" + hex.EncodeToString(fromBytes[:])
-		if toBytes != nil {
-			to := "0x" + hex.EncodeToString(toBytes[:])
+		if len(toBytes) > 0 {
+			to := "0x" + hex.EncodeToString(toBytes)
 			tx.To = &to
 		}
 		tx.Value = valueBig.String()

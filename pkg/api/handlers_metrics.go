@@ -47,7 +47,7 @@ type ChainMetrics struct {
 	TotalTxs       uint64    `json:"total_txs"`
 	LastBlockTime  time.Time `json:"last_block_time"`
 	AvgBlockTime   float64   `json:"avg_block_time_seconds"`
-	AvgGasUsed     uint64    `json:"avg_gas_used"`
+	AvgGasUsed     float64   `json:"avg_gas_used"`
 	TotalGasUsed   uint64    `json:"total_gas_used"`
 }
 

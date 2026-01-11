@@ -203,22 +203,35 @@ func (s *Server) handleListL1s(w http.ResponseWriter, r *http.Request) {
 		ChainID        string    `json:"chain_id"`
 		ConvertedBlock uint64    `json:"converted_block"`
 		ConvertedTime  time.Time `json:"converted_time"`
-		Name           string    `json:"name"`
-		Description    string    `json:"description"`
-		LogoURL        string    `json:"logo_url"`
-		WebsiteURL     string    `json:"website_url"`
+		Name           string    `json:"name,omitempty"`
+		Description    string    `json:"description,omitempty"`
+		LogoURL        string    `json:"logo_url,omitempty"`
+		WebsiteURL     string    `json:"website_url,omitempty"`
 	}
 
 	l1s := []L1Info{}
 	for rows.Next() {
 		var l1 L1Info
+		var name, description, logoURL, websiteURL *string
 		if err := rows.Scan(
 			&l1.SubnetID, &l1.CreatedBlock, &l1.CreatedTime,
 			&l1.ChainID, &l1.ConvertedBlock, &l1.ConvertedTime,
-			&l1.Name, &l1.Description, &l1.LogoURL, &l1.WebsiteURL,
+			&name, &description, &logoURL, &websiteURL,
 		); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
+		}
+		if name != nil {
+			l1.Name = *name
+		}
+		if description != nil {
+			l1.Description = *description
+		}
+		if logoURL != nil {
+			l1.LogoURL = *logoURL
+		}
+		if websiteURL != nil {
+			l1.WebsiteURL = *websiteURL
 		}
 		l1s = append(l1s, l1)
 	}
