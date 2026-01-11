@@ -10,6 +10,7 @@ import SubnetValidators from './pages/SubnetValidators';
 import ValidatorDetails from './pages/ValidatorDetails';
 import BlockDetails from './pages/BlockDetails';
 import TransactionDetails from './pages/TransactionDetails';
+import ApiPlayground from './pages/ApiPlayground';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -37,6 +38,7 @@ function App() {
             <Route path="custom-sql" element={<CustomSQL />} />
             <Route path="indexer-demo" element={<IndexerDemo />} />
             <Route path="sync-status" element={<SyncStatus />} />
+            <Route path="api-playground" element={<ApiPlayground />} />
           </Route>
         </Routes>
       </BrowserRouter>

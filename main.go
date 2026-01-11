@@ -14,9 +14,12 @@ import (
 func main() {
 	_ = godotenv.Load()
 
-	// Catch signals and log them before exit
+	// Ignore SIGPIPE - common in network servers when clients disconnect
+	signal.Ignore(syscall.SIGPIPE)
+
+	// Catch fatal signals and log them before exit
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT, syscall.SIGPIPE)
+	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT)
 	go func() {
 		sig := <-sigChan
 		log.Printf("SIGNAL RECEIVED: %v - shutting down", sig)

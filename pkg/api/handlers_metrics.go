@@ -5,6 +5,28 @@ import (
 	"time"
 )
 
+// MetricDataPoint represents a single metric value at a point in time
+type MetricDataPoint struct {
+	Period time.Time `json:"period"`
+	Value  uint64    `json:"value"`
+}
+
+// MetricSeries represents a time series for a specific metric
+type MetricSeries struct {
+	ChainID     uint32            `json:"chain_id"`
+	MetricName  string            `json:"metric_name"`
+	Granularity string            `json:"granularity"`
+	Data        []MetricDataPoint `json:"data"`
+}
+
+// AvailableMetric represents a metric that has data
+type AvailableMetric struct {
+	MetricName    string    `json:"metric_name"`
+	Granularities []string  `json:"granularities"`
+	LatestPeriod  time.Time `json:"latest_period"`
+	DataPoints    uint64    `json:"data_points"`
+}
+
 type FeeStats struct {
 	SubnetID        string `json:"subnet_id"`
 	TotalDeposited  uint64 `json:"total_deposited"`
@@ -143,4 +165,143 @@ func (s *Server) handleChainMetrics(w http.ResponseWriter, r *http.Request) {
 	m.AvgBlockTime = avgBlockTimeSec
 
 	writeJSON(w, http.StatusOK, Response{Data: m})
+}
+
+// handleListMetrics lists available metrics for a chain
+func (s *Server) handleListMetrics(w http.ResponseWriter, r *http.Request) {
+	ctx := s.queryContext()
+
+	chainID, err := getChainIDFromPath(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid chain_id")
+		return
+	}
+
+	query := `
+		SELECT
+			metric_name,
+			groupArray(DISTINCT granularity) as granularities,
+			max(period) as latest_period,
+			count() as data_points
+		FROM metrics FINAL
+		WHERE chain_id = ?
+		GROUP BY metric_name
+		ORDER BY metric_name
+	`
+
+	rows, err := s.conn.Query(ctx, query, chainID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer rows.Close()
+
+	metrics := []AvailableMetric{}
+	for rows.Next() {
+		var m AvailableMetric
+		if err := rows.Scan(&m.MetricName, &m.Granularities, &m.LatestPeriod, &m.DataPoints); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		metrics = append(metrics, m)
+	}
+
+	writeJSON(w, http.StatusOK, Response{Data: metrics})
+}
+
+// handleGetMetric returns time series data for a specific metric
+func (s *Server) handleGetMetric(w http.ResponseWriter, r *http.Request) {
+	ctx := s.queryContext()
+
+	chainID, err := getChainIDFromPath(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid chain_id")
+		return
+	}
+
+	metricName := r.PathValue("metric")
+	if metricName == "" {
+		writeError(w, http.StatusBadRequest, "metric name required")
+		return
+	}
+
+	// Get granularity from query params (default: day)
+	granularity := r.URL.Query().Get("granularity")
+	if granularity == "" {
+		granularity = "day"
+	}
+
+	// Validate granularity
+	validGranularities := map[string]bool{"hour": true, "day": true, "week": true, "month": true}
+	if !validGranularities[granularity] {
+		writeError(w, http.StatusBadRequest, "invalid granularity (use: hour, day, week, month)")
+		return
+	}
+
+	// Optional time range filters (accepts: 2025-01-01, 2025-01-01T00:00:00Z, or unix timestamp)
+	var fromTime, toTime time.Time
+	if from := r.URL.Query().Get("from"); from != "" {
+		fromTime = parseFlexibleTime(from)
+	}
+	if to := r.URL.Query().Get("to"); to != "" {
+		toTime = parseFlexibleTime(to)
+	}
+
+	limit, _ := getPagination(r)
+	if limit > 1000 {
+		limit = 1000
+	}
+
+	// Build query
+	query := `
+		SELECT period, value
+		FROM metrics FINAL
+		WHERE chain_id = ?
+		  AND metric_name = ?
+		  AND granularity = ?
+	`
+	args := []interface{}{chainID, metricName, granularity}
+
+	if !fromTime.IsZero() {
+		query += " AND period >= ?"
+		args = append(args, fromTime)
+	}
+	if !toTime.IsZero() {
+		query += " AND period <= ?"
+		args = append(args, toTime)
+	}
+
+	query += " ORDER BY period DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := s.conn.Query(ctx, query, args...)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer rows.Close()
+
+	data := []MetricDataPoint{}
+	for rows.Next() {
+		var dp MetricDataPoint
+		if err := rows.Scan(&dp.Period, &dp.Value); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		data = append(data, dp)
+	}
+
+	// Reverse to get chronological order
+	for i, j := 0, len(data)-1; i < j; i, j = i+1, j-1 {
+		data[i], data[j] = data[j], data[i]
+	}
+
+	result := MetricSeries{
+		ChainID:     chainID,
+		MetricName:  metricName,
+		Granularity: granularity,
+		Data:        data,
+	}
+
+	writeJSON(w, http.StatusOK, Response{Data: result})
 }

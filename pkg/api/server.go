@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
@@ -57,6 +58,8 @@ func (s *Server) registerRoutes() {
 
 	// EVM Chain Metrics
 	s.router.HandleFunc("GET /evm/{chainId}/stats", s.handleChainMetrics)
+	s.router.HandleFunc("GET /evm/{chainId}/metrics", s.handleListMetrics)
+	s.router.HandleFunc("GET /evm/{chainId}/metrics/{metric}", s.handleGetMetric)
 
 	// P-Chain Transactions
 	s.router.HandleFunc("GET /pchain/txs", s.handleListPChainTxs)
@@ -152,4 +155,21 @@ func normalizeHash(hash string) string {
 		hash = "0x" + hash
 	}
 	return hash
+}
+
+// parseFlexibleTime parses time from various formats: 2025-01-01, 2025-01-01T00:00:00Z, or unix timestamp
+func parseFlexibleTime(s string) time.Time {
+	// Try date only: 2025-01-01
+	if t, err := time.Parse("2006-01-02", s); err == nil {
+		return t
+	}
+	// Try RFC3339: 2025-01-01T00:00:00Z
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t
+	}
+	// Try unix timestamp
+	if ts, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return time.Unix(ts, 0).UTC()
+	}
+	return time.Time{}
 }
