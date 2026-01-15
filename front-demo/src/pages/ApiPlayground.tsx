@@ -11,13 +11,13 @@ interface Endpoint {
 const endpoints: Endpoint[] = [
   // Health & Status
   { name: 'Health Check', method: 'GET', path: '/health', params: [] },
-  { name: 'Indexer Status', method: 'GET', path: '/indexer/status', params: [] },
+  { name: 'Indexer Status', method: 'GET', path: '/api/v1/metrics/indexer/status', params: [] },
 
-  // EVM
+  // EVM Data
   {
     name: 'List Blocks',
     method: 'GET',
-    path: '/evm/{chainId}/blocks',
+    path: '/api/v1/data/evm/{chainId}/blocks',
     params: [
       { name: 'chainId', type: 'path', default: '43114' },
       { name: 'limit', type: 'query', default: '10' },
@@ -27,7 +27,7 @@ const endpoints: Endpoint[] = [
   {
     name: 'Get Block',
     method: 'GET',
-    path: '/evm/{chainId}/blocks/{number}',
+    path: '/api/v1/data/evm/{chainId}/blocks/{number}',
     params: [
       { name: 'chainId', type: 'path', default: '43114' },
       { name: 'number', type: 'path', default: '75000000' },
@@ -36,7 +36,7 @@ const endpoints: Endpoint[] = [
   {
     name: 'List Transactions',
     method: 'GET',
-    path: '/evm/{chainId}/txs',
+    path: '/api/v1/data/evm/{chainId}/txs',
     params: [
       { name: 'chainId', type: 'path', default: '43114' },
       { name: 'limit', type: 'query', default: '10' },
@@ -45,29 +45,31 @@ const endpoints: Endpoint[] = [
   {
     name: 'Address Transactions',
     method: 'GET',
-    path: '/evm/{chainId}/address/{address}/txs',
+    path: '/api/v1/data/evm/{chainId}/address/{address}/txs',
     params: [
       { name: 'chainId', type: 'path', default: '43114' },
       { name: 'address', type: 'path', default: '0x' },
       { name: 'limit', type: 'query', default: '10' },
     ],
   },
+
+  // EVM Metrics
   {
     name: 'Chain Stats',
     method: 'GET',
-    path: '/evm/{chainId}/stats',
+    path: '/api/v1/metrics/evm/{chainId}/stats',
     params: [{ name: 'chainId', type: 'path', default: '43114' }],
   },
   {
     name: 'List Metrics',
     method: 'GET',
-    path: '/evm/{chainId}/metrics',
+    path: '/api/v1/metrics/evm/{chainId}/timeseries',
     params: [{ name: 'chainId', type: 'path', default: '43114' }],
   },
   {
     name: 'Get Metric Data',
     method: 'GET',
-    path: '/evm/{chainId}/metrics/{metric}',
+    path: '/api/v1/metrics/evm/{chainId}/timeseries/{metric}',
     params: [
       { name: 'chainId', type: 'path', default: '43114' },
       { name: 'metric', type: 'path', default: 'tx_count', options: [
@@ -87,7 +89,7 @@ const endpoints: Endpoint[] = [
   {
     name: 'P-Chain Transactions',
     method: 'GET',
-    path: '/pchain/txs',
+    path: '/api/v1/data/pchain/txs',
     params: [
       { name: 'limit', type: 'query', default: '10' },
       { name: 'tx_type', type: 'query', default: '' },
@@ -96,7 +98,7 @@ const endpoints: Endpoint[] = [
   {
     name: 'P-Chain Tx Types',
     method: 'GET',
-    path: '/pchain/tx-types',
+    path: '/api/v1/data/pchain/tx-types',
     params: [],
   },
 
@@ -104,7 +106,7 @@ const endpoints: Endpoint[] = [
   {
     name: 'List Subnets',
     method: 'GET',
-    path: '/subnets',
+    path: '/api/v1/data/subnets',
     params: [
       { name: 'type', type: 'query', default: '', options: ['', 'regular', 'elastic', 'l1'] },
       { name: 'limit', type: 'query', default: '20' },
@@ -113,19 +115,19 @@ const endpoints: Endpoint[] = [
   {
     name: 'Get Subnet',
     method: 'GET',
-    path: '/subnets/{subnetId}',
+    path: '/api/v1/data/subnets/{subnetId}',
     params: [{ name: 'subnetId', type: 'path', default: '' }],
   },
   {
     name: 'List L1s',
     method: 'GET',
-    path: '/l1s',
+    path: '/api/v1/data/l1s',
     params: [{ name: 'limit', type: 'query', default: '20' }],
   },
   {
     name: 'List Chains',
     method: 'GET',
-    path: '/chains',
+    path: '/api/v1/data/chains',
     params: [{ name: 'limit', type: 'query', default: '20' }],
   },
 
@@ -133,7 +135,7 @@ const endpoints: Endpoint[] = [
   {
     name: 'List Validators',
     method: 'GET',
-    path: '/validators',
+    path: '/api/v1/data/validators',
     params: [
       { name: 'subnet_id', type: 'query', default: '' },
       { name: 'active', type: 'query', default: '', options: ['', 'true', 'false'] },
@@ -143,13 +145,13 @@ const endpoints: Endpoint[] = [
   {
     name: 'Get Validator',
     method: 'GET',
-    path: '/validators/{id}',
+    path: '/api/v1/data/validators/{id}',
     params: [{ name: 'id', type: 'path', default: '' }],
   },
   {
     name: 'Validator Deposits',
     method: 'GET',
-    path: '/validators/{id}/deposits',
+    path: '/api/v1/data/validators/{id}/deposits',
     params: [{ name: 'id', type: 'path', default: '' }],
   },
 
@@ -157,7 +159,7 @@ const endpoints: Endpoint[] = [
   {
     name: 'L1 Fee Stats',
     method: 'GET',
-    path: '/metrics/fees',
+    path: '/api/v1/metrics/fees',
     params: [
       { name: 'subnet_id', type: 'query', default: '' },
       { name: 'limit', type: 'query', default: '20' },
