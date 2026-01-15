@@ -4,11 +4,20 @@ import (
 	"net/http"
 )
 
+// HealthStatus represents the health check response
 type HealthStatus struct {
-	Status   string `json:"status"`
-	Database string `json:"database"`
+	Status   string `json:"status" example:"healthy"`
+	Database string `json:"database" example:"connected"`
 }
 
+// handleHealth checks API and database health
+// @Summary Health check
+// @Description Check API server and database connectivity
+// @Tags Health
+// @Produce json
+// @Success 200 {object} HealthStatus "Healthy"
+// @Failure 503 {object} HealthStatus "Unhealthy"
+// @Router /health [get]
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	ctx := s.queryContext()
 

@@ -4,9 +4,26 @@ import (
 	"icicle/pkg/api"
 	"icicle/pkg/chwrapper"
 	"log"
+	"time"
 )
 
-func RunAPI(port int) {
+// APIOptions holds configuration for the API server
+type APIOptions struct {
+	Port              int
+	RateLimitPerMin   int
+	RateLimitBurst    int
+}
+
+// DefaultAPIOptions returns sensible defaults
+func DefaultAPIOptions() APIOptions {
+	return APIOptions{
+		Port:            8080,
+		RateLimitPerMin: 60,
+		RateLimitBurst:  10,
+	}
+}
+
+func RunAPI(opts APIOptions) {
 	log.Printf("Starting API server...")
 
 	// Connect to ClickHouse
@@ -16,9 +33,18 @@ func RunAPI(port int) {
 	}
 	defer conn.Close()
 
+	// Build API config
+	cfg := api.Config{
+		RateLimit: api.RateLimitConfig{
+			RequestsPerMinute: opts.RateLimitPerMin,
+			BurstSize:         opts.RateLimitBurst,
+			CleanupInterval:   5 * time.Minute,
+		},
+	}
+
 	// Create and start API server
-	server := api.NewServer(conn)
-	if err := server.Start(port); err != nil {
+	server := api.NewServer(conn, cfg)
+	if err := server.Start(opts.Port); err != nil {
 		log.Fatalf("API server failed: %v", err)
 	}
 }

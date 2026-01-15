@@ -112,3 +112,11 @@ func WithRetry(operation func() error) error {
 
 	return lastErr
 }
+
+// RetryableBatchSend sends a batch with retry logic for transient errors
+// This handles "acquire conn timeout" and other connection issues during batch inserts
+func RetryableBatchSend(batch driver.Batch) error {
+	return WithRetry(func() error {
+		return batch.Send()
+	})
+}

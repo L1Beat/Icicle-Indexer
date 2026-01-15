@@ -1,7 +1,6 @@
 package evmsyncer
 
 import (
-	"icicle/pkg/evmrpc"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,6 +8,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"icicle/pkg/chwrapper"
+	"icicle/pkg/evmrpc"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 )
@@ -361,7 +363,7 @@ func InsertBlocks(ctx context.Context, conn clickhouse.Conn, chainID uint32, blo
 		}
 	}
 
-	return batch.Send()
+	return chwrapper.RetryableBatchSend(batch)
 }
 
 // InsertTransactions inserts transaction data merged with receipts into the transactions table
@@ -609,7 +611,7 @@ func InsertTransactions(ctx context.Context, conn clickhouse.Conn, chainID uint3
 		}
 	}
 
-	return batch.Send()
+	return chwrapper.RetryableBatchSend(batch)
 }
 
 // FlattenedTrace represents a flattened trace with its address path
@@ -859,7 +861,7 @@ func InsertTraces(ctx context.Context, conn clickhouse.Conn, chainID uint32, blo
 		}
 	}
 
-	return batch.Send()
+	return chwrapper.RetryableBatchSend(batch)
 }
 
 // InsertLogs inserts log data into the logs table
@@ -1040,5 +1042,5 @@ func InsertLogs(ctx context.Context, conn clickhouse.Conn, chainID uint32, block
 		}
 	}
 
-	return batch.Send()
+	return chwrapper.RetryableBatchSend(batch)
 }

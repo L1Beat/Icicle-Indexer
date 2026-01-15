@@ -7,27 +7,40 @@ import (
 	"time"
 )
 
+// Block represents an EVM block
 type Block struct {
-	ChainID     uint32    `json:"chain_id"`
-	BlockNumber uint32    `json:"block_number"`
-	Hash        string    `json:"hash"`
-	ParentHash  string    `json:"parent_hash"`
+	ChainID     uint32    `json:"chain_id" example:"43114"`
+	BlockNumber uint32    `json:"block_number" example:"12345678"`
+	Hash        string    `json:"hash" example:"0x1234..."`
+	ParentHash  string    `json:"parent_hash" example:"0xabcd..."`
 	BlockTime   time.Time `json:"block_time"`
-	Miner       string    `json:"miner"`
-	Size        uint32    `json:"size"`
-	GasLimit    uint32    `json:"gas_limit"`
-	GasUsed     uint32    `json:"gas_used"`
-	BaseFee     uint64    `json:"base_fee_per_gas"`
-	TxCount     uint32    `json:"tx_count,omitempty"`
+	Miner       string    `json:"miner" example:"0x742d35Cc6634C0532925a3b844Bc9e7595f..."`
+	Size        uint32    `json:"size" example:"1024"`
+	GasLimit    uint32    `json:"gas_limit" example:"8000000"`
+	GasUsed     uint32    `json:"gas_used" example:"500000"`
+	BaseFee     uint64    `json:"base_fee_per_gas" example:"25000000000"`
+	TxCount     uint32    `json:"tx_count,omitempty" example:"150"`
 }
 
+// handleListBlocks returns a paginated list of blocks
+// @Summary List blocks
+// @Description Get a paginated list of blocks for a specific chain
+// @Tags Data - EVM
+// @Produce json
+// @Param chainId path int true "Chain ID (e.g., 43114 for C-Chain)"
+// @Param limit query int false "Number of results (max 100)" default(20)
+// @Param offset query int false "Pagination offset" default(0)
+// @Success 200 {object} Response{data=[]Block,meta=Meta}
+// @Failure 400 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/data/evm/{chainId}/blocks [get]
 func (s *Server) handleListBlocks(w http.ResponseWriter, r *http.Request) {
 	ctx := s.queryContext()
 	limit, offset := getPagination(r)
 
 	chainID, err := getChainIDFromPath(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid chain_id")
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid chain_id")
 		return
 	}
 
@@ -42,7 +55,7 @@ func (s *Server) handleListBlocks(w http.ResponseWriter, r *http.Request) {
 	`, chainID, limit, offset)
 
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err.Error())
 		return
 	}
 	defer rows.Close()
@@ -57,7 +70,7 @@ func (s *Server) handleListBlocks(w http.ResponseWriter, r *http.Request) {
 			&b.ChainID, &b.BlockNumber, &hashBytes, &parentHashBytes, &b.BlockTime,
 			&minerAddr, &b.Size, &b.GasLimit, &b.GasUsed, &b.BaseFee,
 		); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeInternalError(w, err.Error())
 			return
 		}
 
@@ -73,19 +86,30 @@ func (s *Server) handleListBlocks(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleGetBlock returns a single block by number
+// @Summary Get block by number
+// @Description Get details for a specific block including transaction count
+// @Tags Data - EVM
+// @Produce json
+// @Param chainId path int true "Chain ID"
+// @Param number path int true "Block number"
+// @Success 200 {object} Response{data=Block}
+// @Failure 400 {object} ErrorResponse
+// @Failure 404 {object} ErrorResponse
+// @Router /api/v1/data/evm/{chainId}/blocks/{number} [get]
 func (s *Server) handleGetBlock(w http.ResponseWriter, r *http.Request) {
 	ctx := s.queryContext()
 
 	chainID, err := getChainIDFromPath(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid chain_id")
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid chain_id")
 		return
 	}
 
 	numberStr := r.PathValue("number")
 	blockNumber, err := strconv.ParseUint(numberStr, 10, 32)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid block number")
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid block number")
 		return
 	}
 
@@ -105,7 +129,7 @@ func (s *Server) handleGetBlock(w http.ResponseWriter, r *http.Request) {
 	)
 
 	if err != nil {
-		writeError(w, http.StatusNotFound, "block not found")
+		writeNotFoundError(w, "Block")
 		return
 	}
 

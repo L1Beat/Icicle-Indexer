@@ -7,29 +7,42 @@ import (
 	"time"
 )
 
+// Transaction represents an EVM transaction
 type Transaction struct {
-	ChainID          uint32    `json:"chain_id"`
-	Hash             string    `json:"hash"`
-	BlockNumber      uint32    `json:"block_number"`
+	ChainID          uint32    `json:"chain_id" example:"43114"`
+	Hash             string    `json:"hash" example:"0x1234..."`
+	BlockNumber      uint32    `json:"block_number" example:"12345678"`
 	BlockTime        time.Time `json:"block_time"`
-	TransactionIndex uint16    `json:"transaction_index"`
-	From             string    `json:"from"`
-	To               *string   `json:"to"` // null for contract creation
-	Value            string    `json:"value"`
-	GasLimit         uint32    `json:"gas_limit"`
-	GasPrice         uint64    `json:"gas_price"`
-	GasUsed          uint32    `json:"gas_used"`
-	Success          bool      `json:"success"`
-	Type             uint8     `json:"type"`
+	TransactionIndex uint16    `json:"transaction_index" example:"0"`
+	From             string    `json:"from" example:"0x742d35Cc6634C0532925a3b844Bc9e7595f..."`
+	To               *string   `json:"to" example:"0x123..."` // null for contract creation
+	Value            string    `json:"value" example:"1000000000000000000"`
+	GasLimit         uint32    `json:"gas_limit" example:"21000"`
+	GasPrice         uint64    `json:"gas_price" example:"25000000000"`
+	GasUsed          uint32    `json:"gas_used" example:"21000"`
+	Success          bool      `json:"success" example:"true"`
+	Type             uint8     `json:"type" example:"2"`
 }
 
+// handleListTxs returns a paginated list of transactions
+// @Summary List transactions
+// @Description Get a paginated list of transactions for a specific chain
+// @Tags Data - EVM
+// @Produce json
+// @Param chainId path int true "Chain ID"
+// @Param limit query int false "Number of results (max 100)" default(20)
+// @Param offset query int false "Pagination offset" default(0)
+// @Success 200 {object} Response{data=[]Transaction,meta=Meta}
+// @Failure 400 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/data/evm/{chainId}/txs [get]
 func (s *Server) handleListTxs(w http.ResponseWriter, r *http.Request) {
 	ctx := s.queryContext()
 	limit, offset := getPagination(r)
 
 	chainID, err := getChainIDFromPath(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid chain_id")
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid chain_id")
 		return
 	}
 
@@ -44,7 +57,7 @@ func (s *Server) handleListTxs(w http.ResponseWriter, r *http.Request) {
 	`, chainID, limit, offset)
 
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err.Error())
 		return
 	}
 	defer rows.Close()
@@ -61,7 +74,7 @@ func (s *Server) handleListTxs(w http.ResponseWriter, r *http.Request) {
 			&tx.ChainID, &hashBytes, &tx.BlockNumber, &tx.BlockTime, &tx.TransactionIndex,
 			&fromBytes, &toBytes, &valueBig, &tx.GasLimit, &tx.GasPrice, &tx.GasUsed, &tx.Success, &tx.Type,
 		); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeInternalError(w, err.Error())
 			return
 		}
 
@@ -81,12 +94,23 @@ func (s *Server) handleListTxs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleGetTx returns a single transaction by hash
+// @Summary Get transaction by hash
+// @Description Get details for a specific transaction
+// @Tags Data - EVM
+// @Produce json
+// @Param chainId path int true "Chain ID"
+// @Param hash path string true "Transaction hash (0x-prefixed)"
+// @Success 200 {object} Response{data=Transaction}
+// @Failure 400 {object} ErrorResponse
+// @Failure 404 {object} ErrorResponse
+// @Router /api/v1/data/evm/{chainId}/txs/{hash} [get]
 func (s *Server) handleGetTx(w http.ResponseWriter, r *http.Request) {
 	ctx := s.queryContext()
 
 	chainID, err := getChainIDFromPath(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid chain_id")
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid chain_id")
 		return
 	}
 
@@ -96,7 +120,7 @@ func (s *Server) handleGetTx(w http.ResponseWriter, r *http.Request) {
 	hashHex := hash[2:] // Remove 0x prefix
 	hashBytes, err := hex.DecodeString(hashHex)
 	if err != nil || len(hashBytes) != 32 {
-		writeError(w, http.StatusBadRequest, "invalid transaction hash")
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid transaction hash")
 		return
 	}
 
@@ -122,7 +146,7 @@ func (s *Server) handleGetTx(w http.ResponseWriter, r *http.Request) {
 	)
 
 	if err != nil {
-		writeError(w, http.StatusNotFound, "transaction not found")
+		writeNotFoundError(w, "Transaction")
 		return
 	}
 
@@ -137,13 +161,26 @@ func (s *Server) handleGetTx(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, Response{Data: tx})
 }
 
+// handleAddressTxs returns transactions for an address
+// @Summary Get transactions by address
+// @Description Get transactions sent from or to a specific address
+// @Tags Data - EVM
+// @Produce json
+// @Param chainId path int true "Chain ID"
+// @Param address path string true "Wallet address (0x-prefixed)"
+// @Param limit query int false "Number of results (max 100)" default(20)
+// @Param offset query int false "Pagination offset" default(0)
+// @Success 200 {object} Response{data=[]Transaction,meta=Meta}
+// @Failure 400 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/data/evm/{chainId}/address/{address}/txs [get]
 func (s *Server) handleAddressTxs(w http.ResponseWriter, r *http.Request) {
 	ctx := s.queryContext()
 	limit, offset := getPagination(r)
 
 	chainID, err := getChainIDFromPath(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid chain_id")
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid chain_id")
 		return
 	}
 
@@ -153,7 +190,7 @@ func (s *Server) handleAddressTxs(w http.ResponseWriter, r *http.Request) {
 	addrHex := address[2:] // Remove 0x prefix
 	addrBytes, err := hex.DecodeString(addrHex)
 	if err != nil || len(addrBytes) != 20 {
-		writeError(w, http.StatusBadRequest, "invalid address")
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid address")
 		return
 	}
 
@@ -171,7 +208,7 @@ func (s *Server) handleAddressTxs(w http.ResponseWriter, r *http.Request) {
 	`, chainID, addrFixed, addrFixed, limit, offset)
 
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err.Error())
 		return
 	}
 	defer rows.Close()
@@ -188,7 +225,7 @@ func (s *Server) handleAddressTxs(w http.ResponseWriter, r *http.Request) {
 			&tx.ChainID, &hashBytes, &tx.BlockNumber, &tx.BlockTime, &tx.TransactionIndex,
 			&fromBytes, &toBytes, &valueBig, &tx.GasLimit, &tx.GasPrice, &tx.GasUsed, &tx.Success, &tx.Type,
 		); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeInternalError(w, err.Error())
 			return
 		}
 

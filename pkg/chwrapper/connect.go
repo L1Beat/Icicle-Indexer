@@ -12,10 +12,10 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
-// Default pool settings
+// Default pool settings - increased to handle concurrent syncer load
 const (
-	DefaultMaxOpenConns = 100
-	DefaultMaxIdleConns = 50
+	DefaultMaxOpenConns = 200 // Increased from 100 to handle multiple concurrent syncers
+	DefaultMaxIdleConns = 100 // Increased from 50 to reduce connection churn
 	DefaultDialTimeout  = 30 * time.Second
 )
 

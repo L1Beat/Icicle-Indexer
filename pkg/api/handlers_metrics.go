@@ -8,49 +8,62 @@ import (
 // MetricDataPoint represents a single metric value at a point in time
 type MetricDataPoint struct {
 	Period time.Time `json:"period"`
-	Value  uint64    `json:"value"`
+	Value  uint64    `json:"value" example:"1234567"`
 }
 
 // MetricSeries represents a time series for a specific metric
 type MetricSeries struct {
-	ChainID     uint32            `json:"chain_id"`
-	MetricName  string            `json:"metric_name"`
-	Granularity string            `json:"granularity"`
+	ChainID     uint32            `json:"chain_id" example:"43114"`
+	MetricName  string            `json:"metric_name" example:"tx_count"`
+	Granularity string            `json:"granularity" example:"day"`
 	Data        []MetricDataPoint `json:"data"`
 }
 
 // AvailableMetric represents a metric that has data
 type AvailableMetric struct {
-	MetricName    string    `json:"metric_name"`
-	Granularities []string  `json:"granularities"`
+	MetricName    string    `json:"metric_name" example:"tx_count"`
+	Granularities []string  `json:"granularities" example:"hour,day,week"`
 	LatestPeriod  time.Time `json:"latest_period"`
-	DataPoints    uint64    `json:"data_points"`
+	DataPoints    uint64    `json:"data_points" example:"365"`
 }
 
+// FeeStats represents L1 validation fee statistics
 type FeeStats struct {
-	SubnetID        string `json:"subnet_id"`
-	TotalDeposited  uint64 `json:"total_deposited"`
-	InitialDeposits uint64 `json:"initial_deposits"`
-	TopUpDeposits   uint64 `json:"top_up_deposits"`
-	TotalRefunded   uint64 `json:"total_refunded"`
-	CurrentBalance  uint64 `json:"current_balance"`
-	TotalFeesPaid   uint64 `json:"total_fees_paid"`
-	DepositTxCount  uint32 `json:"deposit_tx_count"`
-	ValidatorCount  uint32 `json:"validator_count"`
+	SubnetID        string `json:"subnet_id" example:"2XDnKyAEr..."`
+	TotalDeposited  uint64 `json:"total_deposited" example:"100000000000"`
+	InitialDeposits uint64 `json:"initial_deposits" example:"80000000000"`
+	TopUpDeposits   uint64 `json:"top_up_deposits" example:"20000000000"`
+	TotalRefunded   uint64 `json:"total_refunded" example:"10000000000"`
+	CurrentBalance  uint64 `json:"current_balance" example:"85000000000"`
+	TotalFeesPaid   uint64 `json:"total_fees_paid" example:"5000000000"`
+	DepositTxCount  uint32 `json:"deposit_tx_count" example:"15"`
+	ValidatorCount  uint32 `json:"validator_count" example:"5"`
 }
 
+// ChainMetrics represents aggregate statistics for a chain
 type ChainMetrics struct {
-	ChainID        uint32    `json:"chain_id"`
-	ChainName      string    `json:"chain_name"`
-	LatestBlock    uint64    `json:"latest_block"`
-	TotalBlocks    uint64    `json:"total_blocks"`
-	TotalTxs       uint64    `json:"total_txs"`
-	LastBlockTime  time.Time `json:"last_block_time"`
-	AvgBlockTime   float64   `json:"avg_block_time_seconds"`
-	AvgGasUsed     float64   `json:"avg_gas_used"`
-	TotalGasUsed   uint64    `json:"total_gas_used"`
+	ChainID       uint32    `json:"chain_id" example:"43114"`
+	ChainName     string    `json:"chain_name" example:"C-Chain"`
+	LatestBlock   uint64    `json:"latest_block" example:"12345678"`
+	TotalBlocks   uint64    `json:"total_blocks" example:"12345678"`
+	TotalTxs      uint64    `json:"total_txs" example:"100000000"`
+	LastBlockTime time.Time `json:"last_block_time"`
+	AvgBlockTime  float64   `json:"avg_block_time_seconds" example:"2.0"`
+	AvgGasUsed    float64   `json:"avg_gas_used" example:"500000"`
+	TotalGasUsed  uint64    `json:"total_gas_used" example:"50000000000000"`
 }
 
+// handleFeeMetrics returns L1 validation fee statistics
+// @Summary Get L1 fee statistics
+// @Description Get aggregated fee statistics for L1 validators
+// @Tags Metrics - Fees
+// @Produce json
+// @Param subnet_id query string false "Filter by subnet ID"
+// @Param limit query int false "Number of results (max 100)" default(20)
+// @Param offset query int false "Pagination offset" default(0)
+// @Success 200 {object} Response{data=[]FeeStats,meta=Meta}
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/metrics/fees [get]
 func (s *Server) handleFeeMetrics(w http.ResponseWriter, r *http.Request) {
 	ctx := s.queryContext()
 	limit, offset := getPagination(r)
@@ -85,7 +98,7 @@ func (s *Server) handleFeeMetrics(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := s.conn.Query(ctx, query, args...)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err.Error())
 		return
 	}
 	defer rows.Close()
@@ -98,7 +111,7 @@ func (s *Server) handleFeeMetrics(w http.ResponseWriter, r *http.Request) {
 			&f.TotalRefunded, &f.CurrentBalance, &f.TotalFeesPaid,
 			&f.DepositTxCount, &f.ValidatorCount,
 		); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeInternalError(w, err.Error())
 			return
 		}
 		stats = append(stats, f)
@@ -110,12 +123,22 @@ func (s *Server) handleFeeMetrics(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleChainMetrics returns aggregate statistics for a chain
+// @Summary Get chain statistics
+// @Description Get aggregate statistics (block count, tx count, gas usage) for a chain
+// @Tags Metrics - Chain
+// @Produce json
+// @Param chainId path int true "Chain ID"
+// @Success 200 {object} Response{data=ChainMetrics}
+// @Failure 400 {object} ErrorResponse
+// @Failure 404 {object} ErrorResponse
+// @Router /api/v1/metrics/evm/{chainId}/stats [get]
 func (s *Server) handleChainMetrics(w http.ResponseWriter, r *http.Request) {
 	ctx := s.queryContext()
 
 	chainID, err := getChainIDFromPath(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid chain_id")
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid chain_id")
 		return
 	}
 
@@ -140,7 +163,7 @@ func (s *Server) handleChainMetrics(w http.ResponseWriter, r *http.Request) {
 	`, chainID).Scan(&m.LatestBlock, &m.TotalBlocks, &m.LastBlockTime, &m.AvgGasUsed, &m.TotalGasUsed)
 
 	if err != nil {
-		writeError(w, http.StatusNotFound, "chain not found")
+		writeNotFoundError(w, "Chain")
 		return
 	}
 
@@ -153,7 +176,7 @@ func (s *Server) handleChainMetrics(w http.ResponseWriter, r *http.Request) {
 	var avgBlockTimeSec float64
 	s.conn.QueryRow(ctx, `
 		SELECT
-			(max(block_time) - min(block_time)) / count() as avg_block_time
+			toFloat64(dateDiff('millisecond', min(block_time), max(block_time))) / 1000.0 / count() as avg_block_time
 		FROM (
 			SELECT block_time
 			FROM raw_blocks
@@ -168,12 +191,21 @@ func (s *Server) handleChainMetrics(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleListMetrics lists available metrics for a chain
+// @Summary List available metrics
+// @Description Get a list of available time series metrics for a chain
+// @Tags Metrics - Chain
+// @Produce json
+// @Param chainId path int true "Chain ID"
+// @Success 200 {object} Response{data=[]AvailableMetric}
+// @Failure 400 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/metrics/evm/{chainId}/timeseries [get]
 func (s *Server) handleListMetrics(w http.ResponseWriter, r *http.Request) {
 	ctx := s.queryContext()
 
 	chainID, err := getChainIDFromPath(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid chain_id")
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid chain_id")
 		return
 	}
 
@@ -191,7 +223,7 @@ func (s *Server) handleListMetrics(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := s.conn.Query(ctx, query, chainID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err.Error())
 		return
 	}
 	defer rows.Close()
@@ -200,7 +232,7 @@ func (s *Server) handleListMetrics(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var m AvailableMetric
 		if err := rows.Scan(&m.MetricName, &m.Granularities, &m.LatestPeriod, &m.DataPoints); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeInternalError(w, err.Error())
 			return
 		}
 		metrics = append(metrics, m)
@@ -210,18 +242,32 @@ func (s *Server) handleListMetrics(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleGetMetric returns time series data for a specific metric
+// @Summary Get metric time series
+// @Description Get time series data for a specific metric with configurable granularity
+// @Tags Metrics - Chain
+// @Produce json
+// @Param chainId path int true "Chain ID"
+// @Param metric path string true "Metric name (e.g., tx_count, gas_used)"
+// @Param granularity query string false "Time granularity (hour, day, week, month)" default(day)
+// @Param from query string false "Start time (date, RFC3339, or unix timestamp)"
+// @Param to query string false "End time (date, RFC3339, or unix timestamp)"
+// @Param limit query int false "Number of data points (max 1000)" default(100)
+// @Success 200 {object} Response{data=MetricSeries}
+// @Failure 400 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/metrics/evm/{chainId}/timeseries/{metric} [get]
 func (s *Server) handleGetMetric(w http.ResponseWriter, r *http.Request) {
 	ctx := s.queryContext()
 
 	chainID, err := getChainIDFromPath(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid chain_id")
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid chain_id")
 		return
 	}
 
 	metricName := r.PathValue("metric")
 	if metricName == "" {
-		writeError(w, http.StatusBadRequest, "metric name required")
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Metric name required")
 		return
 	}
 
@@ -234,7 +280,7 @@ func (s *Server) handleGetMetric(w http.ResponseWriter, r *http.Request) {
 	// Validate granularity
 	validGranularities := map[string]bool{"hour": true, "day": true, "week": true, "month": true}
 	if !validGranularities[granularity] {
-		writeError(w, http.StatusBadRequest, "invalid granularity (use: hour, day, week, month)")
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid granularity (use: hour, day, week, month)")
 		return
 	}
 
@@ -276,7 +322,7 @@ func (s *Server) handleGetMetric(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := s.conn.Query(ctx, query, args...)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err.Error())
 		return
 	}
 	defer rows.Close()
@@ -285,7 +331,7 @@ func (s *Server) handleGetMetric(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var dp MetricDataPoint
 		if err := rows.Scan(&dp.Period, &dp.Value); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeInternalError(w, err.Error())
 			return
 		}
 		data = append(data, dp)

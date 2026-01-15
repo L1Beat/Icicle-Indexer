@@ -1,0 +1,1257 @@
+basePath: /
+definitions:
+  api.APIError:
+    properties:
+      code:
+        $ref: '#/definitions/api.ErrorCode'
+      details:
+        type: string
+      fields:
+        items:
+          $ref: '#/definitions/api.FieldError'
+        type: array
+      message:
+        type: string
+      retry_after:
+        type: integer
+    type: object
+  api.AvailableMetric:
+    properties:
+      data_points:
+        example: 365
+        type: integer
+      granularities:
+        example:
+        - hour
+        - day
+        - week
+        items:
+          type: string
+        type: array
+      latest_period:
+        type: string
+      metric_name:
+        example: tx_count
+        type: string
+    type: object
+  api.Block:
+    properties:
+      base_fee_per_gas:
+        example: 25000000000
+        type: integer
+      block_number:
+        example: 12345678
+        type: integer
+      block_time:
+        type: string
+      chain_id:
+        example: 43114
+        type: integer
+      gas_limit:
+        example: 8000000
+        type: integer
+      gas_used:
+        example: 500000
+        type: integer
+      hash:
+        example: 0x1234...
+        type: string
+      miner:
+        example: 0x742d35Cc6634C0532925a3b844Bc9e7595f...
+        type: string
+      parent_hash:
+        example: 0xabcd...
+        type: string
+      size:
+        example: 1024
+        type: integer
+      tx_count:
+        example: 150
+        type: integer
+    type: object
+  api.ChainMetrics:
+    properties:
+      avg_block_time_seconds:
+        example: 2
+        type: number
+      avg_gas_used:
+        example: 500000
+        type: number
+      chain_id:
+        example: 43114
+        type: integer
+      chain_name:
+        example: C-Chain
+        type: string
+      last_block_time:
+        type: string
+      latest_block:
+        example: 12345678
+        type: integer
+      total_blocks:
+        example: 12345678
+        type: integer
+      total_gas_used:
+        example: 50000000000000
+        type: integer
+      total_txs:
+        example: 100000000
+        type: integer
+    type: object
+  api.EVMChainStatus:
+    properties:
+      blocks_behind:
+        example: 22
+        type: integer
+      chain_id:
+        example: 43114
+        type: integer
+      current_block:
+        example: 12345678
+        type: integer
+      is_synced:
+        example: true
+        type: boolean
+      last_sync:
+        type: string
+      latest_block:
+        example: 12345700
+        type: integer
+      name:
+        example: C-Chain
+        type: string
+    type: object
+  api.ErrorCode:
+    enum:
+    - INVALID_PARAMETER
+    - NOT_FOUND
+    - INTERNAL_ERROR
+    - RATE_LIMITED
+    - VALIDATION_FAILED
+    - DATABASE_ERROR
+    type: string
+    x-enum-varnames:
+    - ErrInvalidParameter
+    - ErrNotFound
+    - ErrInternalError
+    - ErrRateLimited
+    - ErrValidationFailed
+    - ErrDatabaseError
+  api.ErrorResponse:
+    properties:
+      error:
+        $ref: '#/definitions/api.APIError'
+    type: object
+  api.FeeStats:
+    properties:
+      current_balance:
+        example: 85000000000
+        type: integer
+      deposit_tx_count:
+        example: 15
+        type: integer
+      initial_deposits:
+        example: 80000000000
+        type: integer
+      subnet_id:
+        example: 2XDnKyAEr...
+        type: string
+      top_up_deposits:
+        example: 20000000000
+        type: integer
+      total_deposited:
+        example: 100000000000
+        type: integer
+      total_fees_paid:
+        example: 5000000000
+        type: integer
+      total_refunded:
+        example: 10000000000
+        type: integer
+      validator_count:
+        example: 5
+        type: integer
+    type: object
+  api.FieldError:
+    properties:
+      field:
+        type: string
+      message:
+        type: string
+    type: object
+  api.HealthStatus:
+    properties:
+      database:
+        example: connected
+        type: string
+      status:
+        example: healthy
+        type: string
+    type: object
+  api.IndexerStatus:
+    properties:
+      evm:
+        items:
+          $ref: '#/definitions/api.EVMChainStatus'
+        type: array
+      healthy:
+        example: true
+        type: boolean
+      last_update:
+        type: string
+      pchain:
+        $ref: '#/definitions/api.PChainStatus'
+    type: object
+  api.L1Registry:
+    properties:
+      description:
+        example: A high-performance L1
+        type: string
+      logo_url:
+        example: https://example.com/logo.png
+        type: string
+      name:
+        example: My L1
+        type: string
+      subnet_id:
+        example: 2XDnKyAEr...
+        type: string
+      website_url:
+        example: https://example.com
+        type: string
+    type: object
+  api.Meta:
+    properties:
+      limit:
+        type: integer
+      offset:
+        type: integer
+      total:
+        type: integer
+    type: object
+  api.MetricDataPoint:
+    properties:
+      period:
+        type: string
+      value:
+        example: 1234567
+        type: integer
+    type: object
+  api.MetricSeries:
+    properties:
+      chain_id:
+        example: 43114
+        type: integer
+      data:
+        items:
+          $ref: '#/definitions/api.MetricDataPoint'
+        type: array
+      granularity:
+        example: day
+        type: string
+      metric_name:
+        example: tx_count
+        type: string
+    type: object
+  api.PChainStatus:
+    properties:
+      blocks_behind:
+        example: 59
+        type: integer
+      current_block:
+        example: 24160141
+        type: integer
+      is_synced:
+        example: true
+        type: boolean
+      last_sync:
+        type: string
+      latest_block:
+        example: 24160200
+        type: integer
+    type: object
+  api.PChainTx:
+    properties:
+      block_number:
+        example: 12345678
+        type: integer
+      block_time:
+        type: string
+      tx_data:
+        additionalProperties: true
+        type: object
+      tx_id:
+        example: 2ZW6HUePB...
+        type: string
+      tx_type:
+        example: ConvertSubnetToL1Tx
+        type: string
+    type: object
+  api.Response:
+    properties:
+      data: {}
+      meta:
+        $ref: '#/definitions/api.Meta'
+    type: object
+  api.Subnet:
+    properties:
+      chain_id:
+        example: 2q9e4r6Mu...
+        type: string
+      converted_block:
+        example: 12345700
+        type: integer
+      converted_time:
+        type: string
+      created_block:
+        example: 12345678
+        type: integer
+      created_time:
+        type: string
+      subnet_id:
+        example: 2XDnKyAEr...
+        type: string
+      subnet_type:
+        example: l1
+        type: string
+    type: object
+  api.SubnetChain:
+    properties:
+      chain_id:
+        example: 2q9e4r6Mu...
+        type: string
+      chain_name:
+        example: My Chain
+        type: string
+      created_block:
+        example: 12345678
+        type: integer
+      created_time:
+        type: string
+      subnet_id:
+        example: 2XDnKyAEr...
+        type: string
+      vm_id:
+        example: subnetevm
+        type: string
+    type: object
+  api.SubnetDetail:
+    properties:
+      chains:
+        items:
+          $ref: '#/definitions/api.SubnetChain'
+        type: array
+      registry:
+        $ref: '#/definitions/api.L1Registry'
+      subnet:
+        $ref: '#/definitions/api.Subnet'
+    type: object
+  api.Transaction:
+    properties:
+      block_number:
+        example: 12345678
+        type: integer
+      block_time:
+        type: string
+      chain_id:
+        example: 43114
+        type: integer
+      from:
+        example: 0x742d35Cc6634C0532925a3b844Bc9e7595f...
+        type: string
+      gas_limit:
+        example: 21000
+        type: integer
+      gas_price:
+        example: 25000000000
+        type: integer
+      gas_used:
+        example: 21000
+        type: integer
+      hash:
+        example: 0x1234...
+        type: string
+      success:
+        example: true
+        type: boolean
+      to:
+        description: null for contract creation
+        example: 0x123...
+        type: string
+      transaction_index:
+        example: 0
+        type: integer
+      type:
+        example: 2
+        type: integer
+      value:
+        example: "1000000000000000000"
+        type: string
+    type: object
+  api.Validator:
+    properties:
+      active:
+        example: true
+        type: boolean
+      balance:
+        example: 100000000000
+        type: integer
+      end_time:
+        type: string
+      fees_paid:
+        example: 5000000000
+        type: integer
+      initial_deposit:
+        example: 100000000000
+        type: integer
+      node_id:
+        example: NodeID-P7oB2McjBGgW...
+        type: string
+      refund_amount:
+        example: 0
+        type: integer
+      start_time:
+        type: string
+      subnet_id:
+        example: 2XDnKyAEr...
+        type: string
+      total_topups:
+        example: 50000000000
+        type: integer
+      uptime_percentage:
+        example: 99.5
+        type: number
+      validation_id:
+        example: 2ZW6HUePB...
+        type: string
+      weight:
+        example: 2000
+        type: integer
+    type: object
+  api.ValidatorDeposit:
+    properties:
+      amount:
+        example: 10000000000
+        type: integer
+      block_number:
+        example: 12345678
+        type: integer
+      block_time:
+        type: string
+      tx_id:
+        example: 2ZW6HUePB...
+        type: string
+      tx_type:
+        example: IncreaseL1ValidatorBalanceTx
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact: {}
+  description: |-
+    Avalanche P-Chain and EVM Indexer API
+
+    ## Overview
+    This API provides access to indexed Avalanche blockchain data including:
+    - **Data API** (`/api/v1/data/*`): Blocks, transactions, subnets, validators, P-chain data
+    - **Metrics API** (`/api/v1/metrics/*`): Fee statistics, chain metrics, time series data
+
+    ## Rate Limiting
+    All endpoints are rate limited to 60 requests/minute per IP with a burst of 10.
+  title: Icicle API
+  version: "1.0"
+paths:
+  /api/v1/data/chains:
+    get:
+      description: Get a paginated list of blockchains across all subnets
+      parameters:
+      - description: Filter by subnet ID
+        in: query
+        name: subnet_id
+        type: string
+      - default: 20
+        description: Number of results (max 100)
+        in: query
+        name: limit
+        type: integer
+      - default: 0
+        description: Pagination offset
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/api.SubnetChain'
+                  type: array
+                meta:
+                  $ref: '#/definitions/api.Meta'
+              type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: List chains
+      tags:
+      - Data - Subnets
+  /api/v1/data/evm/{chainId}/address/{address}/txs:
+    get:
+      description: Get transactions sent from or to a specific address
+      parameters:
+      - description: Chain ID
+        in: path
+        name: chainId
+        required: true
+        type: integer
+      - description: Wallet address (0x-prefixed)
+        in: path
+        name: address
+        required: true
+        type: string
+      - default: 20
+        description: Number of results (max 100)
+        in: query
+        name: limit
+        type: integer
+      - default: 0
+        description: Pagination offset
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/api.Transaction'
+                  type: array
+                meta:
+                  $ref: '#/definitions/api.Meta'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Get transactions by address
+      tags:
+      - Data - EVM
+  /api/v1/data/evm/{chainId}/blocks:
+    get:
+      description: Get a paginated list of blocks for a specific chain
+      parameters:
+      - description: Chain ID (e.g., 43114 for C-Chain)
+        in: path
+        name: chainId
+        required: true
+        type: integer
+      - default: 20
+        description: Number of results (max 100)
+        in: query
+        name: limit
+        type: integer
+      - default: 0
+        description: Pagination offset
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/api.Block'
+                  type: array
+                meta:
+                  $ref: '#/definitions/api.Meta'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: List blocks
+      tags:
+      - Data - EVM
+  /api/v1/data/evm/{chainId}/blocks/{number}:
+    get:
+      description: Get details for a specific block including transaction count
+      parameters:
+      - description: Chain ID
+        in: path
+        name: chainId
+        required: true
+        type: integer
+      - description: Block number
+        in: path
+        name: number
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.Block'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Get block by number
+      tags:
+      - Data - EVM
+  /api/v1/data/evm/{chainId}/txs:
+    get:
+      description: Get a paginated list of transactions for a specific chain
+      parameters:
+      - description: Chain ID
+        in: path
+        name: chainId
+        required: true
+        type: integer
+      - default: 20
+        description: Number of results (max 100)
+        in: query
+        name: limit
+        type: integer
+      - default: 0
+        description: Pagination offset
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/api.Transaction'
+                  type: array
+                meta:
+                  $ref: '#/definitions/api.Meta'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: List transactions
+      tags:
+      - Data - EVM
+  /api/v1/data/evm/{chainId}/txs/{hash}:
+    get:
+      description: Get details for a specific transaction
+      parameters:
+      - description: Chain ID
+        in: path
+        name: chainId
+        required: true
+        type: integer
+      - description: Transaction hash (0x-prefixed)
+        in: path
+        name: hash
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.Transaction'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Get transaction by hash
+      tags:
+      - Data - EVM
+  /api/v1/data/l1s:
+    get:
+      description: Get a paginated list of L1 subnets with registry metadata
+      parameters:
+      - default: 20
+        description: Number of results (max 100)
+        in: query
+        name: limit
+        type: integer
+      - default: 0
+        description: Pagination offset
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  items:
+                    type: object
+                  type: array
+                meta:
+                  $ref: '#/definitions/api.Meta'
+              type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: List L1s
+      tags:
+      - Data - Subnets
+  /api/v1/data/pchain/tx-types:
+    get:
+      description: Get a list of P-Chain transaction types with counts
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  items:
+                    type: object
+                  type: array
+              type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: List P-Chain transaction types
+      tags:
+      - Data - P-Chain
+  /api/v1/data/pchain/txs:
+    get:
+      description: Get a paginated list of P-Chain transactions with optional filtering
+      parameters:
+      - description: Filter by transaction type
+        in: query
+        name: tx_type
+        type: string
+      - description: Filter by subnet ID
+        in: query
+        name: subnet_id
+        type: string
+      - default: 20
+        description: Number of results (max 100)
+        in: query
+        name: limit
+        type: integer
+      - default: 0
+        description: Pagination offset
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/api.PChainTx'
+                  type: array
+                meta:
+                  $ref: '#/definitions/api.Meta'
+              type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: List P-Chain transactions
+      tags:
+      - Data - P-Chain
+  /api/v1/data/pchain/txs/{txId}:
+    get:
+      description: Get details for a specific P-Chain transaction
+      parameters:
+      - description: Transaction ID
+        in: path
+        name: txId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.PChainTx'
+              type: object
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Get P-Chain transaction by ID
+      tags:
+      - Data - P-Chain
+  /api/v1/data/subnets:
+    get:
+      description: Get a paginated list of subnets with optional type filtering
+      parameters:
+      - description: Filter by subnet type (regular, elastic, l1)
+        in: query
+        name: type
+        type: string
+      - default: 20
+        description: Number of results (max 100)
+        in: query
+        name: limit
+        type: integer
+      - default: 0
+        description: Pagination offset
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/api.Subnet'
+                  type: array
+                meta:
+                  $ref: '#/definitions/api.Meta'
+              type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: List subnets
+      tags:
+      - Data - Subnets
+  /api/v1/data/subnets/{subnetId}:
+    get:
+      description: Get full details for a subnet including chains and registry info
+      parameters:
+      - description: Subnet ID
+        in: path
+        name: subnetId
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.SubnetDetail'
+              type: object
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Get subnet by ID
+      tags:
+      - Data - Subnets
+  /api/v1/data/validators:
+    get:
+      description: Get a paginated list of L1 validators with optional filtering
+      parameters:
+      - description: Filter by subnet ID
+        in: query
+        name: subnet_id
+        type: string
+      - description: Filter by active status (true/false)
+        in: query
+        name: active
+        type: boolean
+      - default: 20
+        description: Number of results (max 100)
+        in: query
+        name: limit
+        type: integer
+      - default: 0
+        description: Pagination offset
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/api.Validator'
+                  type: array
+                meta:
+                  $ref: '#/definitions/api.Meta'
+              type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: List validators
+      tags:
+      - Data - Validators
+  /api/v1/data/validators/{id}:
+    get:
+      description: Get details for a specific validator by validation ID or node ID
+      parameters:
+      - description: Validation ID or Node ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.Validator'
+              type: object
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Get validator by ID
+      tags:
+      - Data - Validators
+  /api/v1/data/validators/{id}/deposits:
+    get:
+      description: Get balance transactions (deposits, topups, refunds) for a validator
+      parameters:
+      - description: Validation ID or Node ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - default: 20
+        description: Number of results (max 100)
+        in: query
+        name: limit
+        type: integer
+      - default: 0
+        description: Pagination offset
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/api.ValidatorDeposit'
+                  type: array
+                meta:
+                  $ref: '#/definitions/api.Meta'
+              type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Get validator deposits
+      tags:
+      - Data - Validators
+  /api/v1/metrics/evm/{chainId}/stats:
+    get:
+      description: Get aggregate statistics (block count, tx count, gas usage) for
+        a chain
+      parameters:
+      - description: Chain ID
+        in: path
+        name: chainId
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.ChainMetrics'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Get chain statistics
+      tags:
+      - Metrics - Chain
+  /api/v1/metrics/evm/{chainId}/timeseries:
+    get:
+      description: Get a list of available time series metrics for a chain
+      parameters:
+      - description: Chain ID
+        in: path
+        name: chainId
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/api.AvailableMetric'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: List available metrics
+      tags:
+      - Metrics - Chain
+  /api/v1/metrics/evm/{chainId}/timeseries/{metric}:
+    get:
+      description: Get time series data for a specific metric with configurable granularity
+      parameters:
+      - description: Chain ID
+        in: path
+        name: chainId
+        required: true
+        type: integer
+      - description: Metric name (e.g., tx_count, gas_used)
+        in: path
+        name: metric
+        required: true
+        type: string
+      - default: day
+        description: Time granularity (hour, day, week, month)
+        in: query
+        name: granularity
+        type: string
+      - description: Start time (date, RFC3339, or unix timestamp)
+        in: query
+        name: from
+        type: string
+      - description: End time (date, RFC3339, or unix timestamp)
+        in: query
+        name: to
+        type: string
+      - default: 100
+        description: Number of data points (max 1000)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  $ref: '#/definitions/api.MetricSeries'
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Get metric time series
+      tags:
+      - Metrics - Chain
+  /api/v1/metrics/fees:
+    get:
+      description: Get aggregated fee statistics for L1 validators
+      parameters:
+      - description: Filter by subnet ID
+        in: query
+        name: subnet_id
+        type: string
+      - default: 20
+        description: Number of results (max 100)
+        in: query
+        name: limit
+        type: integer
+      - default: 0
+        description: Pagination offset
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/api.FeeStats'
+                  type: array
+                meta:
+                  $ref: '#/definitions/api.Meta'
+              type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Get L1 fee statistics
+      tags:
+      - Metrics - Fees
+  /api/v1/metrics/indexer/status:
+    get:
+      description: Get sync status for all indexed chains
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.IndexerStatus'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Get indexer status
+      tags:
+      - Metrics - Indexer
+  /health:
+    get:
+      description: Check API server and database connectivity
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: Healthy
+          schema:
+            $ref: '#/definitions/api.HealthStatus'
+        "503":
+          description: Unhealthy
+          schema:
+            $ref: '#/definitions/api.HealthStatus'
+      summary: Health check
+      tags:
+      - Health
+schemes:
+- http
+- https
+swagger: "2.0"
+tags:
+- description: Health check endpoints
+  name: Health
+- description: EVM blockchain data (blocks, transactions)
+  name: Data - EVM
+- description: P-Chain transaction data
+  name: Data - P-Chain
+- description: Subnet and L1 information
+  name: Data - Subnets
+- description: L1 validator information
+  name: Data - Validators
+- description: L1 validation fee statistics
+  name: Metrics - Fees
+- description: EVM chain statistics and time series
+  name: Metrics - Chain
+- description: Indexer sync status
+  name: Metrics - Indexer

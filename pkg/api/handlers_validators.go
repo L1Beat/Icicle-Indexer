@@ -5,30 +5,44 @@ import (
 	"time"
 )
 
+// Validator represents an L1 validator
 type Validator struct {
-	SubnetID         string    `json:"subnet_id"`
-	ValidationID     string    `json:"validation_id"`
-	NodeID           string    `json:"node_id"`
-	Balance          uint64    `json:"balance"`
-	Weight           uint64    `json:"weight"`
+	SubnetID         string    `json:"subnet_id" example:"2XDnKyAEr..."`
+	ValidationID     string    `json:"validation_id" example:"2ZW6HUePB..."`
+	NodeID           string    `json:"node_id" example:"NodeID-P7oB2McjBGgW..."`
+	Balance          uint64    `json:"balance" example:"100000000000"`
+	Weight           uint64    `json:"weight" example:"2000"`
 	StartTime        time.Time `json:"start_time"`
 	EndTime          time.Time `json:"end_time"`
-	UptimePercentage float64   `json:"uptime_percentage"`
-	Active           bool      `json:"active"`
-	InitialDeposit   uint64    `json:"initial_deposit"`
-	TotalTopups      uint64    `json:"total_topups"`
-	RefundAmount     uint64    `json:"refund_amount"`
-	FeesPaid         uint64    `json:"fees_paid"`
+	UptimePercentage float64   `json:"uptime_percentage" example:"99.5"`
+	Active           bool      `json:"active" example:"true"`
+	InitialDeposit   uint64    `json:"initial_deposit" example:"100000000000"`
+	TotalTopups      uint64    `json:"total_topups" example:"50000000000"`
+	RefundAmount     uint64    `json:"refund_amount" example:"0"`
+	FeesPaid         uint64    `json:"fees_paid" example:"5000000000"`
 }
 
+// ValidatorDeposit represents a balance transaction for a validator
 type ValidatorDeposit struct {
-	TxID        string    `json:"tx_id"`
-	TxType      string    `json:"tx_type"`
-	BlockNumber uint64    `json:"block_number"`
+	TxID        string    `json:"tx_id" example:"2ZW6HUePB..."`
+	TxType      string    `json:"tx_type" example:"IncreaseL1ValidatorBalanceTx"`
+	BlockNumber uint64    `json:"block_number" example:"12345678"`
 	BlockTime   time.Time `json:"block_time"`
-	Amount      uint64    `json:"amount"`
+	Amount      uint64    `json:"amount" example:"10000000000"`
 }
 
+// handleListValidators returns a paginated list of validators
+// @Summary List validators
+// @Description Get a paginated list of L1 validators with optional filtering
+// @Tags Data - Validators
+// @Produce json
+// @Param subnet_id query string false "Filter by subnet ID"
+// @Param active query boolean false "Filter by active status (true/false)"
+// @Param limit query int false "Number of results (max 100)" default(20)
+// @Param offset query int false "Pagination offset" default(0)
+// @Success 200 {object} Response{data=[]Validator,meta=Meta}
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/data/validators [get]
 func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 	ctx := s.queryContext()
 	limit, offset := getPagination(r)
@@ -90,7 +104,7 @@ func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := s.conn.Query(ctx, query, args...)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err.Error())
 		return
 	}
 	defer rows.Close()
@@ -103,7 +117,7 @@ func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 			&v.StartTime, &v.EndTime, &v.UptimePercentage, &v.Active,
 			&v.InitialDeposit, &v.TotalTopups, &v.RefundAmount, &v.FeesPaid,
 		); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeInternalError(w, err.Error())
 			return
 		}
 		validators = append(validators, v)
@@ -115,6 +129,15 @@ func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleGetValidator returns a single validator
+// @Summary Get validator by ID
+// @Description Get details for a specific validator by validation ID or node ID
+// @Tags Data - Validators
+// @Produce json
+// @Param id path string true "Validation ID or Node ID"
+// @Success 200 {object} Response{data=Validator}
+// @Failure 404 {object} ErrorResponse
+// @Router /api/v1/data/validators/{id} [get]
 func (s *Server) handleGetValidator(w http.ResponseWriter, r *http.Request) {
 	ctx := s.queryContext()
 	id := r.PathValue("id")
@@ -135,13 +158,24 @@ func (s *Server) handleGetValidator(w http.ResponseWriter, r *http.Request) {
 	)
 
 	if err != nil {
-		writeError(w, http.StatusNotFound, "validator not found")
+		writeNotFoundError(w, "Validator")
 		return
 	}
 
 	writeJSON(w, http.StatusOK, Response{Data: v})
 }
 
+// handleValidatorDeposits returns deposit transactions for a validator
+// @Summary Get validator deposits
+// @Description Get balance transactions (deposits, topups, refunds) for a validator
+// @Tags Data - Validators
+// @Produce json
+// @Param id path string true "Validation ID or Node ID"
+// @Param limit query int false "Number of results (max 100)" default(20)
+// @Param offset query int false "Pagination offset" default(0)
+// @Success 200 {object} Response{data=[]ValidatorDeposit,meta=Meta}
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/data/validators/{id}/deposits [get]
 func (s *Server) handleValidatorDeposits(w http.ResponseWriter, r *http.Request) {
 	ctx := s.queryContext()
 	limit, offset := getPagination(r)
@@ -156,7 +190,7 @@ func (s *Server) handleValidatorDeposits(w http.ResponseWriter, r *http.Request)
 	`, id, id, limit, offset)
 
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err.Error())
 		return
 	}
 	defer rows.Close()
@@ -165,7 +199,7 @@ func (s *Server) handleValidatorDeposits(w http.ResponseWriter, r *http.Request)
 	for rows.Next() {
 		var d ValidatorDeposit
 		if err := rows.Scan(&d.TxID, &d.TxType, &d.BlockNumber, &d.BlockTime, &d.Amount); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeInternalError(w, err.Error())
 			return
 		}
 		deposits = append(deposits, d)

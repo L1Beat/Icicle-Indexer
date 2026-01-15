@@ -5,14 +5,27 @@ import (
 	"time"
 )
 
+// PChainTx represents a P-Chain transaction
 type PChainTx struct {
-	TxID        string                 `json:"tx_id"`
-	TxType      string                 `json:"tx_type"`
-	BlockNumber uint64                 `json:"block_number"`
+	TxID        string                 `json:"tx_id" example:"2ZW6HUePB..."`
+	TxType      string                 `json:"tx_type" example:"ConvertSubnetToL1Tx"`
+	BlockNumber uint64                 `json:"block_number" example:"12345678"`
 	BlockTime   time.Time              `json:"block_time"`
 	TxData      map[string]interface{} `json:"tx_data"`
 }
 
+// handleListPChainTxs returns a paginated list of P-Chain transactions
+// @Summary List P-Chain transactions
+// @Description Get a paginated list of P-Chain transactions with optional filtering
+// @Tags Data - P-Chain
+// @Produce json
+// @Param tx_type query string false "Filter by transaction type"
+// @Param subnet_id query string false "Filter by subnet ID"
+// @Param limit query int false "Number of results (max 100)" default(20)
+// @Param offset query int false "Pagination offset" default(0)
+// @Success 200 {object} Response{data=[]PChainTx,meta=Meta}
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/data/pchain/txs [get]
 func (s *Server) handleListPChainTxs(w http.ResponseWriter, r *http.Request) {
 	ctx := s.queryContext()
 	limit, offset := getPagination(r)
@@ -68,7 +81,7 @@ func (s *Server) handleListPChainTxs(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := s.conn.Query(ctx, query, args...)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err.Error())
 		return
 	}
 	defer rows.Close()
@@ -77,7 +90,7 @@ func (s *Server) handleListPChainTxs(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var tx PChainTx
 		if err := rows.Scan(&tx.TxID, &tx.TxType, &tx.BlockNumber, &tx.BlockTime, &tx.TxData); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeInternalError(w, err.Error())
 			return
 		}
 		txs = append(txs, tx)
@@ -89,6 +102,15 @@ func (s *Server) handleListPChainTxs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleGetPChainTx returns a single P-Chain transaction
+// @Summary Get P-Chain transaction by ID
+// @Description Get details for a specific P-Chain transaction
+// @Tags Data - P-Chain
+// @Produce json
+// @Param txId path string true "Transaction ID"
+// @Success 200 {object} Response{data=PChainTx}
+// @Failure 404 {object} ErrorResponse
+// @Router /api/v1/data/pchain/txs/{txId} [get]
 func (s *Server) handleGetPChainTx(w http.ResponseWriter, r *http.Request) {
 	ctx := s.queryContext()
 	txID := r.PathValue("txId")
@@ -102,13 +124,21 @@ func (s *Server) handleGetPChainTx(w http.ResponseWriter, r *http.Request) {
 	`, txID).Scan(&tx.TxID, &tx.TxType, &tx.BlockNumber, &tx.BlockTime, &tx.TxData)
 
 	if err != nil {
-		writeError(w, http.StatusNotFound, "transaction not found")
+		writeNotFoundError(w, "Transaction")
 		return
 	}
 
 	writeJSON(w, http.StatusOK, Response{Data: tx})
 }
 
+// handlePChainTxTypes returns transaction type counts
+// @Summary List P-Chain transaction types
+// @Description Get a list of P-Chain transaction types with counts
+// @Tags Data - P-Chain
+// @Produce json
+// @Success 200 {object} Response{data=[]object}
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/data/pchain/tx-types [get]
 func (s *Server) handlePChainTxTypes(w http.ResponseWriter, r *http.Request) {
 	ctx := s.queryContext()
 
@@ -119,7 +149,7 @@ func (s *Server) handlePChainTxTypes(w http.ResponseWriter, r *http.Request) {
 		ORDER BY count DESC
 	`)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err.Error())
 		return
 	}
 	defer rows.Close()
@@ -133,7 +163,7 @@ func (s *Server) handlePChainTxTypes(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var t TxTypeCount
 		if err := rows.Scan(&t.TxType, &t.Count); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeInternalError(w, err.Error())
 			return
 		}
 		types = append(types, t)

@@ -347,9 +347,10 @@ func (cs *ChainSyncer) writerLoop() {
 
 		start := time.Now()
 		if err := cs.writeBlocks(buffer); err != nil {
-			// Panic on database write failure to ensure consistency
-			// We cannot afford partial writes or inconsistent state
-			log.Fatalf("[Chain %d] FATAL: Database write failed, cannot continue: %v", cs.chainId, err)
+			// Log error and retry - transient connection issues are handled by retry logic
+			// If we get here, retries have been exhausted but we can try again on next flush
+			log.Printf("[Chain %d] Error writing blocks: %v, will retry on next flush", cs.chainId, err)
+			return cs.flushInterval
 		}
 
 		elapsed := time.Since(start)

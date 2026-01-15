@@ -56,11 +56,16 @@ func main() {
 		Use:   "api",
 		Short: "Start the HTTP API server",
 		Run: func(command *cobra.Command, args []string) {
-			port, _ := command.Flags().GetInt("port")
-			cmd.RunAPI(port)
+			opts := cmd.DefaultAPIOptions()
+			opts.Port, _ = command.Flags().GetInt("port")
+			opts.RateLimitPerMin, _ = command.Flags().GetInt("rate-limit")
+			opts.RateLimitBurst, _ = command.Flags().GetInt("burst")
+			cmd.RunAPI(opts)
 		},
 	}
 	apiCmd.Flags().Int("port", 8080, "Port to listen on")
+	apiCmd.Flags().Int("rate-limit", 60, "Rate limit requests per minute per IP")
+	apiCmd.Flags().Int("burst", 10, "Rate limit burst size")
 
 	root.AddCommand(
 		ingestCmd,

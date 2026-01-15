@@ -1,0 +1,28 @@
+# Docker Compose for running integration tests with ClickHouse
+#
+# Usage:
+#   docker-compose -f docker-compose.test.yml up -d
+#   TEST_CH_DSN="clickhouse://localhost:9001" go test ./pkg/api/... -v -run Integration
+#   docker-compose -f docker-compose.test.yml down
+
+services:
+  clickhouse-test:
+    image: clickhouse/clickhouse-server:24.3
+    container_name: icicle-clickhouse-test
+    ports:
+      - "9001:9000"   # Native protocol
+      - "8124:8123"   # HTTP interface
+    environment:
+      - CLICKHOUSE_DB=test
+      - CLICKHOUSE_USER=default
+      - CLICKHOUSE_PASSWORD=
+    volumes:
+      - clickhouse-test-data:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  clickhouse-test-data:

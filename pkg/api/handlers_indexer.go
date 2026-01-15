@@ -5,31 +5,42 @@ import (
 	"time"
 )
 
+// EVMChainStatus represents sync status for an EVM chain
 type EVMChainStatus struct {
-	ChainID      uint32    `json:"chain_id"`
-	Name         string    `json:"name"`
-	CurrentBlock uint64    `json:"current_block"`
-	LatestBlock  uint64    `json:"latest_block"`
-	BlocksBehind int64     `json:"blocks_behind"`
+	ChainID      uint32    `json:"chain_id" example:"43114"`
+	Name         string    `json:"name" example:"C-Chain"`
+	CurrentBlock uint64    `json:"current_block" example:"12345678"`
+	LatestBlock  uint64    `json:"latest_block" example:"12345700"`
+	BlocksBehind int64     `json:"blocks_behind" example:"22"`
 	LastSync     time.Time `json:"last_sync"`
-	IsSynced     bool      `json:"is_synced"`
+	IsSynced     bool      `json:"is_synced" example:"true"`
 }
 
+// PChainStatus represents sync status for the P-Chain
 type PChainStatus struct {
-	CurrentBlock uint64    `json:"current_block"`
-	LatestBlock  uint64    `json:"latest_block"`
-	BlocksBehind int64     `json:"blocks_behind"`
+	CurrentBlock uint64    `json:"current_block" example:"24160141"`
+	LatestBlock  uint64    `json:"latest_block" example:"24160200"`
+	BlocksBehind int64     `json:"blocks_behind" example:"59"`
 	LastSync     time.Time `json:"last_sync"`
-	IsSynced     bool      `json:"is_synced"`
+	IsSynced     bool      `json:"is_synced" example:"true"`
 }
 
+// IndexerStatus represents the overall indexer health
 type IndexerStatus struct {
-	Healthy    bool             `json:"healthy"`
+	Healthy    bool             `json:"healthy" example:"true"`
 	EVM        []EVMChainStatus `json:"evm"`
 	PChain     *PChainStatus    `json:"pchain,omitempty"`
 	LastUpdate time.Time        `json:"last_update"`
 }
 
+// handleIndexerStatus returns the indexer sync status
+// @Summary Get indexer status
+// @Description Get sync status for all indexed chains
+// @Tags Metrics - Indexer
+// @Produce json
+// @Success 200 {object} IndexerStatus
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/metrics/indexer/status [get]
 func (s *Server) handleIndexerStatus(w http.ResponseWriter, r *http.Request) {
 	ctx := s.queryContext()
 
@@ -54,7 +65,7 @@ func (s *Server) handleIndexerStatus(w http.ResponseWriter, r *http.Request) {
 	`
 	evmRows, err := s.conn.Query(ctx, evmQuery)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to query chain status")
+		writeInternalError(w, "Failed to query chain status")
 		return
 	}
 	defer evmRows.Close()

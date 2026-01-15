@@ -5,39 +5,54 @@ import (
 	"time"
 )
 
+// Subnet represents an Avalanche subnet
 type Subnet struct {
-	SubnetID       string    `json:"subnet_id"`
-	SubnetType     string    `json:"subnet_type"`
-	CreatedBlock   uint64    `json:"created_block"`
+	SubnetID       string    `json:"subnet_id" example:"2XDnKyAEr..."`
+	SubnetType     string    `json:"subnet_type" example:"l1"`
+	CreatedBlock   uint64    `json:"created_block" example:"12345678"`
 	CreatedTime    time.Time `json:"created_time"`
-	ChainID        string    `json:"chain_id,omitempty"`
-	ConvertedBlock uint64    `json:"converted_block,omitempty"`
+	ChainID        string    `json:"chain_id,omitempty" example:"2q9e4r6Mu..."`
+	ConvertedBlock uint64    `json:"converted_block,omitempty" example:"12345700"`
 	ConvertedTime  time.Time `json:"converted_time,omitempty"`
 }
 
+// SubnetChain represents a blockchain within a subnet
 type SubnetChain struct {
-	ChainID      string    `json:"chain_id"`
-	SubnetID     string    `json:"subnet_id"`
-	ChainName    string    `json:"chain_name"`
-	VMID         string    `json:"vm_id"`
-	CreatedBlock uint64    `json:"created_block"`
+	ChainID      string    `json:"chain_id" example:"2q9e4r6Mu..."`
+	SubnetID     string    `json:"subnet_id" example:"2XDnKyAEr..."`
+	ChainName    string    `json:"chain_name" example:"My Chain"`
+	VMID         string    `json:"vm_id" example:"subnetevm"`
+	CreatedBlock uint64    `json:"created_block" example:"12345678"`
 	CreatedTime  time.Time `json:"created_time"`
 }
 
+// L1Registry represents metadata for an L1
 type L1Registry struct {
-	SubnetID    string `json:"subnet_id"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	LogoURL     string `json:"logo_url"`
-	WebsiteURL  string `json:"website_url"`
+	SubnetID    string `json:"subnet_id" example:"2XDnKyAEr..."`
+	Name        string `json:"name" example:"My L1"`
+	Description string `json:"description" example:"A high-performance L1"`
+	LogoURL     string `json:"logo_url" example:"https://example.com/logo.png"`
+	WebsiteURL  string `json:"website_url" example:"https://example.com"`
 }
 
+// SubnetDetail contains full subnet information
 type SubnetDetail struct {
-	Subnet   Subnet       `json:"subnet"`
+	Subnet   Subnet        `json:"subnet"`
 	Chains   []SubnetChain `json:"chains"`
-	Registry *L1Registry  `json:"registry,omitempty"`
+	Registry *L1Registry   `json:"registry,omitempty"`
 }
 
+// handleListSubnets returns a paginated list of subnets
+// @Summary List subnets
+// @Description Get a paginated list of subnets with optional type filtering
+// @Tags Data - Subnets
+// @Produce json
+// @Param type query string false "Filter by subnet type (regular, elastic, l1)"
+// @Param limit query int false "Number of results (max 100)" default(20)
+// @Param offset query int false "Pagination offset" default(0)
+// @Success 200 {object} Response{data=[]Subnet,meta=Meta}
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/data/subnets [get]
 func (s *Server) handleListSubnets(w http.ResponseWriter, r *http.Request) {
 	ctx := s.queryContext()
 	limit, offset := getPagination(r)
@@ -70,7 +85,7 @@ func (s *Server) handleListSubnets(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := s.conn.Query(ctx, query, args...)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err.Error())
 		return
 	}
 	defer rows.Close()
@@ -82,7 +97,7 @@ func (s *Server) handleListSubnets(w http.ResponseWriter, r *http.Request) {
 			&sub.SubnetID, &sub.SubnetType, &sub.CreatedBlock, &sub.CreatedTime,
 			&sub.ChainID, &sub.ConvertedBlock, &sub.ConvertedTime,
 		); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeInternalError(w, err.Error())
 			return
 		}
 		subnets = append(subnets, sub)
@@ -94,6 +109,15 @@ func (s *Server) handleListSubnets(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleGetSubnet returns details for a specific subnet
+// @Summary Get subnet by ID
+// @Description Get full details for a subnet including chains and registry info
+// @Tags Data - Subnets
+// @Produce json
+// @Param subnetId path string true "Subnet ID"
+// @Success 200 {object} Response{data=SubnetDetail}
+// @Failure 404 {object} ErrorResponse
+// @Router /api/v1/data/subnets/{subnetId} [get]
 func (s *Server) handleGetSubnet(w http.ResponseWriter, r *http.Request) {
 	ctx := s.queryContext()
 	subnetID := r.PathValue("subnetId")
@@ -112,7 +136,7 @@ func (s *Server) handleGetSubnet(w http.ResponseWriter, r *http.Request) {
 	)
 
 	if err != nil {
-		writeError(w, http.StatusNotFound, "subnet not found")
+		writeNotFoundError(w, "Subnet")
 		return
 	}
 
@@ -124,7 +148,7 @@ func (s *Server) handleGetSubnet(w http.ResponseWriter, r *http.Request) {
 		ORDER BY created_block
 	`, subnetID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err.Error())
 		return
 	}
 	defer rows.Close()
@@ -136,7 +160,7 @@ func (s *Server) handleGetSubnet(w http.ResponseWriter, r *http.Request) {
 			&chain.ChainID, &chain.SubnetID, &chain.ChainName,
 			&chain.VMID, &chain.CreatedBlock, &chain.CreatedTime,
 		); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeInternalError(w, err.Error())
 			return
 		}
 		chains = append(chains, chain)
@@ -166,11 +190,22 @@ func (s *Server) handleGetSubnet(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleListL1s returns a list of L1s with registry metadata
+// @Summary List L1s
+// @Description Get a paginated list of L1 subnets with registry metadata
+// @Tags Data - Subnets
+// @Produce json
+// @Param limit query int false "Number of results (max 100)" default(20)
+// @Param offset query int false "Pagination offset" default(0)
+// @Success 200 {object} Response{data=[]object,meta=Meta}
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/data/l1s [get]
 func (s *Server) handleListL1s(w http.ResponseWriter, r *http.Request) {
 	ctx := s.queryContext()
 	limit, offset := getPagination(r)
 
 	// Join subnets with registry for L1-specific endpoint
+	// Use subqueries for FINAL since ClickHouse doesn't support FINAL on joined tables
 	rows, err := s.conn.Query(ctx, `
 		SELECT
 			s.subnet_id,
@@ -183,15 +218,14 @@ func (s *Server) handleListL1s(w http.ResponseWriter, r *http.Request) {
 			r.description,
 			r.logo_url,
 			r.website_url
-		FROM subnets FINAL s
-		LEFT JOIN l1_registry FINAL r ON s.subnet_id = r.subnet_id
-		WHERE s.subnet_type = 'l1'
+		FROM (SELECT * FROM subnets FINAL WHERE subnet_type = 'l1') s
+		LEFT JOIN (SELECT * FROM l1_registry FINAL) r ON s.subnet_id = r.subnet_id
 		ORDER BY s.converted_block DESC
 		LIMIT ? OFFSET ?
 	`, limit, offset)
 
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err.Error())
 		return
 	}
 	defer rows.Close()
@@ -218,7 +252,7 @@ func (s *Server) handleListL1s(w http.ResponseWriter, r *http.Request) {
 			&l1.ChainID, &l1.ConvertedBlock, &l1.ConvertedTime,
 			&name, &description, &logoURL, &websiteURL,
 		); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeInternalError(w, err.Error())
 			return
 		}
 		if name != nil {
@@ -242,6 +276,17 @@ func (s *Server) handleListL1s(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleListChains returns a list of blockchains
+// @Summary List chains
+// @Description Get a paginated list of blockchains across all subnets
+// @Tags Data - Subnets
+// @Produce json
+// @Param subnet_id query string false "Filter by subnet ID"
+// @Param limit query int false "Number of results (max 100)" default(20)
+// @Param offset query int false "Pagination offset" default(0)
+// @Success 200 {object} Response{data=[]SubnetChain,meta=Meta}
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/data/chains [get]
 func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 	ctx := s.queryContext()
 	limit, offset := getPagination(r)
@@ -272,7 +317,7 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := s.conn.Query(ctx, query, args...)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeInternalError(w, err.Error())
 		return
 	}
 	defer rows.Close()
@@ -284,7 +329,7 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 			&chain.ChainID, &chain.SubnetID, &chain.ChainName,
 			&chain.VMID, &chain.CreatedBlock, &chain.CreatedTime,
 		); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error())
+			writeInternalError(w, err.Error())
 			return
 		}
 		chains = append(chains, chain)

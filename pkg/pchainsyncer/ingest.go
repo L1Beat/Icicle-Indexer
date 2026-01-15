@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"icicle/pkg/chwrapper"
 	"icicle/pkg/pchainrpc"
 	"log"
 	"strings"
@@ -177,7 +178,7 @@ func InsertPChainTxs(ctx context.Context, conn clickhouse.Conn, pchainID uint32,
 			}
 		}
 
-		if err := batch.Send(); err != nil {
+		if err := chwrapper.RetryableBatchSend(batch); err != nil {
 			return fmt.Errorf("failed to send batch: %w", err)
 		}
 	}
@@ -222,7 +223,7 @@ func InsertL1Subnets(ctx context.Context, conn clickhouse.Conn, subnets []L1Subn
 		}
 	}
 
-	return batch.Send()
+	return chwrapper.RetryableBatchSend(batch)
 }
 
 // InsertValidatorStates inserts or updates validator state records
@@ -259,7 +260,7 @@ func InsertValidatorStates(ctx context.Context, conn clickhouse.Conn, pchainID u
 		}
 	}
 
-	return batch.Send()
+	return chwrapper.RetryableBatchSend(batch)
 }
 
 // MarkInactiveValidators marks validators as inactive if they are no longer in the current RPC response.
@@ -348,7 +349,7 @@ func MarkInactiveValidators(ctx context.Context, conn clickhouse.Conn, pchainID 
 		}
 	}
 
-	if err := batch.Send(); err != nil {
+	if err := chwrapper.RetryableBatchSend(batch); err != nil {
 		return fmt.Errorf("failed to send inactive validators batch: %w", err)
 	}
 
@@ -794,7 +795,7 @@ func InsertSubnets(ctx context.Context, conn clickhouse.Conn, subnets []Subnet) 
 		}
 	}
 
-	return batch.Send()
+	return chwrapper.RetryableBatchSend(batch)
 }
 
 // Avalanche mainnet genesis timestamp: September 21, 2020 10:00:00 UTC
@@ -837,7 +838,7 @@ func InsertPrimaryNetwork(ctx context.Context, conn clickhouse.Conn, pchainID ui
 		return fmt.Errorf("failed to append primary network: %w", err)
 	}
 
-	return batch.Send()
+	return chwrapper.RetryableBatchSend(batch)
 }
 
 // InsertPrimaryNetworkChains inserts C-Chain, X-Chain, and P-Chain
@@ -891,7 +892,7 @@ func InsertPrimaryNetworkChains(ctx context.Context, conn clickhouse.Conn, pchai
 		}
 	}
 
-	return batch.Send()
+	return chwrapper.RetryableBatchSend(batch)
 }
 
 // InsertSubnetChains inserts or updates subnet chain records
@@ -925,7 +926,7 @@ func InsertSubnetChains(ctx context.Context, conn clickhouse.Conn, chains []Subn
 		}
 	}
 
-	return batch.Send()
+	return chwrapper.RetryableBatchSend(batch)
 }
 
 // L1FeeStats represents fee statistics for an L1 subnet
@@ -1087,7 +1088,7 @@ func InsertL1FeeStats(ctx context.Context, conn clickhouse.Conn, stats []L1FeeSt
 		}
 	}
 
-	return batch.Send()
+	return chwrapper.RetryableBatchSend(batch)
 }
 
 // L1ValidatorHistory represents a historical L1 validator record
@@ -1432,7 +1433,7 @@ func InsertL1ValidatorHistory(ctx context.Context, conn clickhouse.Conn, validat
 		}
 	}
 
-	return batch.Send()
+	return chwrapper.RetryableBatchSend(batch)
 }
 
 // L1ValidatorBalanceTx represents a balance-affecting transaction for a validator
@@ -1582,7 +1583,7 @@ func InsertL1ValidatorBalanceTxs(ctx context.Context, conn clickhouse.Conn, txs 
 		}
 	}
 
-	return batch.Send()
+	return chwrapper.RetryableBatchSend(batch)
 }
 
 // UpdatePerValidatorFeeStats calculates and updates fee statistics for each L1 validator
@@ -1698,7 +1699,7 @@ func UpdatePerValidatorFeeStats(ctx context.Context, conn clickhouse.Conn, pchai
 	}
 
 	if updateCount > 0 {
-		if err := batch.Send(); err != nil {
+		if err := chwrapper.RetryableBatchSend(batch); err != nil {
 			return fmt.Errorf("failed to send batch: %w", err)
 		}
 		log.Printf("Updated fee stats for %d validators", updateCount)
@@ -1853,7 +1854,7 @@ func SyncL1ValidatorRefunds(ctx context.Context, conn clickhouse.Conn, fetcher *
 	}
 
 	if insertCount > 0 {
-		if err := batch.Send(); err != nil {
+		if err := chwrapper.RetryableBatchSend(batch); err != nil {
 			return fmt.Errorf("failed to send refunds batch: %w", err)
 		}
 		log.Printf("Synced %d validator refunds", insertCount)

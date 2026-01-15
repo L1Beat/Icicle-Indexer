@@ -24,12 +24,13 @@ func GetWatermark(conn driver.Conn, chainId uint32) (uint32, error) {
 }
 
 // SetWatermark updates the watermark to the given block number for a specific chain
+// Uses retry logic to handle transient connection errors
 func SetWatermark(conn driver.Conn, chainId uint32, blockNumber uint32) error {
 	ctx := context.Background()
 
 	query := "INSERT INTO sync_watermark (chain_id, block_number) VALUES (?, ?)"
 
-	if err := conn.Exec(ctx, query, chainId, blockNumber); err != nil {
+	if err := RetryableExec(ctx, conn, query, chainId, blockNumber); err != nil {
 		return fmt.Errorf("failed to set watermark: %w", err)
 	}
 
