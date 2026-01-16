@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS raw_blocks (
     blob_gas_used UInt32,  -- Always 0 if no blob txs
     excess_blob_gas UInt64,  -- Always 0 if no blob txs
     parent_beacon_block_root LowCardinality(FixedString(32)),  -- Often all zeros
-    min_delay_excess UInt64
+    min_delay_excess UInt64,
+    tx_count UInt32  -- Denormalized transaction count for fast list queries
 ) ENGINE = MergeTree()
 ORDER BY (chain_id, block_number);
 

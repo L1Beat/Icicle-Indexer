@@ -171,7 +171,7 @@ func InsertBlocks(ctx context.Context, conn clickhouse.Conn, chainID uint32, blo
 		block_gas_cost, state_root, transactions_root, receipts_root, extra_data,
 		block_extra_data, ext_data_hash, ext_data_gas_used, mix_hash, nonce,
 		sha3_uncles, uncles, blob_gas_used, excess_blob_gas, parent_beacon_block_root,
-		min_delay_excess
+		min_delay_excess, tx_count
 	)`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare batch: %w", err)
@@ -327,6 +327,9 @@ func InsertBlocks(ctx context.Context, conn clickhouse.Conn, chainID uint32, blo
 			return fmt.Errorf("failed to parse min delay excess: %w", err)
 		}
 
+		// Transaction count (denormalized for fast list queries)
+		txCount := uint32(len(block.Transactions))
+
 		// Append to batch
 		err = batch.Append(
 			chainID,
@@ -357,6 +360,7 @@ func InsertBlocks(ctx context.Context, conn clickhouse.Conn, chainID uint32, blo
 			excessBlobGas,
 			parentBeaconRoot,
 			minDelayExcess,
+			txCount,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to append block %d: %w", blockNumber, err)

@@ -19,7 +19,7 @@ type Block struct {
 	GasLimit    uint32    `json:"gas_limit" example:"8000000"`
 	GasUsed     uint32    `json:"gas_used" example:"500000"`
 	BaseFee     uint64    `json:"base_fee_per_gas" example:"25000000000"`
-	TxCount     uint32    `json:"tx_count,omitempty" example:"150"`
+	TxCount     uint32    `json:"tx_count" example:"150"`
 }
 
 // handleListBlocks returns a paginated list of blocks
@@ -47,7 +47,7 @@ func (s *Server) handleListBlocks(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.conn.Query(ctx, `
 		SELECT
 			chain_id, block_number, hash, parent_hash, block_time,
-			miner, size, gas_limit, gas_used, base_fee_per_gas
+			miner, size, gas_limit, gas_used, base_fee_per_gas, tx_count
 		FROM raw_blocks
 		WHERE chain_id = ?
 		ORDER BY block_number DESC
@@ -68,7 +68,7 @@ func (s *Server) handleListBlocks(w http.ResponseWriter, r *http.Request) {
 
 		if err := rows.Scan(
 			&b.ChainID, &b.BlockNumber, &hashBytes, &parentHashBytes, &b.BlockTime,
-			&minerAddr, &b.Size, &b.GasLimit, &b.GasUsed, &b.BaseFee,
+			&minerAddr, &b.Size, &b.GasLimit, &b.GasUsed, &b.BaseFee, &b.TxCount,
 		); err != nil {
 			writeInternalError(w, err.Error())
 			return
@@ -120,12 +120,12 @@ func (s *Server) handleGetBlock(w http.ResponseWriter, r *http.Request) {
 	err = s.conn.QueryRow(ctx, `
 		SELECT
 			chain_id, block_number, hash, parent_hash, block_time,
-			miner, size, gas_limit, gas_used, base_fee_per_gas
+			miner, size, gas_limit, gas_used, base_fee_per_gas, tx_count
 		FROM raw_blocks
 		WHERE chain_id = ? AND block_number = ?
 	`, chainID, blockNumber).Scan(
 		&b.ChainID, &b.BlockNumber, &hashBytes, &parentHashBytes, &b.BlockTime,
-		&minerAddr, &b.Size, &b.GasLimit, &b.GasUsed, &b.BaseFee,
+		&minerAddr, &b.Size, &b.GasLimit, &b.GasUsed, &b.BaseFee, &b.TxCount,
 	)
 
 	if err != nil {
@@ -136,13 +136,6 @@ func (s *Server) handleGetBlock(w http.ResponseWriter, r *http.Request) {
 	b.Hash = "0x" + hex.EncodeToString(hashBytes[:])
 	b.ParentHash = "0x" + hex.EncodeToString(parentHashBytes[:])
 	b.Miner = "0x" + hex.EncodeToString(minerAddr[:])
-
-	// Get transaction count
-	var txCount uint64
-	s.conn.QueryRow(ctx, `
-		SELECT count() FROM raw_txs WHERE chain_id = ? AND block_number = ?
-	`, chainID, blockNumber).Scan(&txCount)
-	b.TxCount = uint32(txCount)
 
 	writeJSON(w, http.StatusOK, Response{Data: b})
 }
