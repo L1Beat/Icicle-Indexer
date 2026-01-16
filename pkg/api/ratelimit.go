@@ -20,8 +20,8 @@ type RateLimitConfig struct {
 // DefaultRateLimitConfig returns sensible defaults
 func DefaultRateLimitConfig() RateLimitConfig {
 	return RateLimitConfig{
-		RequestsPerMinute: 60,
-		BurstSize:         10,
+		RequestsPerMinute: 6000, // 100 requests per second
+		BurstSize:         100,
 		CleanupInterval:   5 * time.Minute,
 	}
 }
@@ -115,8 +115,8 @@ func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 		ip := getClientIP(r)
 
 		if !rl.Allow(ip) {
-			w.Header().Set("Retry-After", "60")
-			writeRateLimitError(w, 60)
+			w.Header().Set("Retry-After", "1")
+			writeRateLimitError(w, 1)
 			return
 		}
 

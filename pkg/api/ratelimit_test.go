@@ -96,7 +96,7 @@ func TestRateLimiter_Middleware(t *testing.T) {
 	wrapped.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusTooManyRequests, w.Code)
-	assert.Equal(t, "60", w.Header().Get("Retry-After"))
+	assert.Equal(t, "1", w.Header().Get("Retry-After"))
 }
 
 func TestGetClientIP_RemoteAddr(t *testing.T) {
@@ -170,5 +170,5 @@ func TestRateLimiter_Returns429WithJSON(t *testing.T) {
 	err := json.Unmarshal(w.Body.Bytes(), &resp)
 	require.NoError(t, err)
 	assert.Equal(t, ErrRateLimited, resp.Error.Code)
-	assert.Equal(t, 60, resp.Error.RetryAfter)
+	assert.Equal(t, 1, resp.Error.RetryAfter)
 }

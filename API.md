@@ -2,6 +2,14 @@
 
 Base URL: `http://localhost:8080`
 
+**Interactive Documentation**: Open `/api/docs/` in browser for Swagger UI
+
+## API Structure
+
+- **Data API** (`/api/v1/data/*`): Blocks, transactions, subnets, validators, P-chain data
+- **Metrics API** (`/api/v1/metrics/*`): Fee statistics, chain metrics, time series data
+- **System** (`/health`): Health check (no versioning)
+
 ## Common Response Format
 
 **Success:**
@@ -18,9 +26,26 @@ Base URL: `http://localhost:8080`
 **Error:**
 ```json
 {
-  "error": "error message"
+  "error": {
+    "code": "INVALID_PARAMETER",
+    "message": "Description of the error"
+  }
 }
 ```
+
+**Error Codes:**
+- `INVALID_PARAMETER` - Invalid request parameter
+- `NOT_FOUND` - Resource not found
+- `INTERNAL_ERROR` - Server error
+- `RATE_LIMITED` - Too many requests
+
+## Rate Limiting
+
+All endpoints are rate limited to 100 requests/second per IP with a burst of 100.
+
+When rate limited, you'll receive:
+- HTTP 429 status
+- `Retry-After` header with seconds to wait
 
 ## Common Query Parameters
 
@@ -49,7 +74,7 @@ Check API and database connectivity.
 
 ## Indexer Status
 
-### GET /indexer/status
+### GET /api/v1/metrics/indexer/status
 
 Get indexer sync status for all chains. Useful for monitoring and alerting.
 
@@ -87,22 +112,22 @@ Get indexer sync status for all chains. Useful for monitoring and alerting.
 **Use for Telegram alerts:**
 ```bash
 # Check if healthy
-curl -s http://your-server:8080/indexer/status | jq '.healthy'
+curl -s http://your-server:8080/api/v1/metrics/indexer/status | jq '.healthy'
 
 # Get blocks behind for C-Chain
-curl -s http://your-server:8080/indexer/status | jq '.evm[] | select(.chain_id == 43114) | .blocks_behind'
+curl -s http://your-server:8080/api/v1/metrics/indexer/status | jq '.evm[] | select(.chain_id == 43114) | .blocks_behind'
 ```
 
 ---
 
-## EVM Chain Data
+## Data API - EVM
 
-All EVM endpoints are prefixed with `/evm/{chainId}/...`
+All EVM data endpoints are prefixed with `/api/v1/data/evm/{chainId}/...`
 
 Common chain IDs:
 - `43114` - Avalanche C-Chain
 
-### GET /evm/{chainId}/blocks
+### GET /api/v1/data/evm/{chainId}/blocks
 
 List recent blocks for a chain.
 
@@ -143,7 +168,7 @@ List recent blocks for a chain.
 
 ---
 
-### GET /evm/{chainId}/blocks/{number}
+### GET /api/v1/data/evm/{chainId}/blocks/{number}
 
 Get a specific block by number.
 
@@ -174,7 +199,7 @@ Get a specific block by number.
 
 ---
 
-### GET /evm/{chainId}/txs
+### GET /api/v1/data/evm/{chainId}/txs
 
 List recent transactions for a chain.
 
@@ -223,7 +248,7 @@ List recent transactions for a chain.
 
 ---
 
-### GET /evm/{chainId}/txs/{hash}
+### GET /api/v1/data/evm/{chainId}/txs/{hash}
 
 Get a specific transaction by hash.
 
@@ -256,7 +281,7 @@ Get a specific transaction by hash.
 
 ---
 
-### GET /evm/{chainId}/address/{address}/txs
+### GET /api/v1/data/evm/{chainId}/address/{address}/txs
 
 Get transactions for a specific address (as sender or receiver).
 
@@ -272,66 +297,11 @@ Get transactions for a specific address (as sender or receiver).
 | `limit` | int | Results per page |
 | `offset` | int | Pagination offset |
 
-**Response:**
-```json
-{
-  "data": [
-    {
-      "chain_id": 43114,
-      "hash": "0x1234...abcd",
-      "block_number": 54000000,
-      "block_time": "2025-01-08T12:00:00Z",
-      "transaction_index": 0,
-      "from": "0xabcd...1234",
-      "to": "0x5678...efgh",
-      "value": "1000000000000000000",
-      "gas_limit": 21000,
-      "gas_price": 25000000000,
-      "gas_used": 21000,
-      "success": true,
-      "type": 2
-    }
-  ],
-  "meta": {
-    "limit": 20,
-    "offset": 0
-  }
-}
-```
-
 ---
 
-### GET /evm/{chainId}/stats
+## Data API - P-Chain
 
-Get statistics for a specific chain.
-
-**Path Parameters:**
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `chainId` | int | Chain ID |
-
-**Response:**
-```json
-{
-  "data": {
-    "chain_id": 43114,
-    "chain_name": "C-Chain",
-    "latest_block": 54000000,
-    "total_blocks": 54000000,
-    "total_txs": 250000000,
-    "last_block_time": "2025-01-08T12:00:00Z",
-    "avg_block_time_seconds": 2.0,
-    "avg_gas_used": 8000000,
-    "total_gas_used": 432000000000000
-  }
-}
-```
-
----
-
-## P-Chain Transactions
-
-### GET /pchain/txs
+### GET /api/v1/data/pchain/txs
 
 List P-Chain transactions.
 
@@ -379,7 +349,7 @@ List P-Chain transactions.
 
 ---
 
-### GET /pchain/txs/{txId}
+### GET /api/v1/data/pchain/txs/{txId}
 
 Get a specific P-Chain transaction by ID.
 
@@ -388,22 +358,9 @@ Get a specific P-Chain transaction by ID.
 |-----------|------|-------------|
 | `txId` | string | Transaction ID (CB58) |
 
-**Response:**
-```json
-{
-  "data": {
-    "tx_id": "22FdhKfCTTW...xxNeV",
-    "tx_type": "RegisterL1ValidatorTx",
-    "block_number": 12345678,
-    "block_time": "2024-12-01T00:00:00Z",
-    "tx_data": { ... }
-  }
-}
-```
-
 ---
 
-### GET /pchain/tx-types
+### GET /api/v1/data/pchain/tx-types
 
 Get all P-Chain transaction types with counts.
 
@@ -420,9 +377,9 @@ Get all P-Chain transaction types with counts.
 
 ---
 
-## Subnets
+## Data API - Subnets
 
-### GET /subnets
+### GET /api/v1/data/subnets
 
 List all subnets.
 
@@ -461,7 +418,7 @@ List all subnets.
 
 ---
 
-### GET /subnets/{subnetId}
+### GET /api/v1/data/subnets/{subnetId}
 
 Get subnet details with chains and registry metadata.
 
@@ -506,9 +463,9 @@ Get subnet details with chains and registry metadata.
 
 ---
 
-## L1s
+## Data API - L1s
 
-### GET /l1s
+### GET /api/v1/data/l1s
 
 List all Avalanche L1s with registry metadata.
 
@@ -518,35 +475,11 @@ List all Avalanche L1s with registry metadata.
 | `limit` | int | Results per page |
 | `offset` | int | Pagination offset |
 
-**Response:**
-```json
-{
-  "data": [
-    {
-      "subnet_id": "2ABC...xyz",
-      "created_block": 10000000,
-      "created_time": "2024-01-01T00:00:00Z",
-      "chain_id": "2DEF...uvw",
-      "converted_block": 12000000,
-      "converted_time": "2024-06-01T00:00:00Z",
-      "name": "My L1",
-      "description": "A description",
-      "logo_url": "https://example.com/logo.png",
-      "website_url": "https://example.com"
-    }
-  ],
-  "meta": {
-    "limit": 20,
-    "offset": 0
-  }
-}
-```
-
 ---
 
-## Chains
+## Data API - Chains
 
-### GET /chains
+### GET /api/v1/data/chains
 
 List all blockchains created within subnets.
 
@@ -557,31 +490,11 @@ List all blockchains created within subnets.
 | `limit` | int | Results per page |
 | `offset` | int | Pagination offset |
 
-**Response:**
-```json
-{
-  "data": [
-    {
-      "chain_id": "2DEF...uvw",
-      "subnet_id": "2ABC...xyz",
-      "chain_name": "My Chain",
-      "vm_id": "srEXiWaH...",
-      "created_block": 10000001,
-      "created_time": "2024-01-01T00:01:00Z"
-    }
-  ],
-  "meta": {
-    "limit": 20,
-    "offset": 0
-  }
-}
-```
-
 ---
 
-## Validators
+## Data API - Validators
 
-### GET /validators
+### GET /api/v1/data/validators
 
 List L1 validators.
 
@@ -625,7 +538,7 @@ List L1 validators.
 
 ---
 
-### GET /validators/{id}
+### GET /api/v1/data/validators/{id}
 
 Get validator by validation ID or node ID.
 
@@ -636,7 +549,7 @@ Get validator by validation ID or node ID.
 
 ---
 
-### GET /validators/{id}/deposits
+### GET /api/v1/data/validators/{id}/deposits
 
 Get deposit history for a validator.
 
@@ -666,9 +579,9 @@ Get deposit history for a validator.
 
 ---
 
-## Metrics
+## Metrics API - Fees
 
-### GET /metrics/fees
+### GET /api/v1/metrics/fees
 
 Get L1 validation fee statistics.
 
@@ -704,82 +617,217 @@ Get L1 validation fee statistics.
 
 ---
 
+## Metrics API - Chain Stats
+
+### GET /api/v1/metrics/evm/{chainId}/stats
+
+Get aggregate statistics for a chain.
+
+**Path Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `chainId` | int | Chain ID |
+
+**Response:**
+```json
+{
+  "data": {
+    "chain_id": 43114,
+    "chain_name": "C-Chain",
+    "latest_block": 54000000,
+    "total_blocks": 54000000,
+    "total_txs": 250000000,
+    "last_block_time": "2025-01-08T12:00:00Z",
+    "avg_block_time_seconds": 2.0,
+    "avg_gas_used": 8000000,
+    "total_gas_used": 432000000000000
+  }
+}
+```
+
+---
+
+## Metrics API - Time Series
+
+### GET /api/v1/metrics/evm/{chainId}/timeseries
+
+List available metrics for a chain.
+
+**Path Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `chainId` | int | Chain ID |
+
+**Response:**
+```json
+{
+  "data": [
+    {
+      "metric_name": "tx_count",
+      "granularities": ["hour", "day", "week"],
+      "latest_period": "2025-01-15T00:00:00Z",
+      "data_points": 365
+    },
+    {
+      "metric_name": "active_addresses",
+      "granularities": ["day", "week"],
+      "latest_period": "2025-01-15T00:00:00Z",
+      "data_points": 180
+    }
+  ]
+}
+```
+
+---
+
+### GET /api/v1/metrics/evm/{chainId}/timeseries/{metric}
+
+Get time series data for a specific metric.
+
+**Path Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `chainId` | int | Chain ID |
+| `metric` | string | Metric name |
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `granularity` | string | day | Time granularity: hour, day, week, month |
+| `from` | string | - | Start time (date, RFC3339, or unix timestamp) |
+| `to` | string | - | End time (date, RFC3339, or unix timestamp) |
+| `limit` | int | 100 | Number of data points (max 1000) |
+
+**Available Metrics:**
+- `tx_count` - Transaction count
+- `active_addresses` - Unique active addresses
+- `active_senders` - Unique senders
+- `fees_paid` - Total fees in wei
+- `gas_used` - Total gas used
+- `contracts` - New contracts deployed
+- `deployers` - Unique contract deployers
+- `avg_tps` - Average transactions per second
+- `max_tps` - Maximum transactions per second
+- `avg_gps` - Average gas per second
+- `max_gps` - Maximum gas per second
+- `avg_gas_price` - Average gas price
+- `max_gas_price` - Maximum gas price
+- `icm_total` - Total ICM messages
+- `icm_sent` - ICM messages sent
+- `icm_received` - ICM messages received
+- `usdc_volume` - USDC transfer volume
+- `cumulative_tx_count` - Cumulative transaction count
+- `cumulative_addresses` - Cumulative unique addresses
+- `cumulative_contracts` - Cumulative contracts deployed
+- `cumulative_deployers` - Cumulative unique deployers
+
+**Response:**
+```json
+{
+  "data": {
+    "chain_id": 43114,
+    "metric_name": "tx_count",
+    "granularity": "day",
+    "data": [
+      { "period": "2025-01-01T00:00:00Z", "value": 123456 },
+      { "period": "2025-01-02T00:00:00Z", "value": 234567 }
+    ]
+  }
+}
+```
+
+---
+
 ## Examples
 
 ```bash
 # Health check
 curl http://localhost:8080/health
 
+# Indexer status (for monitoring)
+curl http://localhost:8080/api/v1/metrics/indexer/status
+
 # === EVM Data (C-Chain = 43114) ===
 
 # Get latest blocks
-curl "http://localhost:8080/evm/43114/blocks?limit=10"
+curl "http://localhost:8080/api/v1/data/evm/43114/blocks?limit=10"
 
 # Get specific block
-curl "http://localhost:8080/evm/43114/blocks/54000000"
+curl "http://localhost:8080/api/v1/data/evm/43114/blocks/54000000"
 
 # Get latest transactions
-curl "http://localhost:8080/evm/43114/txs?limit=10"
+curl "http://localhost:8080/api/v1/data/evm/43114/txs?limit=10"
 
 # Get transaction by hash
-curl "http://localhost:8080/evm/43114/txs/0x1234..."
+curl "http://localhost:8080/api/v1/data/evm/43114/txs/0x1234..."
 
 # Get address transactions
-curl "http://localhost:8080/evm/43114/address/0xabcd.../txs"
+curl "http://localhost:8080/api/v1/data/evm/43114/address/0xabcd.../txs"
+
+# === EVM Metrics ===
 
 # Get chain stats
-curl "http://localhost:8080/evm/43114/stats"
+curl "http://localhost:8080/api/v1/metrics/evm/43114/stats"
+
+# List available metrics
+curl "http://localhost:8080/api/v1/metrics/evm/43114/timeseries"
+
+# Get daily transaction count (last 30 days)
+curl "http://localhost:8080/api/v1/metrics/evm/43114/timeseries/tx_count?granularity=day&limit=30"
+
+# Get hourly active addresses with time range
+curl "http://localhost:8080/api/v1/metrics/evm/43114/timeseries/active_addresses?granularity=hour&from=2025-01-01&to=2025-01-07"
 
 # === P-Chain Data ===
 
 # List P-Chain transactions
-curl "http://localhost:8080/pchain/txs?limit=20"
+curl "http://localhost:8080/api/v1/data/pchain/txs?limit=20"
 
 # Filter by type
-curl "http://localhost:8080/pchain/txs?tx_type=RegisterL1ValidatorTx"
+curl "http://localhost:8080/api/v1/data/pchain/txs?tx_type=RegisterL1ValidatorTx"
 
 # Get transaction by ID
-curl "http://localhost:8080/pchain/txs/22FdhKfCTTW...xxNeV"
+curl "http://localhost:8080/api/v1/data/pchain/txs/22FdhKfCTTW...xxNeV"
 
 # Get transaction type counts
-curl "http://localhost:8080/pchain/tx-types"
+curl "http://localhost:8080/api/v1/data/pchain/tx-types"
 
 # === Subnets & L1s ===
 
 # List all subnets
-curl "http://localhost:8080/subnets"
+curl "http://localhost:8080/api/v1/data/subnets"
 
 # List L1 subnets only
-curl "http://localhost:8080/subnets?type=l1"
+curl "http://localhost:8080/api/v1/data/subnets?type=l1"
 
 # Get subnet details
-curl "http://localhost:8080/subnets/2ABC...xyz"
+curl "http://localhost:8080/api/v1/data/subnets/2ABC...xyz"
 
 # List all L1s with metadata
-curl "http://localhost:8080/l1s"
+curl "http://localhost:8080/api/v1/data/l1s"
 
 # List all chains
-curl "http://localhost:8080/chains"
+curl "http://localhost:8080/api/v1/data/chains"
 
 # === Validators ===
 
 # List active validators
-curl "http://localhost:8080/validators?active=true"
+curl "http://localhost:8080/api/v1/data/validators?active=true"
 
 # Filter by subnet
-curl "http://localhost:8080/validators?subnet_id=2ABC...xyz"
+curl "http://localhost:8080/api/v1/data/validators?subnet_id=2ABC...xyz"
 
 # Get validator details
-curl "http://localhost:8080/validators/NodeID-ABC123..."
+curl "http://localhost:8080/api/v1/data/validators/NodeID-ABC123..."
 
 # Get validator deposits
-curl "http://localhost:8080/validators/NodeID-ABC123.../deposits"
+curl "http://localhost:8080/api/v1/data/validators/NodeID-ABC123.../deposits"
 
-# === Metrics ===
+# === Fee Metrics ===
 
 # Get fee stats for all L1s
-curl "http://localhost:8080/metrics/fees"
+curl "http://localhost:8080/api/v1/metrics/fees"
 
 # Get fee stats for specific L1
-curl "http://localhost:8080/metrics/fees?subnet_id=2ABC...xyz"
+curl "http://localhost:8080/api/v1/metrics/fees?subnet_id=2ABC...xyz"
 ```

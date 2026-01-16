@@ -15,10 +15,10 @@ func TestHandleListBlocks_Success(t *testing.T) {
 	mock := &MockConn{
 		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
 			return NewMockRows(
-				[]string{"chain_id", "block_number", "hash", "parent_hash", "block_time", "miner", "size", "gas_limit", "gas_used", "base_fee_per_gas"},
+				[]string{"chain_id", "block_number", "hash", "parent_hash", "block_time", "miner", "size", "gas_limit", "gas_used", "base_fee_per_gas", "tx_count"},
 				[][]interface{}{
-					{uint32(43114), uint32(12345678), [32]byte{0x12, 0x34}, [32]byte{0xab, 0xcd}, time.Now(), [20]byte{0x74}, uint32(1024), uint32(8000000), uint32(500000), uint64(25000000000)},
-					{uint32(43114), uint32(12345677), [32]byte{0x56, 0x78}, [32]byte{0xef, 0x01}, time.Now(), [20]byte{0x75}, uint32(2048), uint32(8000000), uint32(600000), uint64(26000000000)},
+					{uint32(43114), uint32(12345678), [32]byte{0x12, 0x34}, [32]byte{0xab, 0xcd}, time.Now(), [20]byte{0x74}, uint32(1024), uint32(8000000), uint32(500000), uint64(25000000000), uint32(150)},
+					{uint32(43114), uint32(12345677), [32]byte{0x56, 0x78}, [32]byte{0xef, 0x01}, time.Now(), [20]byte{0x75}, uint32(2048), uint32(8000000), uint32(600000), uint64(26000000000), uint32(200)},
 				},
 			), nil
 		},
@@ -67,7 +67,7 @@ func TestHandleListBlocks_Pagination(t *testing.T) {
 			assert.Equal(t, uint32(43114), args[0])
 			assert.Equal(t, 50, args[1])
 			assert.Equal(t, 100, args[2])
-			return NewMockRows([]string{"chain_id", "block_number", "hash", "parent_hash", "block_time", "miner", "size", "gas_limit", "gas_used", "base_fee_per_gas"}, [][]interface{}{}), nil
+			return NewMockRows([]string{"chain_id", "block_number", "hash", "parent_hash", "block_time", "miner", "size", "gas_limit", "gas_used", "base_fee_per_gas", "tx_count"}, [][]interface{}{}), nil
 		},
 	}
 
@@ -86,7 +86,7 @@ func TestHandleListBlocks_LimitCapped(t *testing.T) {
 			// Verify limit is capped at 100 when requesting more than 100
 			limit := args[1].(int)
 			assert.LessOrEqual(t, limit, 100, "limit should be capped at 100")
-			return NewMockRows([]string{"chain_id", "block_number", "hash", "parent_hash", "block_time", "miner", "size", "gas_limit", "gas_used", "base_fee_per_gas"}, [][]interface{}{}), nil
+			return NewMockRows([]string{"chain_id", "block_number", "hash", "parent_hash", "block_time", "miner", "size", "gas_limit", "gas_used", "base_fee_per_gas", "tx_count"}, [][]interface{}{}), nil
 		},
 	}
 
