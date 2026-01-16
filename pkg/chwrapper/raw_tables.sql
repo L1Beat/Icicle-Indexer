@@ -100,7 +100,8 @@ CREATE TABLE IF NOT EXISTS raw_logs (
     topic2 Nullable(FixedString(32)),
     topic3 Nullable(FixedString(32)),
     data String,  -- Non-indexed event data
-    removed Bool  -- TODO: check if ever happen to be true
+    removed Bool,  -- TODO: check if ever happen to be true
+    INDEX idx_block_number block_number TYPE minmax GRANULARITY 1  -- Speeds up block range queries
 ) ENGINE = MergeTree()
 ORDER BY (chain_id, block_time, address, topic0);
 
