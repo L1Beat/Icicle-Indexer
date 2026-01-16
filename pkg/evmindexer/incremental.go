@@ -39,7 +39,8 @@ func (r *IndexRunner) processIncrementalBatch() bool {
 			// Run indexer for the batch
 			start := time.Now()
 			if err := r.runIncrementalIndexer(indexerFile, fromBlock, toBlock); err != nil {
-				log.Fatalf("[Chain %d] FATAL: Failed to run %s: %v", r.chainId, indexerName, err)
+				log.Printf("[Chain %d] ERROR: Failed to run %s: %v (will retry next cycle)", r.chainId, indexerName, err)
+				continue // Skip to next indexer, watermark not updated so will retry
 			}
 			elapsed := time.Since(start)
 
@@ -48,7 +49,8 @@ func (r *IndexRunner) processIncrementalBatch() bool {
 
 			// Save watermark to DB
 			if err := r.saveWatermark(indexerName, watermark); err != nil {
-				log.Fatalf("[Chain %d] FATAL: Failed to save watermark for %s: %v", r.chainId, indexerName, err)
+				log.Printf("[Chain %d] ERROR: Failed to save watermark for %s: %v (will retry next cycle)", r.chainId, indexerName, err)
+				// Don't update hasWork - watermark wasn't saved so next cycle will reprocess (safe with ReplacingMergeTree)
 			}
 
 			// Log the batch processing

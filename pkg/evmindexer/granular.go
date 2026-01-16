@@ -31,7 +31,8 @@ func (r *IndexRunner) processGranularMetrics() {
 			// Run metric
 			start := time.Now()
 			if err := r.runGranularMetric(metricFile, granularity, periods); err != nil {
-				log.Fatalf("[Chain %d] FATAL: Failed to run %s (%s): %v", r.chainId, indexerName, granularity, err)
+				log.Printf("[Chain %d] ERROR: Failed to run %s (%s): %v (will retry next cycle)", r.chainId, indexerName, granularity, err)
+				continue // Skip to next granularity, watermark not updated so will retry
 			}
 			elapsed := time.Since(start)
 			fmt.Printf("[Chain %d] %s (%s) - processed %d periods - time taken: %s\n",
@@ -40,7 +41,8 @@ func (r *IndexRunner) processGranularMetrics() {
 			// Update watermark
 			watermark.LastPeriod = periods[len(periods)-1]
 			if err := r.saveWatermarkWithGranularity(indexerName, granularity, watermark); err != nil {
-				log.Fatalf("[Chain %d] FATAL: Failed to save watermark for %s (%s): %v", r.chainId, indexerName, granularity, err)
+				log.Printf("[Chain %d] ERROR: Failed to save watermark for %s (%s): %v (will retry next cycle)", r.chainId, indexerName, granularity, err)
+				// Don't continue here - watermark wasn't updated so next cycle will reprocess (safe with ReplacingMergeTree)
 			}
 		}
 	}
