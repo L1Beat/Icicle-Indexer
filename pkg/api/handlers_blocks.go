@@ -47,9 +47,8 @@ func (s *Server) handleListBlocks(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.conn.Query(ctx, `
 		SELECT
 			chain_id, block_number, hash, parent_hash, block_time,
-			miner, size, gas_limit, gas_used, base_fee_per_gas,
-			(SELECT count() FROM raw_txs WHERE chain_id = b.chain_id AND block_number = b.block_number) as tx_count
-		FROM raw_blocks b
+			miner, size, gas_limit, gas_used, base_fee_per_gas
+		FROM raw_blocks
 		WHERE chain_id = ?
 		ORDER BY block_number DESC
 		LIMIT ? OFFSET ?
@@ -69,7 +68,7 @@ func (s *Server) handleListBlocks(w http.ResponseWriter, r *http.Request) {
 
 		if err := rows.Scan(
 			&b.ChainID, &b.BlockNumber, &hashBytes, &parentHashBytes, &b.BlockTime,
-			&minerAddr, &b.Size, &b.GasLimit, &b.GasUsed, &b.BaseFee, &b.TxCount,
+			&minerAddr, &b.Size, &b.GasLimit, &b.GasUsed, &b.BaseFee,
 		); err != nil {
 			writeInternalError(w, err.Error())
 			return
