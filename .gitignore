@@ -11,3 +11,7 @@ clickhouse-metrics-poc-linux
 CLAUDE.md
 .docs/
 icicle
+
+# Deployment (machine-specific)
+deploy/
+Makefile
