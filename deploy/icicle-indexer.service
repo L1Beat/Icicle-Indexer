@@ -1,0 +1,17 @@
+[Unit]
+Description=Icicle Indexer
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/clickhouse-metrics-poc
+ExecStart=/root/clickhouse-metrics-poc/icicle ingest
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
