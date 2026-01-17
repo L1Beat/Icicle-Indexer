@@ -6,8 +6,8 @@ Requires=docker.service
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/root/clickhouse-metrics-poc
-ExecStart=/root/clickhouse-metrics-poc/icicle ingest
+WorkingDirectory=/root/icicle
+ExecStart=/root/icicle/icicle ingest
 Restart=always
 RestartSec=10
 StandardOutput=journal

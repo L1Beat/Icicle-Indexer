@@ -1,7 +1,7 @@
 # Configure these in your environment or .env.local (not committed)
 PROD_HOST ?= $(error Set PROD_HOST, e.g., export PROD_HOST=root@your-server-ip)
 PROD_URL ?= $(error Set PROD_URL, e.g., export PROD_URL=http://your-server-ip:8080)
-PROD_DIR := /root/clickhouse-metrics-poc
+PROD_DIR := /root/icicle
 BINARY := icicle
 
 .PHONY: build deploy deploy-api deploy-indexer logs-api logs-indexer status test install-services stop start restart
