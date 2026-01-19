@@ -1,6 +1,7 @@
 package api
 
 import (
+	"log"
 	"net/http"
 	"time"
 )
@@ -153,16 +154,17 @@ func (s *Server) handleChainMetrics(w http.ResponseWriter, r *http.Request) {
 	// Get block stats
 	err = s.conn.QueryRow(ctx, `
 		SELECT
-			max(block_number) as latest_block,
-			count() as total_blocks,
+			toUInt64(max(block_number)) as latest_block,
+			toUInt64(count()) as total_blocks,
 			max(block_time) as last_block_time,
 			ifNotFinite(avg(gas_used), 0) as avg_gas_used,
-			sum(gas_used) as total_gas_used
+			toUInt64(sum(gas_used)) as total_gas_used
 		FROM raw_blocks
 		WHERE chain_id = ?
 	`, chainID).Scan(&m.LatestBlock, &m.TotalBlocks, &m.LastBlockTime, &m.AvgGasUsed, &m.TotalGasUsed)
 
 	if err != nil {
+		log.Printf("[ERROR] Chain stats query failed for chain %d: %v", chainID, err)
 		writeNotFoundError(w, "Chain")
 		return
 	}
