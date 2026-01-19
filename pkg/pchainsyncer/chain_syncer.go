@@ -221,8 +221,8 @@ func (ps *PChainSyncer) fetcherLoop(startBlock, latestBlock int64) {
 		default:
 			// Check if we're caught up
 			if currentBlock > latestBlock {
-				// Poll for new blocks
-				time.Sleep(2 * time.Second)
+				// Poll for new blocks (500ms for near real-time updates)
+				time.Sleep(500 * time.Millisecond)
 
 				newLatest, err := ps.fetcher.GetLatestBlock()
 				if err != nil {
