@@ -156,7 +156,7 @@ func (s *Server) handleChainMetrics(w http.ResponseWriter, r *http.Request) {
 			max(block_number) as latest_block,
 			count() as total_blocks,
 			max(block_time) as last_block_time,
-			avg(gas_used) as avg_gas_used,
+			ifNotFinite(avg(gas_used), 0) as avg_gas_used,
 			sum(gas_used) as total_gas_used
 		FROM raw_blocks
 		WHERE chain_id = ?
