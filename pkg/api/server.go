@@ -73,6 +73,7 @@ type Server struct {
 	router      *http.ServeMux
 	rateLimiter *RateLimiter
 	handler     http.Handler
+	wsHub       *WSHub
 }
 
 type Response struct {
@@ -91,8 +92,13 @@ func NewServer(conn driver.Conn, cfg Config) *Server {
 		conn:        conn,
 		router:      http.NewServeMux(),
 		rateLimiter: NewRateLimiter(cfg.RateLimit),
+		wsHub:       NewWSHub(conn),
 	}
 	s.registerRoutes()
+
+	// Start WebSocket hub
+	go s.wsHub.Run()
+	go s.wsHub.StartPoller()
 
 	// Chain middlewares: CORS -> Logging -> RateLimit -> Router
 	s.handler = Chain(
@@ -159,6 +165,11 @@ func (s *Server) registerRoutes() {
 
 	// Indexer Status
 	s.router.HandleFunc("GET /api/v1/metrics/indexer/status", s.handleIndexerStatus)
+
+	// ==========================================
+	// WebSocket - /ws/*
+	// ==========================================
+	s.router.HandleFunc("GET /ws/blocks/{chainId}", s.handleWSBlocks)
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -170,6 +181,7 @@ func (s *Server) Start(port int) error {
 	log.Printf("Starting API server on %s", addr)
 	log.Printf("  Data API:    /api/v1/data/*")
 	log.Printf("  Metrics API: /api/v1/metrics/*")
+	log.Printf("  WebSocket:   /ws/blocks/{chainId}")
 	return http.ListenAndServe(addr, s)
 }
 

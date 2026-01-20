@@ -65,6 +65,7 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/mux v1.8.0 // indirect
 	github.com/gorilla/rpc v1.2.0 // indirect
+	github.com/gorilla/websocket v1.5.1 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.27.1 // indirect
 	github.com/holiman/uint256 v1.2.4 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
