@@ -128,12 +128,13 @@ func (h *WSHub) pollNewBlocks() {
 	ctx := context.Background()
 
 	for _, chainID := range chainIDs {
-		// Get latest block number
-		var latestBlock uint64
+		// Get latest block number (use uint32 to match ClickHouse schema)
+		var latestBlock uint32
 		row := h.conn.QueryRow(ctx, `
 			SELECT max(block_number) FROM raw_blocks WHERE chain_id = ?
 		`, chainID)
 		if err := row.Scan(&latestBlock); err != nil {
+			log.Printf("[WS Poller] Error querying latest block for chain %d: %v", chainID, err)
 			continue
 		}
 
@@ -144,21 +145,23 @@ func (h *WSHub) pollNewBlocks() {
 		// Initialize lastBlock if this is the first poll for this chain
 		if lastSeen == 0 {
 			h.mu.Lock()
-			h.lastBlock[chainID] = latestBlock
+			h.lastBlock[chainID] = uint64(latestBlock)
 			h.mu.Unlock()
+			log.Printf("[WS Poller] Initialized chain %d at block %d", chainID, latestBlock)
 			continue
 		}
 
 		// Check if there are new blocks
-		if latestBlock > lastSeen {
+		if uint64(latestBlock) > lastSeen {
 			// Fetch new blocks
-			blocks := h.fetchBlockRange(ctx, chainID, lastSeen+1, latestBlock)
+			blocks := h.fetchBlockRange(ctx, chainID, lastSeen+1, uint64(latestBlock))
+			log.Printf("[WS Poller] Chain %d: %d new blocks (%d -> %d)", chainID, len(blocks), lastSeen+1, latestBlock)
 			for _, block := range blocks {
 				h.broadcastBlock(chainID, block)
 			}
 
 			h.mu.Lock()
-			h.lastBlock[chainID] = latestBlock
+			h.lastBlock[chainID] = uint64(latestBlock)
 			h.mu.Unlock()
 		}
 	}
