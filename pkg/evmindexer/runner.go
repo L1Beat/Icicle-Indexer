@@ -148,10 +148,10 @@ func (r *IndexRunner) Start() {
 		// Process granular metrics (time-based)
 		r.processGranularMetrics()
 
-		// Fetch token metadata periodically (every 30 seconds)
-		if r.tokenMetadataFetcher != nil && time.Since(r.lastMetadataFetch) > 30*time.Second {
+		// Fetch token metadata periodically (every 10 seconds)
+		if r.tokenMetadataFetcher != nil && time.Since(r.lastMetadataFetch) > 10*time.Second {
 			r.lastMetadataFetch = time.Now()
-			count, err := r.tokenMetadataFetcher.FetchMissingMetadata(100)
+			count, err := r.tokenMetadataFetcher.FetchMissingMetadata(500)
 			if err != nil {
 				fmt.Printf("[Chain %d] Token metadata fetch error: %v\n", r.chainId, err)
 			} else if count > 0 {
