@@ -40,10 +40,10 @@ GROUP BY chain_id, wallet;
 
 INSERT INTO native_balance_changes (chain_id, wallet, from_block, to_block, deposits, withdrawals, gas_spent)
 SELECT
-    {chain_id:UInt32} as chain_id,
+    @chain_id as chain_id,
     wallet,
-    {from_block:UInt32} as from_block,
-    {to_block:UInt32} as to_block,
+    @from_block as from_block,
+    @to_block as to_block,
     sum(deposit_amount) as deposits,
     sum(withdrawal_amount) as withdrawals,
     sum(gas_amount) as gas_spent
@@ -58,9 +58,9 @@ FROM (
         toUInt256(0) as withdrawal_amount,
         toUInt256(0) as gas_amount
     FROM raw_traces
-    WHERE chain_id = {chain_id:UInt32}
-      AND block_number >= {from_block:UInt32}
-      AND block_number <= {to_block:UInt32}
+    WHERE chain_id = @chain_id
+      AND block_number >= @from_block
+      AND block_number <= @to_block
       AND to IS NOT NULL
       AND value > 0
       AND tx_success = true
@@ -78,9 +78,9 @@ FROM (
         value as withdrawal_amount,
         toUInt256(0) as gas_amount
     FROM raw_traces
-    WHERE chain_id = {chain_id:UInt32}
-      AND block_number >= {from_block:UInt32}
-      AND block_number <= {to_block:UInt32}
+    WHERE chain_id = @chain_id
+      AND block_number >= @from_block
+      AND block_number <= @to_block
       AND value > 0
       AND tx_success = true
       AND call_type IN ('CALL', 'CREATE', 'CREATE2')
@@ -97,9 +97,9 @@ FROM (
         toUInt256(0) as withdrawal_amount,
         toUInt256(gas_used) * toUInt256(gas_price) as gas_amount
     FROM raw_txs
-    WHERE chain_id = {chain_id:UInt32}
-      AND block_number >= {from_block:UInt32}
-      AND block_number <= {to_block:UInt32}
+    WHERE chain_id = @chain_id
+      AND block_number >= @from_block
+      AND block_number <= @to_block
 ) transfers
 WHERE wallet != unhex('0000000000000000000000000000000000000000')
 GROUP BY wallet
