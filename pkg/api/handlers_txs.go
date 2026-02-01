@@ -132,16 +132,12 @@ func (s *Server) handleGetTx(w http.ResponseWriter, r *http.Request) {
 
 	hash := normalizeHash(r.PathValue("hash"))
 
-	// Convert hex hash to bytes for query
+	// Convert hex hash to bytes for validation
 	hashHex := hash[2:] // Remove 0x prefix
-	hashBytes, err := hex.DecodeString(hashHex)
-	if err != nil || len(hashBytes) != 32 {
+	if _, err := hex.DecodeString(hashHex); err != nil || len(hashHex) != 64 {
 		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid transaction hash")
 		return
 	}
-
-	var hashFixed [32]byte
-	copy(hashFixed[:], hashBytes)
 
 	var tx Transaction
 	var dbHashBytes [32]byte
@@ -149,14 +145,15 @@ func (s *Server) handleGetTx(w http.ResponseWriter, r *http.Request) {
 	var toBytes []byte // Use slice for nullable FixedString
 	var valueBig big.Int
 
+	// Use unhex() in SQL for proper FixedString comparison
 	err = s.conn.QueryRow(ctx, `
 		SELECT
 			chain_id, hash, block_number, block_time, transaction_index,
 			from, to, value, gas_limit, gas_price, gas_used, success, type
 		FROM raw_txs
-		WHERE chain_id = ? AND hash = ?
+		WHERE chain_id = ? AND hash = unhex(?)
 		LIMIT 1
-	`, chainID, hashFixed).Scan(
+	`, chainID, hashHex).Scan(
 		&tx.ChainID, &dbHashBytes, &tx.BlockNumber, &tx.BlockTime, &tx.TransactionIndex,
 		&fromBytes, &toBytes, &valueBig, &tx.GasLimit, &tx.GasPrice, &tx.GasUsed, &tx.Success, &tx.Type,
 	)
