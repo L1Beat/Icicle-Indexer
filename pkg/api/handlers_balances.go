@@ -6,6 +6,15 @@ import (
 	"strings"
 )
 
+// NativeBalance represents the native token balance for a wallet
+type NativeBalance struct {
+	TotalIn          string `json:"total_in" example:"1000000000000000000"`
+	TotalOut         string `json:"total_out" example:"500000000000000000"`
+	TotalGas         string `json:"total_gas" example:"21000000000000"`
+	Balance          string `json:"balance" example:"499979000000000000"`
+	LastUpdatedBlock uint64 `json:"last_updated_block" example:"77048918"`
+}
+
 // TokenBalance represents an ERC-20 token balance for a wallet
 type TokenBalance struct {
 	Token            string  `json:"token" example:"0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e"`
@@ -125,5 +134,83 @@ func (s *Server) handleAddressBalances(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, Response{
 		Data: balances,
 		Meta: &Meta{Limit: limit, Offset: offset},
+	})
+}
+
+// handleAddressNativeBalance returns native token balance for an address
+// @Summary Get native token balance
+// @Description Get native token balance (AVAX, ETH, etc.) for an address
+// @Tags Data - EVM
+// @Produce json
+// @Param chainId path int true "Chain ID"
+// @Param address path string true "Wallet address (with or without 0x prefix)"
+// @Success 200 {object} Response{data=NativeBalance}
+// @Failure 400 {object} ErrorResponse
+// @Failure 404 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/data/evm/{chainId}/address/{address}/native [get]
+func (s *Server) handleAddressNativeBalance(w http.ResponseWriter, r *http.Request) {
+	ctx := s.queryContext()
+
+	chainID, err := getChainIDFromPath(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid chain_id")
+		return
+	}
+
+	// Get address from path and normalize
+	address := r.PathValue("address")
+	address = strings.TrimPrefix(strings.ToLower(address), "0x")
+
+	// Validate address (should be 40 hex chars = 20 bytes)
+	if len(address) != 40 {
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid address format")
+		return
+	}
+
+	// Validate it's valid hex
+	if _, err := hex.DecodeString(address); err != nil {
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid address hex")
+		return
+	}
+
+	query := `
+		SELECT
+			toString(total_in) as total_in,
+			toString(total_out) as total_out,
+			toString(total_gas) as total_gas,
+			toString(balance) as balance,
+			last_updated_block
+		FROM native_balances FINAL
+		WHERE chain_id = ?
+		  AND wallet = unhex(?)
+	`
+
+	var totalIn, totalOut, totalGas, balance string
+	var lastBlock uint32
+
+	err = s.conn.QueryRow(ctx, query, chainID, address).Scan(&totalIn, &totalOut, &totalGas, &balance, &lastBlock)
+	if err != nil {
+		// Return zero balance if not found
+		writeJSON(w, http.StatusOK, Response{
+			Data: NativeBalance{
+				TotalIn:          "0",
+				TotalOut:         "0",
+				TotalGas:         "0",
+				Balance:          "0",
+				LastUpdatedBlock: 0,
+			},
+		})
+		return
+	}
+
+	writeJSON(w, http.StatusOK, Response{
+		Data: NativeBalance{
+			TotalIn:          totalIn,
+			TotalOut:         totalOut,
+			TotalGas:         totalGas,
+			Balance:          balance,
+			LastUpdatedBlock: uint64(lastBlock),
+		},
 	})
 }
