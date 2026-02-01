@@ -28,9 +28,9 @@ type Transaction struct {
 
 // InternalTransaction represents an internal call trace
 type InternalTransaction struct {
-	TxHash      string    `json:"tx_hash" example:"0x1234..."`
-	BlockNumber uint32    `json:"block_number" example:"12345678"`
-	BlockTime   time.Time `json:"block_time"`
+	TxHash      string    `json:"tx_hash,omitempty" example:"0x1234..."`
+	BlockNumber uint32    `json:"block_number,omitempty" example:"12345678"`
+	BlockTime   time.Time `json:"block_time,omitempty"`
 	TraceIndex  string    `json:"trace_index" example:"0,1,2"` // Path in call tree
 	From        string    `json:"from" example:"0x742d35Cc..."`
 	To          *string   `json:"to" example:"0x123..."` // null for CREATE
@@ -38,6 +38,25 @@ type InternalTransaction struct {
 	GasUsed     uint32    `json:"gas_used" example:"21000"`
 	CallType    string    `json:"call_type" example:"CALL"`
 	Success     bool      `json:"success" example:"true"`
+}
+
+// TokenTransfer represents an ERC-20 token transfer within a transaction
+type TokenTransfer struct {
+	Token    string  `json:"token" example:"0xb97ef9ef..."`
+	Name     *string `json:"name,omitempty" example:"USD Coin"`
+	Symbol   *string `json:"symbol,omitempty" example:"USDC"`
+	Decimals *uint8  `json:"decimals,omitempty" example:"6"`
+	From     string  `json:"from" example:"0x742d35Cc..."`
+	To       string  `json:"to" example:"0x123..."`
+	Value    string  `json:"value" example:"1000000"`
+	LogIndex uint32  `json:"log_index" example:"5"`
+}
+
+// TransactionDetail represents a full transaction with internal txs and token transfers
+type TransactionDetail struct {
+	Transaction
+	InternalTxs    []InternalTransaction `json:"internal_txs"`
+	TokenTransfers []TokenTransfer       `json:"token_transfers"`
 }
 
 // handleListTxs returns a paginated list of transactions
@@ -171,7 +190,102 @@ func (s *Server) handleGetTx(w http.ResponseWriter, r *http.Request) {
 	}
 	tx.Value = valueBig.String()
 
-	writeJSON(w, http.StatusOK, Response{Data: tx})
+	// Build detailed response
+	detail := TransactionDetail{
+		Transaction:    tx,
+		InternalTxs:    []InternalTransaction{},
+		TokenTransfers: []TokenTransfer{},
+	}
+
+	// Fetch internal transactions (traces with value > 0, excluding top-level)
+	traceRows, err := s.conn.Query(ctx, `
+		SELECT trace_address, from, to, value, gas_used, call_type, tx_success
+		FROM raw_traces
+		WHERE chain_id = ? AND tx_hash = unhex(?)
+		  AND value > 0
+		  AND length(trace_address) > 0
+		ORDER BY trace_address
+	`, chainID, hashHex)
+	if err == nil {
+		defer traceRows.Close()
+		for traceRows.Next() {
+			var itx InternalTransaction
+			var fromBytes [20]byte
+			var toBytes []byte
+			var valueBig big.Int
+			var traceAddr []uint16
+
+			if err := traceRows.Scan(&traceAddr, &fromBytes, &toBytes, &valueBig, &itx.GasUsed, &itx.CallType, &itx.Success); err == nil {
+				itx.From = "0x" + hex.EncodeToString(fromBytes[:])
+				if len(toBytes) > 0 {
+					to := "0x" + hex.EncodeToString(toBytes)
+					itx.To = &to
+				}
+				itx.Value = valueBig.String()
+
+				traceStrs := make([]string, len(traceAddr))
+				for i, v := range traceAddr {
+					traceStrs[i] = fmt.Sprintf("%d", v)
+				}
+				itx.TraceIndex = strings.Join(traceStrs, ",")
+
+				detail.InternalTxs = append(detail.InternalTxs, itx)
+			}
+		}
+	}
+
+	// Fetch ERC-20 token transfers (Transfer events)
+	transferRows, err := s.conn.Query(ctx, `
+		SELECT
+			l.address,
+			tm.name,
+			tm.symbol,
+			tm.decimals,
+			substring(l.topic1, 13, 20) as from_addr,
+			substring(l.topic2, 13, 20) as to_addr,
+			reinterpretAsUInt256(reverse(l.data)) as value,
+			l.log_index
+		FROM raw_logs l
+		LEFT JOIN token_metadata tm ON l.chain_id = tm.chain_id AND l.address = tm.token
+		WHERE l.chain_id = ?
+		  AND l.transaction_hash = unhex(?)
+		  AND l.topic0 = unhex('ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef')
+		  AND length(l.data) = 32
+		ORDER BY l.log_index
+	`, chainID, hashHex)
+	if err == nil {
+		defer transferRows.Close()
+		for transferRows.Next() {
+			var tt TokenTransfer
+			var tokenBytes [20]byte
+			var fromBytes [20]byte
+			var toBytes [20]byte
+			var name, symbol string
+			var decimals uint8
+			var valueBig big.Int
+
+			if err := transferRows.Scan(&tokenBytes, &name, &symbol, &decimals, &fromBytes, &toBytes, &valueBig, &tt.LogIndex); err == nil {
+				tt.Token = "0x" + hex.EncodeToString(tokenBytes[:])
+				tt.From = "0x" + hex.EncodeToString(fromBytes[:])
+				tt.To = "0x" + hex.EncodeToString(toBytes[:])
+				tt.Value = valueBig.String()
+
+				if name != "" {
+					tt.Name = &name
+				}
+				if symbol != "" {
+					tt.Symbol = &symbol
+				}
+				if decimals > 0 || name != "" || symbol != "" {
+					tt.Decimals = &decimals
+				}
+
+				detail.TokenTransfers = append(detail.TokenTransfers, tt)
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, Response{Data: detail})
 }
 
 // handleAddressTxs returns transactions for an address
