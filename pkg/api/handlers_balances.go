@@ -49,14 +49,15 @@ func (s *Server) handleAddressBalances(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	addressBytes, err := hex.DecodeString(address)
-	if err != nil {
+	// Validate it's valid hex
+	if _, err := hex.DecodeString(address); err != nil {
 		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid address hex")
 		return
 	}
 
 	limit, offset := getPagination(r)
 
+	// Use unhex() in SQL to convert hex string to FixedString(20)
 	query := `
 		SELECT
 			token,
@@ -66,13 +67,13 @@ func (s *Server) handleAddressBalances(w http.ResponseWriter, r *http.Request) {
 			last_updated_block
 		FROM erc20_balances FINAL
 		WHERE chain_id = ?
-		  AND wallet = ?
+		  AND wallet = unhex(?)
 		  AND balance > 0
 		ORDER BY balance DESC
 		LIMIT ? OFFSET ?
 	`
 
-	rows, err := s.conn.Query(ctx, query, chainID, addressBytes, limit, offset)
+	rows, err := s.conn.Query(ctx, query, chainID, address, limit, offset)
 	if err != nil {
 		writeInternalError(w, err.Error())
 		return
