@@ -131,6 +131,9 @@ func (s *Server) registerRoutes() {
 	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/txs/{hash}", s.handleGetTx)
 	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/address/{address}/txs", s.handleAddressTxs)
 
+	// EVM Address Balances
+	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/address/{address}/balances", s.handleAddressBalances)
+
 	// P-Chain Transactions
 	s.router.HandleFunc("GET /api/v1/data/pchain/txs", s.handleListPChainTxs)
 	s.router.HandleFunc("GET /api/v1/data/pchain/txs/{txId}", s.handleGetPChainTx)
