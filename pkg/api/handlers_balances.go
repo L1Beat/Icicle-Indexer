@@ -4,15 +4,19 @@ import (
 	"encoding/hex"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // NativeBalance represents the native token balance for a wallet
 type NativeBalance struct {
-	TotalIn          string `json:"total_in" example:"1000000000000000000"`
-	TotalOut         string `json:"total_out" example:"500000000000000000"`
-	TotalGas         string `json:"total_gas" example:"21000000000000"`
-	Balance          string `json:"balance" example:"499979000000000000"`
-	LastUpdatedBlock uint64 `json:"last_updated_block" example:"77048918"`
+	TotalIn          string     `json:"total_in" example:"1000000000000000000"`
+	TotalOut         string     `json:"total_out" example:"500000000000000000"`
+	TotalGas         string     `json:"total_gas" example:"21000000000000"`
+	Balance          string     `json:"balance" example:"499979000000000000"`
+	LastUpdatedBlock uint64     `json:"last_updated_block" example:"77048918"`
+	TxCount          uint64     `json:"tx_count" example:"788432"`
+	FirstTxTime      *time.Time `json:"first_tx_time,omitempty"`
+	LastTxTime       *time.Time `json:"last_tx_time,omitempty"`
 }
 
 // TokenBalance represents an ERC-20 token balance for a wallet
@@ -174,7 +178,7 @@ func (s *Server) handleAddressNativeBalance(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	query := `
+	balanceQuery := `
 		SELECT
 			toString(total_in) as total_in,
 			toString(total_out) as total_out,
@@ -189,28 +193,50 @@ func (s *Server) handleAddressNativeBalance(w http.ResponseWriter, r *http.Reque
 	var totalIn, totalOut, totalGas, balance string
 	var lastBlock uint32
 
-	err = s.conn.QueryRow(ctx, query, chainID, address).Scan(&totalIn, &totalOut, &totalGas, &balance, &lastBlock)
+	err = s.conn.QueryRow(ctx, balanceQuery, chainID, address).Scan(&totalIn, &totalOut, &totalGas, &balance, &lastBlock)
 	if err != nil {
-		// Return zero balance if not found
-		writeJSON(w, http.StatusOK, Response{
-			Data: NativeBalance{
-				TotalIn:          "0",
-				TotalOut:         "0",
-				TotalGas:         "0",
-				Balance:          "0",
-				LastUpdatedBlock: 0,
-			},
-		})
-		return
+		totalIn = "0"
+		totalOut = "0"
+		totalGas = "0"
+		balance = "0"
+		lastBlock = 0
+	}
+
+	// Query tx stats from raw_txs
+	txStatsQuery := `
+		SELECT
+			count() as tx_count,
+			min(block_time) as first_tx_time,
+			max(block_time) as last_tx_time
+		FROM raw_txs
+		WHERE chain_id = ?
+		  AND (from = unhex(?) OR to = unhex(?))
+	`
+
+	var txCount uint64
+	var firstTxTime, lastTxTime time.Time
+
+	err = s.conn.QueryRow(ctx, txStatsQuery, chainID, address, address).Scan(&txCount, &firstTxTime, &lastTxTime)
+	if err != nil {
+		txCount = 0
+	}
+
+	result := NativeBalance{
+		TotalIn:          totalIn,
+		TotalOut:         totalOut,
+		TotalGas:         totalGas,
+		Balance:          balance,
+		LastUpdatedBlock: uint64(lastBlock),
+		TxCount:          txCount,
+	}
+
+	// Only set timestamps if there are transactions
+	if txCount > 0 {
+		result.FirstTxTime = &firstTxTime
+		result.LastTxTime = &lastTxTime
 	}
 
 	writeJSON(w, http.StatusOK, Response{
-		Data: NativeBalance{
-			TotalIn:          totalIn,
-			TotalOut:         totalOut,
-			TotalGas:         totalGas,
-			Balance:          balance,
-			LastUpdatedBlock: uint64(lastBlock),
-		},
+		Data: result,
 	})
 }
