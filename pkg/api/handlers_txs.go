@@ -235,25 +235,34 @@ func (s *Server) handleGetTx(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Fetch ERC-20 token transfers (Transfer events)
+	// Transfer(address indexed from, address indexed to, uint256 value)
+	// topic0 = keccak256("Transfer(address,address,uint256)")
+	// topic1 = from address (padded to 32 bytes)
+	// topic2 = to address (padded to 32 bytes)
+	// data = value (32 bytes for standard ERC-20, but check >= 32 for safety)
 	transferRows, err := s.conn.Query(ctx, `
 		SELECT
 			l.address,
-			tm.name,
-			tm.symbol,
-			tm.decimals,
+			COALESCE(tm.name, '') as name,
+			COALESCE(tm.symbol, '') as symbol,
+			COALESCE(tm.decimals, 0) as decimals,
 			substring(l.topic1, 13, 20) as from_addr,
 			substring(l.topic2, 13, 20) as to_addr,
-			reinterpretAsUInt256(reverse(l.data)) as value,
+			reinterpretAsUInt256(reverse(substring(l.data, 1, 32))) as value,
 			l.log_index
 		FROM raw_logs l
-		LEFT JOIN token_metadata tm ON l.chain_id = tm.chain_id AND l.address = tm.token
+		LEFT JOIN token_metadata tm FINAL ON l.chain_id = tm.chain_id AND l.address = tm.token
 		WHERE l.chain_id = ?
 		  AND l.transaction_hash = unhex(?)
 		  AND l.topic0 = unhex('ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef')
-		  AND length(l.data) = 32
+		  AND length(l.data) >= 32
+		  AND l.topic1 IS NOT NULL
+		  AND l.topic2 IS NOT NULL
 		ORDER BY l.log_index
 	`, chainID, hashHex)
-	if err == nil {
+	if err != nil {
+		fmt.Printf("Error querying token transfers: %v\n", err)
+	} else {
 		defer transferRows.Close()
 		for transferRows.Next() {
 			var tt TokenTransfer
@@ -264,24 +273,26 @@ func (s *Server) handleGetTx(w http.ResponseWriter, r *http.Request) {
 			var decimals uint8
 			var valueBig big.Int
 
-			if err := transferRows.Scan(&tokenBytes, &name, &symbol, &decimals, &fromBytes, &toBytes, &valueBig, &tt.LogIndex); err == nil {
-				tt.Token = "0x" + hex.EncodeToString(tokenBytes[:])
-				tt.From = "0x" + hex.EncodeToString(fromBytes[:])
-				tt.To = "0x" + hex.EncodeToString(toBytes[:])
-				tt.Value = valueBig.String()
-
-				if name != "" {
-					tt.Name = &name
-				}
-				if symbol != "" {
-					tt.Symbol = &symbol
-				}
-				if decimals > 0 || name != "" || symbol != "" {
-					tt.Decimals = &decimals
-				}
-
-				detail.TokenTransfers = append(detail.TokenTransfers, tt)
+			if err := transferRows.Scan(&tokenBytes, &name, &symbol, &decimals, &fromBytes, &toBytes, &valueBig, &tt.LogIndex); err != nil {
+				fmt.Printf("Error scanning token transfer: %v\n", err)
+				continue
 			}
+			tt.Token = "0x" + hex.EncodeToString(tokenBytes[:])
+			tt.From = "0x" + hex.EncodeToString(fromBytes[:])
+			tt.To = "0x" + hex.EncodeToString(toBytes[:])
+			tt.Value = valueBig.String()
+
+			if name != "" {
+				tt.Name = &name
+			}
+			if symbol != "" {
+				tt.Symbol = &symbol
+			}
+			if decimals > 0 || name != "" || symbol != "" {
+				tt.Decimals = &decimals
+			}
+
+			detail.TokenTransfers = append(detail.TokenTransfers, tt)
 		}
 	}
 
