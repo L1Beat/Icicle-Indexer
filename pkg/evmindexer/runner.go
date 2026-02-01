@@ -85,6 +85,9 @@ func NewIndexRunner(chainId uint32, conn driver.Conn, sqlDir string, startBlock 
 	// Initialize token metadata fetcher if RPC URL provided
 	if rpcURL != "" {
 		runner.tokenMetadataFetcher = NewTokenMetadataFetcher(chainId, conn, rpcURL)
+		fmt.Printf("[Chain %d] Token metadata fetcher initialized with RPC: %s\n", chainId, rpcURL)
+	} else {
+		fmt.Printf("[Chain %d] Token metadata fetcher NOT initialized (no RPC URL)\n", chainId)
 	}
 
 	// Discover indexers
@@ -130,7 +133,7 @@ func (r *IndexRunner) OnBlock(blockNum uint64, blockTime time.Time) {
 
 // Start begins the indexer loop (runs forever)
 func (r *IndexRunner) Start() {
-	fmt.Printf("[Chain %d] Starting indexer loop\n", r.chainId)
+	fmt.Printf("[Chain %d] Starting indexer loop (tokenMetadataFetcher=%v)\n", r.chainId, r.tokenMetadataFetcher != nil)
 
 	for {
 		// Only process if we have block data
