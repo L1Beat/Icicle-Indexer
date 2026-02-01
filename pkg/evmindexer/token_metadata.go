@@ -56,16 +56,18 @@ func (f *TokenMetadataFetcher) FetchMissingMetadata(limit int) (int, error) {
 	log.Printf("[Chain %d] Token metadata: checking for missing tokens...", f.chainID)
 
 	// Find tokens in balance_changes that don't have metadata yet
+	// Use NOT IN instead of LEFT JOIN for better handling of empty tables
 	query := `
-		SELECT DISTINCT bc.token
-		FROM erc20_balance_changes bc FINAL
-		LEFT JOIN token_metadata tm FINAL ON bc.chain_id = tm.chain_id AND bc.token = tm.token
-		WHERE bc.chain_id = ?
-		  AND tm.token IS NULL
+		SELECT DISTINCT token
+		FROM erc20_balance_changes FINAL
+		WHERE chain_id = ?
+		  AND token NOT IN (
+		      SELECT token FROM token_metadata FINAL WHERE chain_id = ?
+		  )
 		LIMIT ?
 	`
 
-	rows, err := f.conn.Query(ctx, query, f.chainID, limit)
+	rows, err := f.conn.Query(ctx, query, f.chainID, f.chainID, limit)
 	if err != nil {
 		return 0, fmt.Errorf("failed to query missing tokens: %w", err)
 	}
