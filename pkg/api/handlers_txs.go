@@ -52,11 +52,25 @@ type TokenTransfer struct {
 	LogIndex uint32  `json:"log_index" example:"5"`
 }
 
+// TokenApproval represents an ERC-20 approval event within a transaction
+type TokenApproval struct {
+	Token       string  `json:"token" example:"0xb97ef9ef..."`
+	Name        *string `json:"name,omitempty" example:"USD Coin"`
+	Symbol      *string `json:"symbol,omitempty" example:"USDC"`
+	Decimals    *uint8  `json:"decimals,omitempty" example:"6"`
+	Owner       string  `json:"owner" example:"0x742d35Cc..."`
+	Spender     string  `json:"spender" example:"0x123..."`
+	Amount      string  `json:"amount" example:"1000000"`
+	IsUnlimited bool    `json:"is_unlimited" example:"false"`
+	LogIndex    uint32  `json:"log_index" example:"5"`
+}
+
 // TransactionDetail represents a full transaction with internal txs and token transfers
 type TransactionDetail struct {
 	Transaction
 	InternalTxs    []InternalTransaction `json:"internal_txs"`
 	TokenTransfers []TokenTransfer       `json:"token_transfers"`
+	Approvals      []TokenApproval       `json:"approvals"`
 }
 
 // handleListTxs returns a paginated list of transactions
@@ -195,6 +209,7 @@ func (s *Server) handleGetTx(w http.ResponseWriter, r *http.Request) {
 		Transaction:    tx,
 		InternalTxs:    []InternalTransaction{},
 		TokenTransfers: []TokenTransfer{},
+		Approvals:      []TokenApproval{},
 	}
 
 	// Fetch internal transactions (traces with value > 0, excluding top-level)
@@ -293,6 +308,73 @@ func (s *Server) handleGetTx(w http.ResponseWriter, r *http.Request) {
 			}
 
 			detail.TokenTransfers = append(detail.TokenTransfers, tt)
+		}
+	}
+
+	// Fetch ERC-20 token approvals (Approval events)
+	// Approval(address indexed owner, address indexed spender, uint256 value)
+	// topic0 = keccak256("Approval(address,address,uint256)")
+	// topic1 = owner address (padded to 32 bytes)
+	// topic2 = spender address (padded to 32 bytes)
+	// data = value (32 bytes)
+	approvalRows, err := s.conn.Query(ctx, `
+		SELECT
+			l.address,
+			COALESCE(tm.name, '') as name,
+			COALESCE(tm.symbol, '') as symbol,
+			COALESCE(tm.decimals, 0) as decimals,
+			substring(l.topic1, 13, 20) as owner_addr,
+			substring(l.topic2, 13, 20) as spender_addr,
+			reinterpretAsUInt256(reverse(substring(l.data, 1, 32))) as value,
+			l.log_index
+		FROM raw_logs l
+		LEFT JOIN token_metadata tm FINAL ON l.chain_id = tm.chain_id AND l.address = tm.token
+		WHERE l.chain_id = ?
+		  AND l.transaction_hash = unhex(?)
+		  AND l.topic0 = unhex('8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925')
+		  AND length(l.data) >= 32
+		  AND l.topic1 IS NOT NULL
+		  AND l.topic2 IS NOT NULL
+		ORDER BY l.log_index
+	`, chainID, hashHex)
+	if err != nil {
+		fmt.Printf("Error querying token approvals: %v\n", err)
+	} else {
+		defer approvalRows.Close()
+
+		// MAX_UINT256 = 2^256 - 1 (indicates unlimited approval)
+		maxUint256 := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), 256), big.NewInt(1))
+
+		for approvalRows.Next() {
+			var ta TokenApproval
+			var tokenBytes [20]byte
+			var ownerBytes []byte
+			var spenderBytes []byte
+			var name, symbol string
+			var decimals uint8
+			var valueBig big.Int
+
+			if err := approvalRows.Scan(&tokenBytes, &name, &symbol, &decimals, &ownerBytes, &spenderBytes, &valueBig, &ta.LogIndex); err != nil {
+				fmt.Printf("Error scanning token approval: %v\n", err)
+				continue
+			}
+			ta.Token = "0x" + hex.EncodeToString(tokenBytes[:])
+			ta.Owner = "0x" + hex.EncodeToString(ownerBytes)
+			ta.Spender = "0x" + hex.EncodeToString(spenderBytes)
+			ta.Amount = valueBig.String()
+			ta.IsUnlimited = valueBig.Cmp(maxUint256) == 0
+
+			if name != "" {
+				ta.Name = &name
+			}
+			if symbol != "" {
+				ta.Symbol = &symbol
+			}
+			if decimals > 0 || name != "" || symbol != "" {
+				ta.Decimals = &decimals
+			}
+
+			detail.Approvals = append(detail.Approvals, ta)
 		}
 	}
 
