@@ -267,8 +267,8 @@ func (s *Server) handleGetTx(w http.ResponseWriter, r *http.Request) {
 		for transferRows.Next() {
 			var tt TokenTransfer
 			var tokenBytes [20]byte
-			var fromBytes [20]byte
-			var toBytes [20]byte
+			var fromBytes []byte // substring returns String, use slice
+			var toBytes []byte   // substring returns String, use slice
 			var name, symbol string
 			var decimals uint8
 			var valueBig big.Int
@@ -278,8 +278,8 @@ func (s *Server) handleGetTx(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			tt.Token = "0x" + hex.EncodeToString(tokenBytes[:])
-			tt.From = "0x" + hex.EncodeToString(fromBytes[:])
-			tt.To = "0x" + hex.EncodeToString(toBytes[:])
+			tt.From = "0x" + hex.EncodeToString(fromBytes)
+			tt.To = "0x" + hex.EncodeToString(toBytes)
 			tt.Value = valueBig.String()
 
 			if name != "" {
