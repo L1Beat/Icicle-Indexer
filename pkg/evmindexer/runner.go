@@ -20,6 +20,7 @@ type IndexRunner struct {
 	conn       driver.Conn
 	sqlDir     string
 	startBlock uint64 // First block to index (from config)
+	rpcURL     string // RPC URL for token metadata fetching
 
 	// Block state (updated by OnBlock)
 	latestBlockNum  uint64
@@ -31,10 +32,14 @@ type IndexRunner struct {
 	// Discovered indexers (loaded once at startup)
 	granularMetrics     []string
 	incrementalIndexers []string
+
+	// Token metadata fetcher
+	tokenMetadataFetcher *TokenMetadataFetcher
+	lastMetadataFetch    time.Time
 }
 
 // NewIndexRunner creates a new indexer runner for a single chain
-func NewIndexRunner(chainId uint32, conn driver.Conn, sqlDir string, startBlock uint64) (*IndexRunner, error) {
+func NewIndexRunner(chainId uint32, conn driver.Conn, sqlDir string, startBlock uint64, rpcURL string) (*IndexRunner, error) {
 	// Create tables from indexer_tables.sql (metrics and indexer_watermarks)
 	// Execute each CREATE TABLE statement
 	statements := splitSQL(indexerTablesSQL)
@@ -50,12 +55,36 @@ func NewIndexRunner(chainId uint32, conn driver.Conn, sqlDir string, startBlock 
 		}
 	}
 
+	// Create token_metadata table
+	tokenMetadataSQL := `
+		CREATE TABLE IF NOT EXISTS token_metadata (
+			chain_id UInt32,
+			token FixedString(20),
+			name String,
+			symbol String,
+			decimals UInt8,
+			computed_at DateTime64(3, 'UTC') DEFAULT now64(3)
+		) ENGINE = ReplacingMergeTree(computed_at)
+		ORDER BY (chain_id, token)
+	`
+	if err := conn.Exec(context.Background(), tokenMetadataSQL); err != nil {
+		if !strings.Contains(err.Error(), "already exists") {
+			return nil, fmt.Errorf("failed to create token_metadata table: %w", err)
+		}
+	}
+
 	runner := &IndexRunner{
 		chainId:    chainId,
 		conn:       conn,
 		sqlDir:     sqlDir,
 		startBlock: startBlock,
+		rpcURL:     rpcURL,
 		watermarks: make(map[string]*Watermark),
+	}
+
+	// Initialize token metadata fetcher if RPC URL provided
+	if rpcURL != "" {
+		runner.tokenMetadataFetcher = NewTokenMetadataFetcher(chainId, conn, rpcURL)
 	}
 
 	// Discover indexers
@@ -115,6 +144,16 @@ func (r *IndexRunner) Start() {
 
 		// Process granular metrics (time-based)
 		r.processGranularMetrics()
+
+		// Fetch token metadata periodically (every 30 seconds)
+		if r.tokenMetadataFetcher != nil && time.Since(r.lastMetadataFetch) > 30*time.Second {
+			r.lastMetadataFetch = time.Now()
+			if count, err := r.tokenMetadataFetcher.FetchMissingMetadata(100); err != nil {
+				fmt.Printf("[Chain %d] Token metadata fetch error: %v\n", r.chainId, err)
+			} else if count > 0 {
+				fmt.Printf("[Chain %d] Fetched metadata for %d tokens\n", r.chainId, count)
+			}
+		}
 
 		// Sleep only if no incremental work was done
 		if !hasWork {

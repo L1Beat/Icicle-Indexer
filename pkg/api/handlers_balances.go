@@ -8,11 +8,14 @@ import (
 
 // TokenBalance represents an ERC-20 token balance for a wallet
 type TokenBalance struct {
-	Token            string `json:"token" example:"0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e"`
-	Balance          string `json:"balance" example:"1000000"`
-	TotalIn          string `json:"total_in" example:"2000000"`
-	TotalOut         string `json:"total_out" example:"1000000"`
-	LastUpdatedBlock uint64 `json:"last_updated_block" example:"77048918"`
+	Token            string  `json:"token" example:"0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e"`
+	Name             *string `json:"name,omitempty" example:"USD Coin"`
+	Symbol           *string `json:"symbol,omitempty" example:"USDC"`
+	Decimals         *uint8  `json:"decimals,omitempty" example:"6"`
+	Balance          string  `json:"balance" example:"1000000"`
+	TotalIn          string  `json:"total_in" example:"2000000"`
+	TotalOut         string  `json:"total_out" example:"1000000"`
+	LastUpdatedBlock uint64  `json:"last_updated_block" example:"77048918"`
 }
 
 // handleAddressBalances returns ERC-20 token balances for an address
@@ -57,18 +60,23 @@ func (s *Server) handleAddressBalances(w http.ResponseWriter, r *http.Request) {
 
 	// Use unhex() in SQL to convert hex string to FixedString(20)
 	// Cast Int256 results to String for Go compatibility
+	// Left join with token_metadata to get name, symbol, decimals
 	query := `
 		SELECT
-			token,
-			toString(balance) as balance_str,
-			toString(total_in) as total_in,
-			toString(total_out) as total_out,
-			last_updated_block
-		FROM erc20_balances FINAL
-		WHERE chain_id = ?
-		  AND wallet = unhex(?)
-		  AND balance > toInt256(0)
-		ORDER BY balance DESC
+			b.token,
+			tm.name,
+			tm.symbol,
+			tm.decimals,
+			toString(b.balance) as balance_str,
+			toString(b.total_in) as total_in,
+			toString(b.total_out) as total_out,
+			b.last_updated_block
+		FROM erc20_balances b FINAL
+		LEFT JOIN token_metadata tm FINAL ON b.chain_id = tm.chain_id AND b.token = tm.token
+		WHERE b.chain_id = ?
+		  AND b.wallet = unhex(?)
+		  AND b.balance > toInt256(0)
+		ORDER BY b.balance DESC
 		LIMIT ? OFFSET ?
 	`
 
@@ -82,21 +90,36 @@ func (s *Server) handleAddressBalances(w http.ResponseWriter, r *http.Request) {
 	balances := []TokenBalance{}
 	for rows.Next() {
 		var tokenBytes []byte
+		var name, symbol string
+		var decimals uint8
 		var balance, totalIn, totalOut string
 		var lastBlock uint32
 
-		if err := rows.Scan(&tokenBytes, &balance, &totalIn, &totalOut, &lastBlock); err != nil {
+		if err := rows.Scan(&tokenBytes, &name, &symbol, &decimals, &balance, &totalIn, &totalOut, &lastBlock); err != nil {
 			writeInternalError(w, err.Error())
 			return
 		}
 
-		balances = append(balances, TokenBalance{
+		tb := TokenBalance{
 			Token:            "0x" + hex.EncodeToString(tokenBytes),
 			Balance:          balance,
 			TotalIn:          totalIn,
 			TotalOut:         totalOut,
 			LastUpdatedBlock: uint64(lastBlock),
-		})
+		}
+
+		// Only include metadata if we have it
+		if name != "" {
+			tb.Name = &name
+		}
+		if symbol != "" {
+			tb.Symbol = &symbol
+		}
+		if decimals > 0 || name != "" || symbol != "" {
+			tb.Decimals = &decimals
+		}
+
+		balances = append(balances, tb)
 	}
 
 	writeJSON(w, http.StatusOK, Response{
