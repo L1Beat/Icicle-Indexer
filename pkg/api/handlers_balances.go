@@ -83,7 +83,7 @@ func (s *Server) handleAddressBalances(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var tokenBytes []byte
 		var balance, totalIn, totalOut string
-		var lastBlock uint64
+		var lastBlock uint32
 
 		if err := rows.Scan(&tokenBytes, &balance, &totalIn, &totalOut, &lastBlock); err != nil {
 			writeInternalError(w, err.Error())
@@ -95,7 +95,7 @@ func (s *Server) handleAddressBalances(w http.ResponseWriter, r *http.Request) {
 			Balance:          balance,
 			TotalIn:          totalIn,
 			TotalOut:         totalOut,
-			LastUpdatedBlock: lastBlock,
+			LastUpdatedBlock: uint64(lastBlock),
 		})
 	}
 
