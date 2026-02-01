@@ -60,14 +60,14 @@ func (s *Server) handleAddressBalances(w http.ResponseWriter, r *http.Request) {
 	query := `
 		SELECT
 			token,
-			toString(balance) as balance,
+			toString(balance) as balance_str,
 			toString(total_in) as total_in,
 			toString(total_out) as total_out,
 			last_updated_block
 		FROM erc20_balances FINAL
 		WHERE chain_id = ?
 		  AND wallet = unhex(?)
-		  AND balance > 0
+		  AND balance > toInt256(0)
 		ORDER BY balance DESC
 		LIMIT ? OFFSET ?
 	`
