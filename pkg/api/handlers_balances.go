@@ -4,8 +4,6 @@ import (
 	"encoding/hex"
 	"net/http"
 	"strings"
-
-	"github.com/holiman/uint256"
 )
 
 // TokenBalance represents an ERC-20 token balance for a wallet
@@ -58,12 +56,13 @@ func (s *Server) handleAddressBalances(w http.ResponseWriter, r *http.Request) {
 	limit, offset := getPagination(r)
 
 	// Use unhex() in SQL to convert hex string to FixedString(20)
+	// Cast Int256 results to String for Go compatibility
 	query := `
 		SELECT
 			token,
-			balance,
-			total_in,
-			total_out,
+			toString(balance) as balance,
+			toString(total_in) as total_in,
+			toString(total_out) as total_out,
 			last_updated_block
 		FROM erc20_balances FINAL
 		WHERE chain_id = ?
@@ -83,7 +82,7 @@ func (s *Server) handleAddressBalances(w http.ResponseWriter, r *http.Request) {
 	balances := []TokenBalance{}
 	for rows.Next() {
 		var tokenBytes []byte
-		var balance, totalIn, totalOut uint256.Int
+		var balance, totalIn, totalOut string
 		var lastBlock uint64
 
 		if err := rows.Scan(&tokenBytes, &balance, &totalIn, &totalOut, &lastBlock); err != nil {
@@ -93,9 +92,9 @@ func (s *Server) handleAddressBalances(w http.ResponseWriter, r *http.Request) {
 
 		balances = append(balances, TokenBalance{
 			Token:            "0x" + hex.EncodeToString(tokenBytes),
-			Balance:          balance.Dec(),
-			TotalIn:          totalIn.Dec(),
-			TotalOut:         totalOut.Dec(),
+			Balance:          balance,
+			TotalIn:          totalIn,
+			TotalOut:         totalOut,
 			LastUpdatedBlock: lastBlock,
 		})
 	}
