@@ -188,24 +188,21 @@ func (s *Server) handleAddressTxs(w http.ResponseWriter, r *http.Request) {
 
 	// Convert hex address to bytes
 	addrHex := address[2:] // Remove 0x prefix
-	addrBytes, err := hex.DecodeString(addrHex)
-	if err != nil || len(addrBytes) != 20 {
+	if _, err := hex.DecodeString(addrHex); err != nil || len(addrHex) != 40 {
 		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid address")
 		return
 	}
 
-	var addrFixed [20]byte
-	copy(addrFixed[:], addrBytes)
-
+	// Use unhex() in SQL for proper FixedString comparison
 	rows, err := s.conn.Query(ctx, `
 		SELECT
 			chain_id, hash, block_number, block_time, transaction_index,
 			from, to, value, gas_limit, gas_price, gas_used, success, type
 		FROM raw_txs
-		WHERE chain_id = ? AND (from = ? OR to = ?)
+		WHERE chain_id = ? AND (from = unhex(?) OR to = unhex(?))
 		ORDER BY block_number DESC, transaction_index DESC
 		LIMIT ? OFFSET ?
-	`, chainID, addrFixed, addrFixed, limit, offset)
+	`, chainID, addrHex, addrHex, limit, offset)
 
 	if err != nil {
 		writeInternalError(w, err.Error())
