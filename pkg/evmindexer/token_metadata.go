@@ -53,6 +53,8 @@ func NewTokenMetadataFetcher(chainID uint32, conn driver.Conn, rpcURL string) *T
 func (f *TokenMetadataFetcher) FetchMissingMetadata(limit int) (int, error) {
 	ctx := context.Background()
 
+	log.Printf("[Chain %d] Token metadata: checking for missing tokens...", f.chainID)
+
 	// Find tokens in balance_changes that don't have metadata yet
 	query := `
 		SELECT DISTINCT bc.token
@@ -77,6 +79,8 @@ func (f *TokenMetadataFetcher) FetchMissingMetadata(limit int) (int, error) {
 		}
 		tokens = append(tokens, token)
 	}
+
+	log.Printf("[Chain %d] Token metadata: found %d tokens without metadata", f.chainID, len(tokens))
 
 	if len(tokens) == 0 {
 		return 0, nil

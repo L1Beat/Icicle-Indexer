@@ -148,10 +148,13 @@ func (r *IndexRunner) Start() {
 		// Fetch token metadata periodically (every 30 seconds)
 		if r.tokenMetadataFetcher != nil && time.Since(r.lastMetadataFetch) > 30*time.Second {
 			r.lastMetadataFetch = time.Now()
-			if count, err := r.tokenMetadataFetcher.FetchMissingMetadata(100); err != nil {
+			count, err := r.tokenMetadataFetcher.FetchMissingMetadata(100)
+			if err != nil {
 				fmt.Printf("[Chain %d] Token metadata fetch error: %v\n", r.chainId, err)
 			} else if count > 0 {
 				fmt.Printf("[Chain %d] Fetched metadata for %d tokens\n", r.chainId, count)
+			} else {
+				fmt.Printf("[Chain %d] Token metadata: no missing tokens found\n", r.chainId)
 			}
 		}
 
