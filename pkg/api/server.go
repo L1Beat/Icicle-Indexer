@@ -130,6 +130,7 @@ func (s *Server) registerRoutes() {
 	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/txs", s.handleListTxs)
 	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/txs/{hash}", s.handleGetTx)
 	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/address/{address}/txs", s.handleAddressTxs)
+	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/address/{address}/internal-txs", s.handleAddressInternalTxs)
 
 	// EVM Address Balances
 	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/address/{address}/balances", s.handleAddressBalances)

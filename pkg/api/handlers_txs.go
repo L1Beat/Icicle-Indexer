@@ -2,8 +2,10 @@ package api
 
 import (
 	"encoding/hex"
+	"fmt"
 	"math/big"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -22,6 +24,20 @@ type Transaction struct {
 	GasUsed          uint32    `json:"gas_used" example:"21000"`
 	Success          bool      `json:"success" example:"true"`
 	Type             uint8     `json:"type" example:"2"`
+}
+
+// InternalTransaction represents an internal call trace
+type InternalTransaction struct {
+	TxHash      string    `json:"tx_hash" example:"0x1234..."`
+	BlockNumber uint32    `json:"block_number" example:"12345678"`
+	BlockTime   time.Time `json:"block_time"`
+	TraceIndex  string    `json:"trace_index" example:"0,1,2"` // Path in call tree
+	From        string    `json:"from" example:"0x742d35Cc..."`
+	To          *string   `json:"to" example:"0x123..."` // null for CREATE
+	Value       string    `json:"value" example:"1000000000000000000"`
+	GasUsed     uint32    `json:"gas_used" example:"21000"`
+	CallType    string    `json:"call_type" example:"CALL"`
+	Success     bool      `json:"success" example:"true"`
 }
 
 // handleListTxs returns a paginated list of transactions
@@ -238,6 +254,98 @@ func (s *Server) handleAddressTxs(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, Response{
 		Data: txs,
+		Meta: &Meta{Limit: limit, Offset: offset},
+	})
+}
+
+// handleAddressInternalTxs returns internal transactions for an address
+// @Summary Get internal transactions by address
+// @Description Get internal transactions (traces) involving a specific address
+// @Tags Data - EVM
+// @Produce json
+// @Param chainId path int true "Chain ID"
+// @Param address path string true "Wallet address (0x-prefixed)"
+// @Param limit query int false "Number of results (max 100)" default(20)
+// @Param offset query int false "Pagination offset" default(0)
+// @Success 200 {object} Response{data=[]InternalTransaction,meta=Meta}
+// @Failure 400 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/data/evm/{chainId}/address/{address}/internal-txs [get]
+func (s *Server) handleAddressInternalTxs(w http.ResponseWriter, r *http.Request) {
+	ctx := s.queryContext()
+	limit, offset := getPagination(r)
+
+	chainID, err := getChainIDFromPath(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid chain_id")
+		return
+	}
+
+	address := normalizeHash(r.PathValue("address"))
+	addrHex := address[2:] // Remove 0x prefix
+
+	if _, err := hex.DecodeString(addrHex); err != nil || len(addrHex) != 40 {
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid address")
+		return
+	}
+
+	// Query internal transactions where address is sender or receiver
+	// Only include traces with value > 0 or CREATE types for meaningful results
+	rows, err := s.conn.Query(ctx, `
+		SELECT
+			tx_hash, block_number, block_time, trace_address,
+			from, to, value, gas_used, call_type, tx_success
+		FROM raw_traces
+		WHERE chain_id = ?
+		  AND (from = unhex(?) OR to = unhex(?))
+		  AND (value > 0 OR call_type IN ('CREATE', 'CREATE2'))
+		ORDER BY block_number DESC, transaction_index DESC
+		LIMIT ? OFFSET ?
+	`, chainID, addrHex, addrHex, limit, offset)
+
+	if err != nil {
+		writeInternalError(w, err.Error())
+		return
+	}
+	defer rows.Close()
+
+	internalTxs := []InternalTransaction{}
+	for rows.Next() {
+		var itx InternalTransaction
+		var txHashBytes [32]byte
+		var fromBytes [20]byte
+		var toBytes []byte
+		var valueBig big.Int
+		var traceAddr []uint16
+
+		if err := rows.Scan(
+			&txHashBytes, &itx.BlockNumber, &itx.BlockTime, &traceAddr,
+			&fromBytes, &toBytes, &valueBig, &itx.GasUsed, &itx.CallType, &itx.Success,
+		); err != nil {
+			writeInternalError(w, err.Error())
+			return
+		}
+
+		itx.TxHash = "0x" + hex.EncodeToString(txHashBytes[:])
+		itx.From = "0x" + hex.EncodeToString(fromBytes[:])
+		if len(toBytes) > 0 {
+			to := "0x" + hex.EncodeToString(toBytes)
+			itx.To = &to
+		}
+		itx.Value = valueBig.String()
+
+		// Convert trace address array to string like "0,1,2"
+		traceStrs := make([]string, len(traceAddr))
+		for i, v := range traceAddr {
+			traceStrs[i] = fmt.Sprintf("%d", v)
+		}
+		itx.TraceIndex = strings.Join(traceStrs, ",")
+
+		internalTxs = append(internalTxs, itx)
+	}
+
+	writeJSON(w, http.StatusOK, Response{
+		Data: internalTxs,
 		Meta: &Meta{Limit: limit, Offset: offset},
 	})
 }
