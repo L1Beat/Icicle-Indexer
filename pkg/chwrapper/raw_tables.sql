@@ -58,7 +58,8 @@ CREATE TABLE IF NOT EXISTS raw_txs (
     access_list Array(Tuple(
         address FixedString(20),
         storage_keys Array(FixedString(32))
-    ))  -- Properly structured, not JSON
+    )),  -- Properly structured, not JSON
+    INDEX idx_hash hash TYPE bloom_filter GRANULARITY 1  -- Fast tx lookup by hash
 ) ENGINE = MergeTree()
 ORDER BY (chain_id, block_number);
 
@@ -80,7 +81,8 @@ CREATE TABLE IF NOT EXISTS raw_traces (
     call_type LowCardinality(String),  -- CALL, DELEGATECALL, STATICCALL, CREATE, CREATE2, etc.
     tx_success Bool,  -- Transaction success status (denormalized from raw_txs)
     tx_from FixedString(20),  -- Original transaction sender (denormalized)
-    tx_to Nullable(FixedString(20))  -- Original transaction target (denormalized)
+    tx_to Nullable(FixedString(20)),  -- Original transaction target (denormalized)
+    INDEX idx_tx_hash tx_hash TYPE bloom_filter GRANULARITY 1  -- Fast trace lookup by tx hash
 ) ENGINE = MergeTree()
 ORDER BY (chain_id, block_number);
 
@@ -102,7 +104,8 @@ CREATE TABLE IF NOT EXISTS raw_logs (
     topic3 Nullable(FixedString(32)),
     data String,  -- Non-indexed event data
     removed Bool,  -- TODO: check if ever happen to be true
-    INDEX idx_block_number block_number TYPE minmax GRANULARITY 1  -- Speeds up block range queries
+    INDEX idx_block_number block_number TYPE minmax GRANULARITY 1,  -- Speeds up block range queries
+    INDEX idx_transaction_hash transaction_hash TYPE bloom_filter GRANULARITY 1  -- Fast log lookup by tx hash
 ) ENGINE = MergeTree()
 ORDER BY (chain_id, block_time, address, topic0);
 
