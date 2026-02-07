@@ -59,7 +59,9 @@ CREATE TABLE IF NOT EXISTS raw_txs (
         address FixedString(20),
         storage_keys Array(FixedString(32))
     )),  -- Properly structured, not JSON
-    INDEX idx_hash hash TYPE bloom_filter GRANULARITY 1  -- Fast tx lookup by hash
+    INDEX idx_hash hash TYPE bloom_filter GRANULARITY 1,  -- Fast tx lookup by hash
+    INDEX idx_from `from` TYPE bloom_filter GRANULARITY 1,  -- Fast address lookup
+    INDEX idx_to `to` TYPE bloom_filter GRANULARITY 1  -- Fast address lookup
 ) ENGINE = MergeTree()
 ORDER BY (chain_id, block_number);
 
@@ -82,7 +84,9 @@ CREATE TABLE IF NOT EXISTS raw_traces (
     tx_success Bool,  -- Transaction success status (denormalized from raw_txs)
     tx_from FixedString(20),  -- Original transaction sender (denormalized)
     tx_to Nullable(FixedString(20)),  -- Original transaction target (denormalized)
-    INDEX idx_tx_hash tx_hash TYPE bloom_filter GRANULARITY 1  -- Fast trace lookup by tx hash
+    INDEX idx_tx_hash tx_hash TYPE bloom_filter GRANULARITY 1,  -- Fast trace lookup by tx hash
+    INDEX idx_from `from` TYPE bloom_filter GRANULARITY 1,  -- Fast address lookup
+    INDEX idx_to `to` TYPE bloom_filter GRANULARITY 1  -- Fast address lookup
 ) ENGINE = MergeTree()
 ORDER BY (chain_id, block_number);
 

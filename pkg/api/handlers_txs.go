@@ -413,16 +413,22 @@ func (s *Server) handleAddressTxs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Use unhex() in SQL for proper FixedString comparison
+	// Use UNION ALL instead of OR to allow ClickHouse to use bloom filter indexes on each column
 	rows, err := s.conn.Query(ctx, `
-		SELECT
-			chain_id, hash, block_number, block_time, transaction_index,
+		SELECT chain_id, hash, block_number, block_time, transaction_index,
 			from, to, value, gas_limit, gas_price, gas_used, success, type
-		FROM raw_txs
-		WHERE chain_id = ? AND (from = unhex(?) OR to = unhex(?))
+		FROM (
+			SELECT chain_id, hash, block_number, block_time, transaction_index,
+				from, to, value, gas_limit, gas_price, gas_used, success, type
+			FROM raw_txs WHERE chain_id = ? AND from = unhex(?)
+			UNION ALL
+			SELECT chain_id, hash, block_number, block_time, transaction_index,
+				from, to, value, gas_limit, gas_price, gas_used, success, type
+			FROM raw_txs WHERE chain_id = ? AND to = unhex(?) AND from != unhex(?)
+		)
 		ORDER BY block_number DESC, transaction_index DESC
 		LIMIT ? OFFSET ?
-	`, chainID, addrHex, addrHex, limit, offset)
+	`, chainID, addrHex, chainID, addrHex, addrHex, limit, offset)
 
 	if err != nil {
 		writeInternalError(w, err.Error())
@@ -493,19 +499,26 @@ func (s *Server) handleAddressInternalTxs(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Query internal transactions where address is sender or receiver
-	// Only include traces with value > 0 or CREATE types for meaningful results
+	// Use UNION ALL instead of OR to allow ClickHouse to use bloom filter indexes on each column
 	rows, err := s.conn.Query(ctx, `
-		SELECT
-			tx_hash, block_number, block_time, trace_address,
+		SELECT tx_hash, block_number, block_time, trace_address,
 			from, to, value, gas_used, call_type, tx_success
-		FROM raw_traces
-		WHERE chain_id = ?
-		  AND (from = unhex(?) OR to = unhex(?))
-		  AND (value > 0 OR call_type IN ('CREATE', 'CREATE2'))
+		FROM (
+			SELECT tx_hash, block_number, block_time, trace_address, transaction_index,
+				from, to, value, gas_used, call_type, tx_success
+			FROM raw_traces
+			WHERE chain_id = ? AND from = unhex(?)
+			  AND (value > 0 OR call_type IN ('CREATE', 'CREATE2'))
+			UNION ALL
+			SELECT tx_hash, block_number, block_time, trace_address, transaction_index,
+				from, to, value, gas_used, call_type, tx_success
+			FROM raw_traces
+			WHERE chain_id = ? AND to = unhex(?) AND from != unhex(?)
+			  AND (value > 0 OR call_type IN ('CREATE', 'CREATE2'))
+		)
 		ORDER BY block_number DESC, transaction_index DESC
 		LIMIT ? OFFSET ?
-	`, chainID, addrHex, addrHex, limit, offset)
+	`, chainID, addrHex, chainID, addrHex, addrHex, limit, offset)
 
 	if err != nil {
 		writeInternalError(w, err.Error())

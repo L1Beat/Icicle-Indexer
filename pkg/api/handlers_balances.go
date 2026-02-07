@@ -202,21 +202,29 @@ func (s *Server) handleAddressNativeBalance(w http.ResponseWriter, r *http.Reque
 		lastBlock = 0
 	}
 
-	// Query tx stats from raw_txs
+	// Use UNION ALL instead of OR to allow ClickHouse to use bloom filter indexes on each column
 	txStatsQuery := `
 		SELECT
-			count() as tx_count,
-			min(block_time) as first_tx_time,
-			max(block_time) as last_tx_time
-		FROM raw_txs
-		WHERE chain_id = ?
-		  AND (from = unhex(?) OR to = unhex(?))
+			sum(cnt) as tx_count,
+			min(first_tx_time) as first_tx_time,
+			max(last_tx_time) as last_tx_time
+		FROM (
+			SELECT count() as cnt,
+				min(block_time) as first_tx_time,
+				max(block_time) as last_tx_time
+			FROM raw_txs WHERE chain_id = ? AND from = unhex(?)
+			UNION ALL
+			SELECT count() as cnt,
+				min(block_time) as first_tx_time,
+				max(block_time) as last_tx_time
+			FROM raw_txs WHERE chain_id = ? AND to = unhex(?) AND from != unhex(?)
+		)
 	`
 
 	var txCount uint64
 	var firstTxTime, lastTxTime time.Time
 
-	err = s.conn.QueryRow(ctx, txStatsQuery, chainID, address, address).Scan(&txCount, &firstTxTime, &lastTxTime)
+	err = s.conn.QueryRow(ctx, txStatsQuery, chainID, address, chainID, address, address).Scan(&txCount, &firstTxTime, &lastTxTime)
 	if err != nil {
 		txCount = 0
 	}

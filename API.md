@@ -8,6 +8,7 @@ Base URL: `http://localhost:8080`
 
 - **Data API** (`/api/v1/data/*`): Blocks, transactions, subnets, validators, P-chain data
 - **Metrics API** (`/api/v1/metrics/*`): Fee statistics, chain metrics, time series data
+- **WebSocket** (`/ws/*`): Real-time block streaming
 - **System** (`/health`): Health check (no versioning)
 
 ## Common Response Format
@@ -296,6 +297,130 @@ Get transactions for a specific address (as sender or receiver).
 |-----------|------|-------------|
 | `limit` | int | Results per page |
 | `offset` | int | Pagination offset |
+
+---
+
+### GET /api/v1/data/evm/{chainId}/address/{address}/internal-txs
+
+Get internal transactions (traces) for a specific address.
+
+**Path Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `chainId` | int | Chain ID |
+| `address` | string | Ethereum address (with or without 0x prefix) |
+
+**Query Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `limit` | int | Results per page |
+| `offset` | int | Pagination offset |
+
+**Response:**
+```json
+{
+  "data": [
+    {
+      "tx_hash": "0x1234...abcd",
+      "block_number": 54000000,
+      "block_time": "2025-01-08T12:00:00Z",
+      "trace_address": "0,1",
+      "from": "0xabcd...1234",
+      "to": "0x5678...efgh",
+      "value": "1000000000000000000",
+      "gas_used": 21000,
+      "call_type": "CALL",
+      "success": true
+    }
+  ],
+  "meta": {
+    "limit": 20,
+    "offset": 0
+  }
+}
+```
+
+**Notes:**
+- Only includes traces with value > 0 or CREATE/CREATE2 types
+- `trace_address` shows the path in the call tree (e.g., "0,1" = first call's second subcall)
+
+---
+
+### GET /api/v1/data/evm/{chainId}/address/{address}/balances
+
+Get ERC-20 token balances for an address.
+
+**Path Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `chainId` | int | Chain ID |
+| `address` | string | Wallet address (with or without 0x prefix) |
+
+**Query Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `limit` | int | Results per page |
+| `offset` | int | Pagination offset |
+
+**Response:**
+```json
+{
+  "data": [
+    {
+      "token": "0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e",
+      "name": "USD Coin",
+      "symbol": "USDC",
+      "decimals": 6,
+      "balance": "1000000",
+      "total_in": "2000000",
+      "total_out": "1000000",
+      "last_updated_block": 77048918
+    }
+  ],
+  "meta": {
+    "limit": 20,
+    "offset": 0
+  }
+}
+```
+
+**Notes:**
+- Only returns tokens with balance > 0
+- `name`, `symbol`, `decimals` are optional (only included if token metadata is available)
+- Balance values are in token's smallest unit (e.g., 6 decimals for USDC)
+
+---
+
+### GET /api/v1/data/evm/{chainId}/address/{address}/native
+
+Get native token balance (AVAX, ETH, etc.) for an address.
+
+**Path Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `chainId` | int | Chain ID |
+| `address` | string | Wallet address (with or without 0x prefix) |
+
+**Response:**
+```json
+{
+  "data": {
+    "total_in": "1000000000000000000",
+    "total_out": "500000000000000000",
+    "total_gas": "21000000000000",
+    "balance": "499979000000000000",
+    "last_updated_block": 77048918,
+    "tx_count": 788432,
+    "first_tx_time": "2020-09-23T11:02:19Z",
+    "last_tx_time": "2026-02-02T10:15:33Z"
+  }
+}
+```
+
+**Notes:**
+- All values in wei (string to preserve precision)
+- `first_tx_time` and `last_tx_time` only included when `tx_count` > 0
+- Returns zeros if address has no history
 
 ---
 
@@ -738,6 +863,78 @@ Get time series data for a specific metric.
 
 ---
 
+## WebSocket API
+
+### WS /ws/blocks/{chainId}
+
+Stream real-time blocks for a chain via WebSocket.
+
+**Path Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `chainId` | int | Chain ID |
+
+**Connection:**
+```javascript
+const ws = new WebSocket('wss://api.l1beat.io/ws/blocks/43114');
+
+ws.onmessage = (event) => {
+  const msg = JSON.parse(event.data);
+  console.log(msg.type, msg.data);
+};
+```
+
+**Message Types:**
+
+1. **initial** - Sent on connection with last 10 blocks:
+```json
+{
+  "type": "initial",
+  "data": [
+    {
+      "chain_id": 43114,
+      "block_number": 54000000,
+      "hash": "0x1234...abcd",
+      "parent_hash": "0xabcd...1234",
+      "block_time": "2025-01-08T12:00:00Z",
+      "miner": "0x0100...",
+      "size": 1234,
+      "gas_limit": 15000000,
+      "gas_used": 8000000,
+      "base_fee_per_gas": 25000000000,
+      "tx_count": 150
+    }
+  ]
+}
+```
+
+2. **new_block** - Sent when a new block is indexed:
+```json
+{
+  "type": "new_block",
+  "data": {
+    "chain_id": 43114,
+    "block_number": 54000001,
+    "hash": "0x5678...efgh",
+    ...
+  }
+}
+```
+
+3. **ping** - Keepalive sent every 30 seconds:
+```json
+{
+  "type": "ping"
+}
+```
+
+**Notes:**
+- Blocks are polled every 500ms
+- Connection times out after 60s of inactivity (respond to pings)
+- Use `wss://` for HTTPS servers, `ws://` for HTTP
+
+---
+
 ## Examples
 
 ```bash
@@ -763,6 +960,15 @@ curl "http://localhost:8080/api/v1/data/evm/43114/txs/0x1234..."
 
 # Get address transactions
 curl "http://localhost:8080/api/v1/data/evm/43114/address/0xabcd.../txs"
+
+# Get address internal transactions
+curl "http://localhost:8080/api/v1/data/evm/43114/address/0xabcd.../internal-txs"
+
+# Get address ERC-20 balances
+curl "http://localhost:8080/api/v1/data/evm/43114/address/0xabcd.../balances"
+
+# Get address native balance
+curl "http://localhost:8080/api/v1/data/evm/43114/address/0xabcd.../native"
 
 # === EVM Metrics ===
 
@@ -830,4 +1036,9 @@ curl "http://localhost:8080/api/v1/metrics/fees"
 
 # Get fee stats for specific L1
 curl "http://localhost:8080/api/v1/metrics/fees?subnet_id=2ABC...xyz"
+
+# === WebSocket ===
+
+# Connect to block stream (use wscat or browser)
+wscat -c "ws://localhost:8080/ws/blocks/43114"
 ```
