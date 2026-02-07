@@ -414,6 +414,8 @@ func (s *Server) handleAddressTxs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Use UNION ALL instead of OR to allow ClickHouse to use bloom filter indexes on each column
+	// Push ORDER BY + LIMIT into each branch so ClickHouse can stop scanning early
+	innerLimit := limit + offset
 	rows, err := s.conn.Query(ctx, `
 		SELECT chain_id, hash, block_number, block_time, transaction_index,
 			from, to, value, gas_limit, gas_price, gas_used, success, type
@@ -421,14 +423,18 @@ func (s *Server) handleAddressTxs(w http.ResponseWriter, r *http.Request) {
 			SELECT chain_id, hash, block_number, block_time, transaction_index,
 				from, to, value, gas_limit, gas_price, gas_used, success, type
 			FROM raw_txs WHERE chain_id = ? AND from = unhex(?)
+			ORDER BY block_number DESC, transaction_index DESC
+			LIMIT ?
 			UNION ALL
 			SELECT chain_id, hash, block_number, block_time, transaction_index,
 				from, to, value, gas_limit, gas_price, gas_used, success, type
 			FROM raw_txs WHERE chain_id = ? AND to = unhex(?) AND from != unhex(?)
+			ORDER BY block_number DESC, transaction_index DESC
+			LIMIT ?
 		)
 		ORDER BY block_number DESC, transaction_index DESC
 		LIMIT ? OFFSET ?
-	`, chainID, addrHex, chainID, addrHex, addrHex, limit, offset)
+	`, chainID, addrHex, innerLimit, chainID, addrHex, addrHex, innerLimit, limit, offset)
 
 	if err != nil {
 		writeInternalError(w, err.Error())
@@ -500,6 +506,8 @@ func (s *Server) handleAddressInternalTxs(w http.ResponseWriter, r *http.Request
 	}
 
 	// Use UNION ALL instead of OR to allow ClickHouse to use bloom filter indexes on each column
+	// Push ORDER BY + LIMIT into each branch so ClickHouse can stop scanning early
+	innerLimit := limit + offset
 	rows, err := s.conn.Query(ctx, `
 		SELECT tx_hash, block_number, block_time, trace_address,
 			from, to, value, gas_used, call_type, tx_success
@@ -509,16 +517,20 @@ func (s *Server) handleAddressInternalTxs(w http.ResponseWriter, r *http.Request
 			FROM raw_traces
 			WHERE chain_id = ? AND from = unhex(?)
 			  AND (value > 0 OR call_type IN ('CREATE', 'CREATE2'))
+			ORDER BY block_number DESC, transaction_index DESC
+			LIMIT ?
 			UNION ALL
 			SELECT tx_hash, block_number, block_time, trace_address, transaction_index,
 				from, to, value, gas_used, call_type, tx_success
 			FROM raw_traces
 			WHERE chain_id = ? AND to = unhex(?) AND from != unhex(?)
 			  AND (value > 0 OR call_type IN ('CREATE', 'CREATE2'))
+			ORDER BY block_number DESC, transaction_index DESC
+			LIMIT ?
 		)
 		ORDER BY block_number DESC, transaction_index DESC
 		LIMIT ? OFFSET ?
-	`, chainID, addrHex, chainID, addrHex, addrHex, limit, offset)
+	`, chainID, addrHex, innerLimit, chainID, addrHex, addrHex, innerLimit, limit, offset)
 
 	if err != nil {
 		writeInternalError(w, err.Error())
