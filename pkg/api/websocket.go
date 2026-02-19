@@ -4,7 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -81,7 +81,7 @@ func (h *WSHub) Run() {
 				h.clients[client.chainID] = make(map[*WSClient]bool)
 			}
 			h.clients[client.chainID][client] = true
-			log.Printf("[WS] Client connected to chain %d (total: %d)", client.chainID, len(h.clients[client.chainID]))
+			slog.Info("WS client connected", "chain_id", client.chainID, "total", len(h.clients[client.chainID]))
 			h.mu.Unlock()
 
 		case client := <-h.unregister:
@@ -90,7 +90,7 @@ func (h *WSHub) Run() {
 				if _, exists := clients[client]; exists {
 					delete(clients, client)
 					close(client.send)
-					log.Printf("[WS] Client disconnected from chain %d (remaining: %d)", client.chainID, len(clients))
+					slog.Info("WS client disconnected", "chain_id", client.chainID, "remaining", len(clients))
 					if len(clients) == 0 {
 						delete(h.clients, client.chainID)
 						delete(h.lastBlock, client.chainID)
@@ -174,7 +174,7 @@ func (h *WSHub) fetchBlockRange(ctx context.Context, chainID uint32, from, to ui
 		ORDER BY block_number ASC
 	`, chainID, from, to)
 	if err != nil {
-		log.Printf("[WS] Error fetching blocks: %v", err)
+		slog.Error("WS error fetching blocks", "error", err)
 		return nil
 	}
 	defer rows.Close()
@@ -289,7 +289,7 @@ func (c *WSClient) readPump() {
 		_, _, err := c.conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("[WS] Read error: %v", err)
+				slog.Error("WS read error", "error", err)
 			}
 			break
 		}
@@ -339,7 +339,7 @@ func (s *Server) handleWSBlocks(w http.ResponseWriter, r *http.Request) {
 
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("[WS] Upgrade error: %v", err)
+		slog.Error("WS upgrade error", "error", err)
 		return
 	}
 
@@ -357,7 +357,7 @@ func (s *Server) handleWSBlocks(w http.ResponseWriter, r *http.Request) {
 		Data: blocks,
 	}
 	if err := conn.WriteJSON(initialMsg); err != nil {
-		log.Printf("[WS] Error sending initial blocks: %v", err)
+		slog.Error("WS error sending initial blocks", "error", err)
 		conn.Close()
 		return
 	}

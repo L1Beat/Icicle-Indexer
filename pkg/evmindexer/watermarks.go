@@ -3,6 +3,7 @@ package evmindexer
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 )
 
@@ -60,7 +61,7 @@ func (r *IndexRunner) loadWatermarks() error {
 		return fmt.Errorf("error iterating watermarks: %w", rows.Err())
 	}
 
-	fmt.Printf("[Chain %d] Loaded %d watermarks from DB\n", r.chainId, count)
+	slog.Info("Loaded watermarks from DB", "chain_id", r.chainId, "count", count)
 	return nil
 }
 

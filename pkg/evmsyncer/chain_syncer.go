@@ -1,36 +1,46 @@
 package evmsyncer
 
 import (
+	"context"
+	"fmt"
+	"log/slog"
+	"os"
+	"sync"
+	"time"
+
 	"icicle/pkg/cache"
 	"icicle/pkg/chwrapper"
 	"icicle/pkg/evmindexer"
 	"icicle/pkg/evmrpc"
-	"context"
-	"fmt"
-	"log"
-	"sync"
-	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"golang.org/x/sync/errgroup"
 )
 
 const (
-	// BufferSize is the maximum number of batches that can be buffered in the channel
-	BufferSize = 200_000
-	// FlushInterval is how often to flush blocks to ClickHouse
-	FlushInterval = 1 * time.Second
+	// DefaultBufferSize is the maximum number of batches that can be buffered in the channel
+	DefaultBufferSize = 200_000
+	// DefaultFlushInterval is how often to flush blocks to ClickHouse
+	DefaultFlushInterval = 1 * time.Second
+	// DefaultMaxRetries is the default max retries for RPC requests
+	DefaultMaxRetries = 20
+	// DefaultRetryDelay is the default initial retry delay
+	DefaultRetryDelay = 100 * time.Millisecond
 )
 
 // Config holds configuration for ChainSyncer
 type Config struct {
 	ChainID        uint32
 	RpcURL         string
-	StartBlock     int64        // Starting block number when no watermark exists, default 68000000
+	StartBlock     int64        // Starting block number when no watermark exists, default 1
 	MaxConcurrency int          // Maximum concurrent RPC and debug requests, default 20
-	FetchBatchSize int          // Blocks per fetch, default 100
+	FetchBatchSize int          // Blocks per fetch, default 500
 	RpcBatchSize   int          // RPC calls per HTTP request, default 100
 	DebugBatchSize int          // Debug/trace calls per HTTP request, default 15
+	BufferSize     int          // Channel buffer size, default 200000
+	FlushInterval  time.Duration // Flush interval, default 1s
+	MaxRetries     int          // Max retries for RPC requests, default 20
+	RetryDelay     time.Duration // Initial retry delay, default 100ms
 	CHConn         driver.Conn  // ClickHouse connection
 	Cache          *cache.Cache // Cache for RPC calls
 	Name           string       // Chain name for display and tracking
@@ -88,13 +98,25 @@ func NewChainSyncer(cfg Config) (*ChainSyncer, error) {
 	if cfg.DebugBatchSize == 0 {
 		cfg.DebugBatchSize = 15 // Default: batch 15 trace calls per HTTP request
 	}
+	if cfg.BufferSize == 0 {
+		cfg.BufferSize = DefaultBufferSize
+	}
+	if cfg.FlushInterval == 0 {
+		cfg.FlushInterval = DefaultFlushInterval
+	}
+	if cfg.MaxRetries == 0 {
+		cfg.MaxRetries = DefaultMaxRetries
+	}
+	if cfg.RetryDelay == 0 {
+		cfg.RetryDelay = DefaultRetryDelay
+	}
 
 	// Create fetcher
 	fetcher := evmrpc.NewFetcher(evmrpc.FetcherOptions{
 		RpcURL:         cfg.RpcURL,
 		MaxConcurrency: cfg.MaxConcurrency,
-		MaxRetries:     100,
-		RetryDelay:     100 * time.Millisecond,
+		MaxRetries:     cfg.MaxRetries,
+		RetryDelay:     cfg.RetryDelay,
 		BatchSize:      cfg.RpcBatchSize,
 		DebugBatchSize: cfg.DebugBatchSize,
 		Cache:          cfg.Cache,
@@ -107,10 +129,10 @@ func NewChainSyncer(cfg Config) (*ChainSyncer, error) {
 		chainName:      cfg.Name,
 		fetcher:        fetcher,
 		conn:           cfg.CHConn,
-		blockChan:      make(chan []*evmrpc.NormalizedBlock, BufferSize),
+		blockChan:      make(chan []*evmrpc.NormalizedBlock, cfg.BufferSize),
 		startBlock:     cfg.StartBlock,
 		fetchBatchSize: cfg.FetchBatchSize,
-		flushInterval:  FlushInterval,
+		flushInterval:  cfg.FlushInterval,
 		ctx:            ctx,
 		cancel:         cancel,
 		lastPrintTime:  time.Now(),
@@ -125,9 +147,9 @@ func NewChainSyncer(cfg Config) (*ChainSyncer, error) {
 			return nil, fmt.Errorf("failed to create indexer runner: %w", err)
 		}
 		cs.indexerRunner = indexerRunner
-		log.Printf("[Chain %d] Indexer runner initialized", cfg.ChainID)
+		slog.Info("Indexer runner initialized", "chain_id", cfg.ChainID)
 	} else {
-		log.Printf("[Chain %d] Fast mode - indexers disabled", cfg.ChainID)
+		slog.Info("Fast mode - indexers disabled", "chain_id", cfg.ChainID)
 	}
 
 	return cs, nil
@@ -135,7 +157,7 @@ func NewChainSyncer(cfg Config) (*ChainSyncer, error) {
 
 // Start begins syncing
 func (cs *ChainSyncer) Start() error {
-	log.Printf("[Chain %d] Starting syncer...", cs.chainId)
+	slog.Info("Starting syncer", "chain_id", cs.chainId)
 
 	// Get starting position
 	startBlock, err := cs.getStartingBlock()
@@ -165,9 +187,8 @@ func (cs *ChainSyncer) Start() error {
 		return fmt.Errorf("failed to get max block from logs table: %w", err)
 	}
 
-	log.Printf("[Chain %d] Max blocks in tables - blocks: %d, txs: %d, traces: %d, logs: %d",
-		cs.chainId, cs.maxBlockBlocks, cs.maxBlockTransactions, cs.maxBlockTraces, cs.maxBlockLogs)
-	log.Printf("[Chain %d] Starting from block %d (watermark: %d)", cs.chainId, startBlock, cs.watermark)
+	slog.Info("Max blocks in tables", "chain_id", cs.chainId, "blocks", cs.maxBlockBlocks, "txs", cs.maxBlockTransactions, "traces", cs.maxBlockTraces, "logs", cs.maxBlockLogs)
+	slog.Info("Starting from block", "chain_id", cs.chainId, "start_block", startBlock, "watermark", cs.watermark)
 
 	// Get latest block from RPC
 	latestBlock, err := cs.fetcher.GetLatestBlock()
@@ -175,7 +196,7 @@ func (cs *ChainSyncer) Start() error {
 		return fmt.Errorf("failed to get latest block: %w", err)
 	}
 
-	log.Printf("[Chain %d] Latest block on chain: %d", cs.chainId, latestBlock)
+	slog.Info("Latest block on chain", "chain_id", cs.chainId, "latest_block", latestBlock)
 
 	// Initialize chain status in database
 	if err := chwrapper.UpsertChainStatus(cs.conn, cs.chainId, cs.chainName, uint64(latestBlock)); err != nil {
@@ -201,12 +222,12 @@ func (cs *ChainSyncer) Start() error {
 			// Query block time for the latest block
 			blockTime, err := cs.getBlockTime(cs.maxBlockBlocks)
 			if err != nil {
-				log.Printf("[Chain %d] Warning: failed to get block time for block %d: %v", cs.chainId, cs.maxBlockBlocks, err)
+				slog.Warn("Failed to get block time", "chain_id", cs.chainId, "block", cs.maxBlockBlocks, "error", err)
 				// Use current time as fallback
 				blockTime = time.Now().UTC()
 			}
 			cs.indexerRunner.OnBlock(uint64(cs.maxBlockBlocks), blockTime)
-			log.Printf("[Chain %d] Initialized indexer with block %d", cs.chainId, cs.maxBlockBlocks)
+			slog.Info("Initialized indexer with block", "chain_id", cs.chainId, "block", cs.maxBlockBlocks)
 		}
 
 		cs.wg.Add(1)
@@ -221,11 +242,11 @@ func (cs *ChainSyncer) Start() error {
 
 // Stop gracefully shuts down the syncer
 func (cs *ChainSyncer) Stop() {
-	log.Printf("[Chain %d] Stopping syncer...", cs.chainId)
+	slog.Info("Stopping syncer", "chain_id", cs.chainId)
 	cs.cancel()
 	close(cs.blockChan)
 	cs.wg.Wait()
-	log.Printf("[Chain %d] Syncer stopped", cs.chainId)
+	slog.Info("Syncer stopped", "chain_id", cs.chainId)
 }
 
 // Wait blocks until syncer completes
@@ -283,13 +304,13 @@ func (cs *ChainSyncer) fetcherLoop(startBlock, latestBlock int64) {
 
 				newLatest, err := cs.fetcher.GetLatestBlock()
 				if err != nil {
-					log.Printf("[Chain %d] Error getting latest block: %v", cs.chainId, err)
+					slog.Error("Error getting latest block", "chain_id", cs.chainId, "error", err)
 					continue
 				}
 
 				// Update chain status with latest block from RPC
 				if err := chwrapper.UpdateLatestBlock(cs.conn, cs.chainId, cs.chainName, uint64(newLatest)); err != nil {
-					log.Printf("[Chain %d] Error updating chain status: %v", cs.chainId, err)
+					slog.Error("Error updating chain status", "chain_id", cs.chainId, "error", err)
 				}
 
 				if newLatest > latestBlock {
@@ -308,8 +329,7 @@ func (cs *ChainSyncer) fetcherLoop(startBlock, latestBlock int64) {
 			// Fetch blocks
 			blocks, err := cs.fetcher.FetchBlockRange(currentBlock, endBlock)
 			if err != nil {
-				log.Printf("[Chain %d] Error fetching blocks %d-%d: %v",
-					cs.chainId, currentBlock, endBlock, err)
+				slog.Error("Error fetching blocks", "chain_id", cs.chainId, "from", currentBlock, "to", endBlock, "error", err)
 				time.Sleep(1 * time.Second)
 				continue
 			}
@@ -349,14 +369,13 @@ func (cs *ChainSyncer) writerLoop() {
 		if err := cs.writeBlocks(buffer); err != nil {
 			// Log error and retry - transient connection issues are handled by retry logic
 			// If we get here, retries have been exhausted but we can try again on next flush
-			log.Printf("[Chain %d] Error writing blocks: %v, will retry on next flush", cs.chainId, err)
+			slog.Error("Error writing blocks, will retry on next flush", "chain_id", cs.chainId, "error", err)
 			return cs.flushInterval
 		}
 
 		elapsed := time.Since(start)
 		if elapsed > 10*time.Second {
-			log.Printf("[Chain %d] WARNING: Write took %v, exceeds 10 second threshold",
-				cs.chainId, elapsed)
+			slog.Warn("Write exceeded threshold", "chain_id", cs.chainId, "elapsed", elapsed)
 		}
 
 		// Update counters and clear buffer
@@ -448,7 +467,7 @@ func (cs *ChainSyncer) writeBlocks(blocks []*evmrpc.NormalizedBlock) error {
 	for _, b := range blocks {
 		txCount += len(b.Block.Transactions)
 	}
-	log.Printf("[Chain %d] Inserted %d blocks and %d txs in %v", cs.chainId, len(blocks), txCount, elapsed)
+	slog.Info("Inserted blocks", "chain_id", cs.chainId, "blocks", len(blocks), "txs", txCount, "elapsed", elapsed)
 
 	// Update watermark to the highest block number in this batch
 	maxBlock := uint32(0)
@@ -464,9 +483,10 @@ func (cs *ChainSyncer) writeBlocks(blocks []*evmrpc.NormalizedBlock) error {
 
 	if maxBlock > cs.watermark {
 		if err := chwrapper.SetWatermark(cs.conn, cs.chainId, maxBlock); err != nil {
-			// Panic on watermark update failure - this is critical for preventing duplicates
+			// Exit on watermark update failure - this is critical for preventing duplicates
 			// If we can't update watermark after successful inserts, we risk data duplication on restart
-			log.Fatalf("[Chain %d] FATAL: Failed to update watermark after successful inserts: %v", cs.chainId, err)
+			slog.Error("Failed to update watermark after successful inserts", "chain_id", cs.chainId, "error", err)
+			os.Exit(1)
 		}
 		cs.watermark = maxBlock
 	}
@@ -527,8 +547,7 @@ func (cs *ChainSyncer) printProgress() {
 			writeRate := float64(written) / elapsed.Seconds()
 			lag := fetched - written
 
-			log.Printf("[Chain %d] Fetched: %d (%.1f/s) | Written: %d (%.1f/s) | Lag: %d | Watermark: %d",
-				cs.chainId, fetched, fetchRate, written, writeRate, lag, cs.watermark)
+			slog.Info("Sync progress", "chain_id", cs.chainId, "fetched", fetched, "fetch_rate", fmt.Sprintf("%.1f/s", fetchRate), "written", written, "write_rate", fmt.Sprintf("%.1f/s", writeRate), "lag", lag, "watermark", cs.watermark)
 		}
 	}
 }

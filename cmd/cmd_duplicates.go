@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 
 	"icicle/pkg/chwrapper"
 
@@ -35,7 +36,7 @@ func RunDuplicates() {
 		)
 	`, chainID).Scan(&totalBlocks, &duplicateBlocks)
 	if err != nil {
-		log.Printf("Error querying blocks: %v", err)
+		slog.Error("Error querying blocks", "error", err)
 	} else {
 		fmt.Printf("Total blocks:     %d\n", totalBlocks)
 		fmt.Printf("Duplicates:       %d\n", duplicateBlocks)
@@ -61,7 +62,7 @@ func RunDuplicates() {
 		)
 	`, chainID).Scan(&totalTxs, &duplicateTxs)
 	if err != nil {
-		log.Printf("Error querying txs: %v", err)
+		slog.Error("Error querying txs", "error", err)
 	} else {
 		fmt.Printf("Total txs:        %d\n", totalTxs)
 		fmt.Printf("Duplicates:       %d\n", duplicateTxs)
@@ -87,7 +88,7 @@ func RunDuplicates() {
 		)
 	`, chainID).Scan(&totalTraces, &duplicateTraces)
 	if err != nil {
-		log.Printf("Error querying traces: %v", err)
+		slog.Error("Error querying traces", "error", err)
 	} else {
 		fmt.Printf("Total traces:     %d\n", totalTraces)
 		fmt.Printf("Duplicates:       %d\n", duplicateTraces)
@@ -113,7 +114,7 @@ func RunDuplicates() {
 		)
 	`, chainID).Scan(&totalLogs, &duplicateLogs)
 	if err != nil {
-		log.Printf("Error querying logs: %v", err)
+		slog.Error("Error querying logs", "error", err)
 	} else {
 		fmt.Printf("Total logs:       %d\n", totalLogs)
 		fmt.Printf("Duplicates:       %d\n", duplicateLogs)

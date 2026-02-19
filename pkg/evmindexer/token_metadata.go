@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -53,7 +53,7 @@ func NewTokenMetadataFetcher(chainID uint32, conn driver.Conn, rpcURL string) *T
 func (f *TokenMetadataFetcher) FetchMissingMetadata(limit int) (int, error) {
 	ctx := context.Background()
 
-	log.Printf("[Chain %d] Token metadata: checking for missing tokens...", f.chainID)
+	slog.Debug("Token metadata: checking for missing tokens", "chain_id", f.chainID)
 
 	// Find tokens in balance_changes that don't have metadata yet
 	// Use NOT IN instead of LEFT JOIN for better handling of empty tables
@@ -82,7 +82,7 @@ func (f *TokenMetadataFetcher) FetchMissingMetadata(limit int) (int, error) {
 		tokens = append(tokens, token)
 	}
 
-	log.Printf("[Chain %d] Token metadata: found %d tokens without metadata", f.chainID, len(tokens))
+	slog.Info("Token metadata: found tokens without metadata", "chain_id", f.chainID, "count", len(tokens))
 
 	if len(tokens) == 0 {
 		return 0, nil
@@ -93,7 +93,7 @@ func (f *TokenMetadataFetcher) FetchMissingMetadata(limit int) (int, error) {
 	for _, token := range tokens {
 		m, err := f.fetchTokenMetadata(token)
 		if err != nil {
-			log.Printf("[Chain %d] Failed to fetch metadata for token %s: %v", f.chainID, hex.EncodeToString(token), err)
+			slog.Warn("Failed to fetch metadata for token", "chain_id", f.chainID, "token", hex.EncodeToString(token), "error", err)
 			// Insert with empty values so we don't retry forever
 			m = &TokenMetadata{
 				Token:    token,

@@ -44,7 +44,7 @@ type ValidatorDeposit struct {
 // @Failure 500 {object} ErrorResponse
 // @Router /api/v1/data/validators [get]
 func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
-	ctx := s.queryContext()
+	ctx := r.Context()
 	limit, offset := getPagination(r)
 
 	subnetID := r.URL.Query().Get("subnet_id")
@@ -139,7 +139,7 @@ func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 // @Failure 404 {object} ErrorResponse
 // @Router /api/v1/data/validators/{id} [get]
 func (s *Server) handleGetValidator(w http.ResponseWriter, r *http.Request) {
-	ctx := s.queryContext()
+	ctx := r.Context()
 	id := r.PathValue("id")
 
 	var v Validator
@@ -177,7 +177,7 @@ func (s *Server) handleGetValidator(w http.ResponseWriter, r *http.Request) {
 // @Failure 500 {object} ErrorResponse
 // @Router /api/v1/data/validators/{id}/deposits [get]
 func (s *Server) handleValidatorDeposits(w http.ResponseWriter, r *http.Request) {
-	ctx := s.queryContext()
+	ctx := r.Context()
 	limit, offset := getPagination(r)
 	id := r.PathValue("id")
 

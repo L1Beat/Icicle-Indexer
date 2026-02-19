@@ -5,11 +5,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"icicle/pkg/chwrapper"
-	"icicle/pkg/pchainrpc"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
+
+	"icicle/pkg/chwrapper"
+	"icicle/pkg/pchainrpc"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
@@ -353,7 +354,7 @@ func MarkInactiveValidators(ctx context.Context, conn clickhouse.Conn, pchainID 
 		return fmt.Errorf("failed to send inactive validators batch: %w", err)
 	}
 
-	log.Printf("Marked %d validators as inactive for subnet %s", len(toDeactivate), subnetID)
+	slog.Info("Marked validators as inactive", "count", len(toDeactivate), "subnet_id", subnetID)
 	return nil
 }
 
@@ -524,7 +525,7 @@ func DiscoverAllSubnets(ctx context.Context, conn clickhouse.Conn, pchainID uint
 		SELECT COALESCE(max(created_block), 0) FROM subnets FINAL WHERE p_chain_id = ?
 	`, pchainID).Scan(&lastProcessedBlock)
 	if err != nil {
-		log.Printf("WARNING: Could not get last processed block, will scan from start: %v", err)
+		slog.Warn("Could not get last processed block, will scan from start", "error", err)
 		lastProcessedBlock = 0
 	}
 
@@ -1129,7 +1130,7 @@ func DiscoverL1ValidatorHistory(ctx context.Context, conn clickhouse.Conn, pchai
 		SELECT COALESCE(max(created_block), 0) FROM l1_validator_history FINAL WHERE p_chain_id = ?
 	`, pchainID).Scan(&lastProcessedBlock)
 	if err != nil {
-		log.Printf("WARNING: Could not get last processed block for validator history: %v", err)
+		slog.Warn("Could not get last processed block for validator history", "error", err)
 		lastProcessedBlock = 0
 	}
 
@@ -1172,14 +1173,14 @@ func DiscoverL1ValidatorHistory(ctx context.Context, conn clickhouse.Conn, pchai
 
 		var txValidators []ConvertSubnetValidator
 		if err := json.Unmarshal([]byte(validatorsJSON), &txValidators); err != nil {
-			log.Printf("WARNING: Failed to parse validators JSON for tx %s: %v (json: %s)", txID, err, validatorsJSON[:min(200, len(validatorsJSON))])
+			slog.Warn("Failed to parse validators JSON", "tx_id", txID, "error", err, "json_preview", validatorsJSON[:min(200, len(validatorsJSON))])
 			continue
 		}
 
 		// Parse subnet ID for computing validation_id
 		subnetIDParsed, err := ids.FromString(subnetID)
 		if err != nil {
-			log.Printf("WARNING: Failed to parse subnet ID %s for tx %s: %v", subnetID, txID, err)
+			slog.Warn("Failed to parse subnet ID", "subnet_id", subnetID, "tx_id", txID, "error", err)
 			continue
 		}
 
@@ -1188,7 +1189,7 @@ func DiscoverL1ValidatorHistory(ctx context.Context, conn clickhouse.Conn, pchai
 			// Convert hex node ID to CB58 format
 			nodeIDCB58, err := hexToNodeID(v.NodeID)
 			if err != nil {
-				log.Printf("WARNING: Failed to convert node ID %s to CB58 for tx %s: %v", v.NodeID, txID, err)
+				slog.Warn("Failed to convert node ID to CB58", "node_id", v.NodeID, "tx_id", txID, "error", err)
 				continue
 			}
 
@@ -1234,7 +1235,7 @@ func DiscoverL1ValidatorHistory(ctx context.Context, conn clickhouse.Conn, pchai
 	var registerQuery string
 	var registerRows driver.Rows
 	if registerCount == 0 {
-		log.Printf("No RegisterL1Validator records found, performing full backfill...")
+		slog.Info("No RegisterL1Validator records found, performing full backfill")
 		registerQuery = `
 			SELECT
 				tx_id,
@@ -1275,7 +1276,7 @@ func DiscoverL1ValidatorHistory(ctx context.Context, conn clickhouse.Conn, pchai
 		var blockTime time.Time
 
 		if err := registerRows.Scan(&txID, &blockNumber, &blockTime, &messageHex, &balance); err != nil {
-			log.Printf("WARNING: Failed to scan RegisterL1Validator row: %v", err)
+			slog.Warn("Failed to scan RegisterL1Validator row", "error", err)
 			continue
 		}
 
@@ -1284,7 +1285,7 @@ func DiscoverL1ValidatorHistory(ctx context.Context, conn clickhouse.Conn, pchai
 		messageHex = strings.TrimPrefix(messageHex, "0x")
 		messageBytes, err := hex.DecodeString(messageHex)
 		if err != nil {
-			log.Printf("WARNING: Failed to decode message hex for tx %s: %v", txID, err)
+			slog.Warn("Failed to decode message hex", "tx_id", txID, "error", err)
 			continue
 		}
 
@@ -1297,14 +1298,14 @@ func DiscoverL1ValidatorHistory(ctx context.Context, conn clickhouse.Conn, pchai
 		// - 4 bytes: payload length
 		// - N bytes: payload
 		if len(messageBytes) < 42 { // 2 + 4 + 32 + 4 minimum
-			log.Printf("WARNING: Message too short for tx %s: %d bytes", txID, len(messageBytes))
+			slog.Warn("Message too short", "tx_id", txID, "bytes", len(messageBytes))
 			continue
 		}
 
 		// Skip codec version (2 bytes), network ID (4 bytes), source chain ID (32 bytes)
 		payloadLenOffset := 2 + 4 + 32
 		if len(messageBytes) < payloadLenOffset+4 {
-			log.Printf("WARNING: Message too short for payload length for tx %s", txID)
+			slog.Warn("Message too short for payload length", "tx_id", txID)
 			continue
 		}
 
@@ -1318,7 +1319,7 @@ func DiscoverL1ValidatorHistory(ctx context.Context, conn clickhouse.Conn, pchai
 		payloadEnd := payloadStart + int(payloadLen)
 
 		if payloadEnd > len(messageBytes) {
-			log.Printf("WARNING: Payload extends beyond message for tx %s: need %d, have %d", txID, payloadEnd, len(messageBytes))
+			slog.Warn("Payload extends beyond message", "tx_id", txID, "need", payloadEnd, "have", len(messageBytes))
 			continue
 		}
 
@@ -1327,27 +1328,27 @@ func DiscoverL1ValidatorHistory(ctx context.Context, conn clickhouse.Conn, pchai
 		// The warp payload is an AddressedCall which wraps the actual message
 		addressedCall, err := payload.ParseAddressedCall(warpPayload)
 		if err != nil {
-			log.Printf("WARNING: Failed to parse AddressedCall for tx %s: %v", txID, err)
+			slog.Warn("Failed to parse AddressedCall", "tx_id", txID, "error", err)
 			continue
 		}
 
 		// Parse the inner payload as RegisterL1Validator message
 		regMsg, err := message.ParseRegisterL1Validator(addressedCall.Payload)
 		if err != nil {
-			log.Printf("WARNING: Failed to parse RegisterL1Validator payload for tx %s: %v", txID, err)
+			slog.Warn("Failed to parse RegisterL1Validator payload", "tx_id", txID, "error", err)
 			continue
 		}
 
 		// Validate NodeID is not empty
 		if len(regMsg.NodeID) == 0 {
-			log.Printf("WARNING: Empty NodeID in RegisterL1Validator tx %s, skipping", txID)
+			slog.Warn("Empty NodeID in RegisterL1Validator tx, skipping", "tx_id", txID)
 			continue
 		}
 
 		// Convert node ID bytes to CB58 format
 		var nodeID ids.NodeID
 		if len(regMsg.NodeID) != len(nodeID) {
-			log.Printf("WARNING: Invalid NodeID length %d (expected %d) in tx %s, skipping", len(regMsg.NodeID), len(nodeID), txID)
+			slog.Warn("Invalid NodeID length, skipping", "length", len(regMsg.NodeID), "expected", len(nodeID), "tx_id", txID)
 			continue
 		}
 		copy(nodeID[:], regMsg.NodeID)
@@ -1355,7 +1356,7 @@ func DiscoverL1ValidatorHistory(ctx context.Context, conn clickhouse.Conn, pchai
 		// Validate the resulting NodeID is not all zeros
 		var zeroNodeID ids.NodeID
 		if nodeID == zeroNodeID {
-			log.Printf("WARNING: All-zero NodeID in RegisterL1Validator tx %s, skipping", txID)
+			slog.Warn("All-zero NodeID in RegisterL1Validator tx, skipping", "tx_id", txID)
 			continue
 		}
 
@@ -1370,8 +1371,7 @@ func DiscoverL1ValidatorHistory(ctx context.Context, conn clickhouse.Conn, pchai
 			remainingBalanceOwner = regMsg.RemainingBalanceOwner.Addresses[0].String()
 		}
 
-		log.Printf("DEBUG: RegisterL1Validator tx %s: NodeID=%s, SubnetID=%s, Weight=%d, ValidationID=%s",
-			txID, nodeIDStr, regMsg.SubnetID.String(), regMsg.Weight, validationID.String())
+		slog.Debug("RegisterL1Validator tx", "tx_id", txID, "node_id", nodeIDStr, "subnet_id", regMsg.SubnetID.String(), "weight", regMsg.Weight, "validation_id", validationID.String())
 
 		// Extract validator info
 		validators = append(validators, L1ValidatorHistory{
@@ -1458,7 +1458,7 @@ func SyncL1ValidatorBalanceTxs(ctx context.Context, conn clickhouse.Conn, pchain
 		SELECT COALESCE(max(block_number), 0) FROM l1_validator_balance_txs WHERE p_chain_id = ?
 	`, pchainID).Scan(&lastSyncedBlock)
 	if err != nil {
-		log.Printf("WARNING: Could not get last synced block for balance txs: %v", err)
+		slog.Warn("Could not get last synced block for balance txs", "error", err)
 		lastSyncedBlock = 0
 	}
 
@@ -1494,7 +1494,7 @@ func SyncL1ValidatorBalanceTxs(ctx context.Context, conn clickhouse.Conn, pchain
 			&tx.ValidationID, &tx.TxID, &tx.TxType, &tx.BlockNumber,
 			&tx.BlockTime, &tx.Amount, &tx.SubnetID, &tx.NodeID,
 		); err != nil {
-			log.Printf("WARNING: Failed to scan top-up tx: %v", err)
+			slog.Warn("Failed to scan top-up tx", "error", err)
 			continue
 		}
 		tx.PChainID = pchainID
@@ -1532,7 +1532,7 @@ func SyncL1ValidatorBalanceTxs(ctx context.Context, conn clickhouse.Conn, pchain
 				&tx.ValidationID, &tx.TxID, &tx.TxType, &tx.BlockNumber,
 				&tx.BlockTime, &tx.Amount, &tx.SubnetID, &tx.NodeID,
 			); err != nil {
-				log.Printf("WARNING: Failed to scan initial deposit: %v", err)
+				slog.Warn("Failed to scan initial deposit", "error", err)
 				continue
 			}
 			tx.PChainID = pchainID
@@ -1543,7 +1543,7 @@ func SyncL1ValidatorBalanceTxs(ctx context.Context, conn clickhouse.Conn, pchain
 
 	// Insert all transactions
 	if len(txs) > 0 {
-		log.Printf("Syncing %d balance transactions to l1_validator_balance_txs", len(txs))
+		slog.Info("Syncing balance transactions", "count", len(txs), "table", "l1_validator_balance_txs")
 		if err := InsertL1ValidatorBalanceTxs(ctx, conn, txs); err != nil {
 			return fmt.Errorf("failed to insert balance txs: %w", err)
 		}
@@ -1671,7 +1671,7 @@ func UpdatePerValidatorFeeStats(ctx context.Context, conn clickhouse.Conn, pchai
 			&startTime, &endTime, &uptime, &active,
 			&initialDeposit, &totalTopups, &refundAmount,
 		); err != nil {
-			log.Printf("WARNING: Failed to scan validator row: %v", err)
+			slog.Warn("Failed to scan validator row", "error", err)
 			continue
 		}
 
@@ -1688,7 +1688,7 @@ func UpdatePerValidatorFeeStats(ctx context.Context, conn clickhouse.Conn, pchai
 			initialDeposit, totalTopups, refundAmount, feesPaid,
 		)
 		if err != nil {
-			log.Printf("WARNING: Failed to append validator %s: %v", nodeID, err)
+			slog.Warn("Failed to append validator", "node_id", nodeID, "error", err)
 			continue
 		}
 		updateCount++
@@ -1702,7 +1702,7 @@ func UpdatePerValidatorFeeStats(ctx context.Context, conn clickhouse.Conn, pchai
 		if err := chwrapper.RetryableBatchSend(batch); err != nil {
 			return fmt.Errorf("failed to send batch: %w", err)
 		}
-		log.Printf("Updated fee stats for %d validators", updateCount)
+		slog.Info("Updated fee stats for validators", "count", updateCount)
 	}
 
 	return nil
@@ -1729,7 +1729,7 @@ func SyncL1ValidatorRefunds(ctx context.Context, conn clickhouse.Conn, fetcher *
 		SELECT COALESCE(max(block_number), 0) FROM l1_validator_refunds WHERE p_chain_id = ?
 	`, pchainID).Scan(&lastSyncedBlock)
 	if err != nil {
-		log.Printf("WARNING: Could not get last synced block for refunds: %v", err)
+		slog.Warn("Could not get last synced block for refunds", "error", err)
 		lastSyncedBlock = 0
 	}
 
@@ -1757,7 +1757,7 @@ func SyncL1ValidatorRefunds(ctx context.Context, conn clickhouse.Conn, fetcher *
 	for rows.Next() {
 		var r L1ValidatorRefund
 		if err := rows.Scan(&r.TxID, &r.ValidationID, &r.BlockNumber, &r.BlockTime); err != nil {
-			log.Printf("WARNING: Failed to scan refund tx: %v", err)
+			slog.Warn("Failed to scan refund tx", "error", err)
 			continue
 		}
 		r.PChainID = pchainID
@@ -1789,7 +1789,7 @@ func SyncL1ValidatorRefunds(ctx context.Context, conn clickhouse.Conn, fetcher *
 					WHERE validation_id = ? AND p_chain_id = ?
 				`, refunds[i].ValidationID, pchainID).Scan(&subnetID)
 				if err != nil {
-					log.Printf("WARNING: Could not find subnet for validation_id %s: %v", refunds[i].ValidationID, err)
+					slog.Warn("Could not find subnet for validation_id", "validation_id", refunds[i].ValidationID, "error", err)
 					continue
 				}
 			}
@@ -1798,12 +1798,12 @@ func SyncL1ValidatorRefunds(ctx context.Context, conn clickhouse.Conn, fetcher *
 			if refundAddress == "" {
 				validatorInfo, rpcErr := fetcher.GetL1Validator(ctx, refunds[i].ValidationID)
 				if rpcErr != nil {
-					log.Printf("WARNING: Could not get L1 validator info for %s (not in history and RPC failed): %v", refunds[i].ValidationID, rpcErr)
+					slog.Warn("Could not get L1 validator info", "validation_id", refunds[i].ValidationID, "error", rpcErr)
 					continue
 				}
 
 				if len(validatorInfo.RemainingBalanceOwner.Addresses) == 0 {
-					log.Printf("WARNING: No remainingBalanceOwner address for validator %s", refunds[i].ValidationID)
+					slog.Warn("No remainingBalanceOwner address for validator", "validation_id", refunds[i].ValidationID)
 					continue
 				}
 				refundAddress = validatorInfo.RemainingBalanceOwner.Addresses[0]
@@ -1818,7 +1818,7 @@ func SyncL1ValidatorRefunds(ctx context.Context, conn clickhouse.Conn, fetcher *
 		// This is reliable because fee rate has always been 512 nAVAX/sec (network < 10k validators)
 		refundAmount, err := calculateRefundFromDeposits(ctx, conn, refunds[i].ValidationID, pchainID, refunds[i].BlockTime)
 		if err != nil {
-			log.Printf("WARNING: Could not calculate refund for %s: %v", refunds[i].ValidationID, err)
+			slog.Warn("Could not calculate refund", "validation_id", refunds[i].ValidationID, "error", err)
 			continue
 		}
 		refunds[i].RefundAmount = refundAmount
@@ -1857,7 +1857,7 @@ func SyncL1ValidatorRefunds(ctx context.Context, conn clickhouse.Conn, fetcher *
 		if err := chwrapper.RetryableBatchSend(batch); err != nil {
 			return fmt.Errorf("failed to send refunds batch: %w", err)
 		}
-		log.Printf("Synced %d validator refunds", insertCount)
+		slog.Info("Synced validator refunds", "count", insertCount)
 	}
 
 	return nil
@@ -1950,8 +1950,7 @@ func calculateRefundFromDeposits(ctx context.Context, conn clickhouse.Conn, vali
 	}
 
 	refund := totalDeposits - feesConsumed
-	log.Printf("Calculated refund for %s: deposits=%d, start=%s, active=%ds, fees=%d, refund=%d nAVAX (%.6f AVAX)",
-		validationID, totalDeposits, startTime.Format("2006-01-02 15:04:05"), activeSeconds, feesConsumed, refund, float64(refund)/1e9)
+	slog.Info("Calculated refund", "validation_id", validationID, "deposits", totalDeposits, "start", startTime.Format("2006-01-02 15:04:05"), "active_seconds", activeSeconds, "fees", feesConsumed, "refund_navax", refund, "refund_avax", fmt.Sprintf("%.6f", float64(refund)/1e9))
 
 	return refund, nil
 }

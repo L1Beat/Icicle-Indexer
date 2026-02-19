@@ -35,7 +35,7 @@ type Block struct {
 // @Failure 500 {object} ErrorResponse
 // @Router /api/v1/data/evm/{chainId}/blocks [get]
 func (s *Server) handleListBlocks(w http.ResponseWriter, r *http.Request) {
-	ctx := s.queryContext()
+	ctx := r.Context()
 	limit, offset := getPagination(r)
 
 	chainID, err := getChainIDFromPath(r)
@@ -98,7 +98,7 @@ func (s *Server) handleListBlocks(w http.ResponseWriter, r *http.Request) {
 // @Failure 404 {object} ErrorResponse
 // @Router /api/v1/data/evm/{chainId}/blocks/{number} [get]
 func (s *Server) handleGetBlock(w http.ResponseWriter, r *http.Request) {
-	ctx := s.queryContext()
+	ctx := r.Context()
 
 	chainID, err := getChainIDFromPath(r)
 	if err != nil {

@@ -3,7 +3,7 @@ package chwrapper
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"strconv"
 	"time"
@@ -35,8 +35,7 @@ func Connect() (driver.Conn, error) {
 	maxIdleConns := getEnvInt("CH_MAX_IDLE_CONNS", DefaultMaxIdleConns)
 	dialTimeoutSec := getEnvInt("CH_DIAL_TIMEOUT_SEC", int(DefaultDialTimeout.Seconds()))
 
-	log.Printf("[ClickHouse] Pool config: MaxOpenConns=%d, MaxIdleConns=%d, DialTimeout=%ds",
-		maxOpenConns, maxIdleConns, dialTimeoutSec)
+	slog.Info("ClickHouse pool config", "max_open_conns", maxOpenConns, "max_idle_conns", maxIdleConns, "dial_timeout_sec", dialTimeoutSec)
 
 	var (
 		ctx       = context.Background()
@@ -77,6 +76,6 @@ func Connect() (driver.Conn, error) {
 		return nil, err
 	}
 
-	log.Printf("[ClickHouse] Connected successfully")
+	slog.Info("ClickHouse connected successfully")
 	return conn, nil
 }

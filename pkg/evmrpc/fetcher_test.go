@@ -16,7 +16,7 @@ import (
 func TestFetchBlockRangeVsRaw(t *testing.T) {
 	rpcURL := os.Getenv("RPC_URL")
 	if rpcURL == "" {
-		t.Fatalf("RPC_URL environment variable not set, skipping integration test")
+		t.Skip("RPC_URL environment variable not set, skipping integration test")
 	}
 
 	// Create fetcher

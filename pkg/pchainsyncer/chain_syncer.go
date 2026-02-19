@@ -1,35 +1,44 @@
 package pchainsyncer
 
 import (
+	"context"
+	"fmt"
+	"log/slog"
+	"sync"
+	"time"
+
 	"icicle/pkg/cache"
 	"icicle/pkg/chwrapper"
 	"icicle/pkg/pchainrpc"
-	"context"
-	"fmt"
-	"log"
-	"sync"
-	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
 
 const (
-	// BufferSize is the maximum number of batches that can be buffered in the channel
-	BufferSize = 10000
-	// FlushInterval is how often to flush blocks to ClickHouse
-	FlushInterval = 1 * time.Second
+	// DefaultPChainBufferSize is the maximum number of batches that can be buffered in the channel
+	DefaultPChainBufferSize = 10000
+	// DefaultPChainFlushInterval is how often to flush blocks to ClickHouse
+	DefaultPChainFlushInterval = 1 * time.Second
+	// DefaultPChainMaxRetries is the default max retries for RPC requests
+	DefaultPChainMaxRetries = 20
+	// DefaultPChainRetryDelay is the default initial retry delay
+	DefaultPChainRetryDelay = 100 * time.Millisecond
 )
 
 // Config holds configuration for PChainSyncer
 type Config struct {
 	ChainID        uint32
 	RpcURL         string
-	StartBlock     int64        // Starting block number when no watermark exists
-	MaxConcurrency int          // Maximum concurrent RPC requests
-	FetchBatchSize int          // Blocks per fetch
-	CHConn         driver.Conn  // ClickHouse connection
-	Cache          *cache.Cache // Cache for RPC calls
-	Name           string       // Chain name for display
+	StartBlock     int64         // Starting block number when no watermark exists
+	MaxConcurrency int           // Maximum concurrent RPC requests
+	FetchBatchSize int           // Blocks per fetch
+	BufferSize     int           // Channel buffer size, default 10000
+	FlushInterval  time.Duration // Flush interval, default 1s
+	MaxRetries     int           // Max retries for RPC requests, default 20
+	RetryDelay     time.Duration // Initial retry delay, default 100ms
+	CHConn         driver.Conn   // ClickHouse connection
+	Cache          *cache.Cache  // Cache for RPC calls
+	Name           string        // Chain name for display
 
 	// Validator syncer config
 	EnableValidatorSync   bool          // Enable L1 validator state syncing
@@ -77,13 +86,25 @@ func NewPChainSyncer(cfg Config) (*PChainSyncer, error) {
 	if cfg.Name == "" {
 		cfg.Name = fmt.Sprintf("P-Chain-%d", cfg.ChainID)
 	}
+	if cfg.BufferSize == 0 {
+		cfg.BufferSize = DefaultPChainBufferSize
+	}
+	if cfg.FlushInterval == 0 {
+		cfg.FlushInterval = DefaultPChainFlushInterval
+	}
+	if cfg.MaxRetries == 0 {
+		cfg.MaxRetries = DefaultPChainMaxRetries
+	}
+	if cfg.RetryDelay == 0 {
+		cfg.RetryDelay = DefaultPChainRetryDelay
+	}
 
 	// Create fetcher
 	fetcher := pchainrpc.NewFetcher(pchainrpc.FetcherOptions{
 		RpcURL:         cfg.RpcURL,
 		MaxConcurrency: cfg.MaxConcurrency,
-		MaxRetries:     10,
-		RetryDelay:     100 * time.Millisecond,
+		MaxRetries:     cfg.MaxRetries,
+		RetryDelay:     cfg.RetryDelay,
 		BatchSize:      cfg.FetchBatchSize,
 		Cache:          cfg.Cache,
 	})
@@ -95,10 +116,10 @@ func NewPChainSyncer(cfg Config) (*PChainSyncer, error) {
 		chainName:      cfg.Name,
 		fetcher:        fetcher,
 		conn:           cfg.CHConn,
-		blockChan:      make(chan []*pchainrpc.JSONBlock, BufferSize),
+		blockChan:      make(chan []*pchainrpc.JSONBlock, cfg.BufferSize),
 		startBlock:     cfg.StartBlock,
 		fetchBatchSize: cfg.FetchBatchSize,
-		flushInterval:  FlushInterval,
+		flushInterval:  cfg.FlushInterval,
 		ctx:            ctx,
 		cancel:         cancel,
 		lastPrintTime:  time.Now(),
@@ -123,7 +144,7 @@ func NewPChainSyncer(cfg Config) (*PChainSyncer, error) {
 
 // Start begins syncing
 func (ps *PChainSyncer) Start() error {
-	log.Printf("[Chain %d - %s] Starting syncer...", ps.chainID, ps.chainName)
+	slog.Info("Starting syncer", "chain_id", ps.chainID, "chain_name", ps.chainName)
 
 	// Get starting position
 	startBlock, err := ps.getStartingBlock()
@@ -131,7 +152,7 @@ func (ps *PChainSyncer) Start() error {
 		return fmt.Errorf("failed to determine starting block: %w", err)
 	}
 
-	log.Printf("[Chain %d - %s] Starting from block %d", ps.chainID, ps.chainName, startBlock)
+	slog.Info("Starting from block", "chain_id", ps.chainID, "chain_name", ps.chainName, "start_block", startBlock)
 
 	// Get latest block from RPC
 	latestBlock, err := ps.fetcher.GetLatestBlock()
@@ -139,7 +160,7 @@ func (ps *PChainSyncer) Start() error {
 		return fmt.Errorf("failed to get latest block: %w", err)
 	}
 
-	log.Printf("[Chain %d - %s] Latest block on chain: %d", ps.chainID, ps.chainName, latestBlock)
+	slog.Info("Latest block on chain", "chain_id", ps.chainID, "chain_name", ps.chainName, "latest_block", latestBlock)
 
 	// Initialize chain status in database
 	if err := chwrapper.UpsertChainStatus(ps.conn, ps.chainID, ps.chainName, uint64(latestBlock)); err != nil {
@@ -172,7 +193,7 @@ func (ps *PChainSyncer) Start() error {
 
 // Stop gracefully shuts down the syncer
 func (ps *PChainSyncer) Stop() {
-	log.Printf("[Chain %d - %s] Stopping syncer...", ps.chainID, ps.chainName)
+	slog.Info("Stopping syncer", "chain_id", ps.chainID, "chain_name", ps.chainName)
 
 	// Stop validator syncer first
 	if ps.validatorSyncer != nil {
@@ -182,7 +203,7 @@ func (ps *PChainSyncer) Stop() {
 	ps.cancel()
 	close(ps.blockChan)
 	ps.wg.Wait()
-	log.Printf("[Chain %d - %s] Syncer stopped", ps.chainID, ps.chainName)
+	slog.Info("Syncer stopped", "chain_id", ps.chainID, "chain_name", ps.chainName)
 }
 
 // Wait blocks until syncer completes
@@ -226,13 +247,13 @@ func (ps *PChainSyncer) fetcherLoop(startBlock, latestBlock int64) {
 
 				newLatest, err := ps.fetcher.GetLatestBlock()
 				if err != nil {
-					log.Printf("[Chain %d - %s] Error getting latest block: %v", ps.chainID, ps.chainName, err)
+					slog.Error("Error getting latest block", "chain_id", ps.chainID, "chain_name", ps.chainName, "error", err)
 					continue
 				}
 
 				// Update chain status with latest block from RPC
 				if err := chwrapper.UpdateLatestBlock(ps.conn, ps.chainID, ps.chainName, uint64(newLatest)); err != nil {
-					log.Printf("[Chain %d - %s] Error updating chain status: %v", ps.chainID, ps.chainName, err)
+					slog.Error("Error updating chain status", "chain_id", ps.chainID, "chain_name", ps.chainName, "error", err)
 				}
 
 				if newLatest > latestBlock {
@@ -251,8 +272,7 @@ func (ps *PChainSyncer) fetcherLoop(startBlock, latestBlock int64) {
 			// Fetch blocks
 			blocks, err := ps.fetcher.FetchBlockRangeJSON(currentBlock, endBlock)
 			if err != nil {
-				log.Printf("[Chain %d - %s] Error fetching blocks %d-%d: %v",
-					ps.chainID, ps.chainName, currentBlock, endBlock, err)
+				slog.Error("Error fetching blocks", "chain_id", ps.chainID, "chain_name", ps.chainName, "from", currentBlock, "to", endBlock, "error", err)
 				time.Sleep(1 * time.Second)
 				continue
 			}
@@ -290,13 +310,13 @@ func (ps *PChainSyncer) writerLoop() {
 
 		start := time.Now()
 		if err := ps.writeBlocks(buffer); err != nil {
-			log.Printf("[P-Chain] Error writing blocks: %v", err)
+			slog.Error("Error writing blocks", "chain_id", ps.chainID, "chain_name", ps.chainName, "error", err)
 			return ps.flushInterval
 		}
 
 		elapsed := time.Since(start)
 		if elapsed > 10*time.Second {
-			log.Printf("[P-Chain] WARNING: Write took %v, exceeds 10 second threshold", elapsed)
+			slog.Warn("Write exceeded threshold", "chain_id", ps.chainID, "chain_name", ps.chainName, "elapsed", elapsed)
 		}
 
 		// Update counters and clear buffer
@@ -360,7 +380,7 @@ func (ps *PChainSyncer) writeBlocks(blocks []*pchainrpc.JSONBlock) error {
 	for _, b := range blocks {
 		txCount += len(b.Transactions)
 	}
-	log.Printf("[Chain %d - %s] Inserted %d blocks and %d txs in %v", ps.chainID, ps.chainName, len(blocks), txCount, elapsed)
+	slog.Info("Inserted blocks", "chain_id", ps.chainID, "chain_name", ps.chainName, "blocks", len(blocks), "txs", txCount, "elapsed", elapsed)
 
 	// Update watermark to the highest block number in this batch
 	maxBlock := uint64(0)
@@ -402,8 +422,7 @@ func (ps *PChainSyncer) printProgress() {
 			writeRate := float64(written) / elapsed.Seconds()
 			lag := fetched - written
 
-			log.Printf("[Chain %d - %s] Fetched: %d (%.1f/s) | Written: %d (%.1f/s) | Lag: %d | Watermark: %d",
-				ps.chainID, ps.chainName, fetched, fetchRate, written, writeRate, lag, ps.watermark)
+			slog.Info("Sync progress", "chain_id", ps.chainID, "chain_name", ps.chainName, "fetched", fetched, "fetch_rate", fmt.Sprintf("%.1f/s", fetchRate), "written", written, "write_rate", fmt.Sprintf("%.1f/s", writeRate), "lag", lag, "watermark", ps.watermark)
 		}
 	}
 }

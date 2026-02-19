@@ -1,8 +1,9 @@
 package main
 
 import (
+	"context"
 	"icicle/cmd"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -14,16 +15,28 @@ import (
 func main() {
 	_ = godotenv.Load()
 
+	// Configure slog as the default logger
+	// Use JSON in production (LOG_FORMAT=json), text otherwise
+	if os.Getenv("LOG_FORMAT") == "json" {
+		slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	} else {
+		slog.SetDefault(slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	}
+
 	// Ignore SIGPIPE - common in network servers when clients disconnect
 	signal.Ignore(syscall.SIGPIPE)
 
-	// Catch fatal signals and log them before exit
+	// Create a cancellable root context for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Catch fatal signals and cancel context for graceful shutdown
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGQUIT)
 	go func() {
 		sig := <-sigChan
-		log.Printf("SIGNAL RECEIVED: %v - shutting down", sig)
-		os.Exit(1)
+		slog.Info("Signal received, initiating graceful shutdown", "signal", sig)
+		cancel()
 	}()
 
 	root := &cobra.Command{Use: "clickhouse-ingest"}
@@ -47,7 +60,7 @@ func main() {
 		Short: "Start the continuous ingestion process",
 		Run: func(command *cobra.Command, args []string) {
 			fast, _ := command.Flags().GetBool("fast")
-			cmd.RunIngest(fast)
+			cmd.RunIngest(ctx, fast)
 		},
 	}
 	ingestCmd.Flags().Bool("fast", false, "Skip all indexers (incremental and metrics)")
@@ -60,7 +73,7 @@ func main() {
 			opts.Port, _ = command.Flags().GetInt("port")
 			opts.RateLimitPerMin, _ = command.Flags().GetInt("rate-limit")
 			opts.RateLimitBurst, _ = command.Flags().GetInt("burst")
-			cmd.RunAPI(opts)
+			cmd.RunAPI(ctx, opts)
 		},
 	}
 	apiCmd.Flags().Int("port", 8080, "Port to listen on")

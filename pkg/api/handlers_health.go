@@ -19,7 +19,7 @@ type HealthStatus struct {
 // @Failure 503 {object} HealthStatus "Unhealthy"
 // @Router /health [get]
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	ctx := s.queryContext()
+	ctx := r.Context()
 
 	// Check database connectivity
 	err := s.conn.Ping(ctx)

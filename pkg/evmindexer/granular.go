@@ -2,7 +2,7 @@ package evmindexer
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 )
 
@@ -31,17 +31,16 @@ func (r *IndexRunner) processGranularMetrics() {
 			// Run metric
 			start := time.Now()
 			if err := r.runGranularMetric(metricFile, granularity, periods); err != nil {
-				log.Printf("[Chain %d] ERROR: Failed to run %s (%s): %v (will retry next cycle)", r.chainId, indexerName, granularity, err)
+				slog.Error("Failed to run granular metric, will retry next cycle", "chain_id", r.chainId, "indexer", indexerName, "granularity", granularity, "error", err)
 				continue // Skip to next granularity, watermark not updated so will retry
 			}
 			elapsed := time.Since(start)
-			fmt.Printf("[Chain %d] %s (%s) - processed %d periods - time taken: %s\n",
-				r.chainId, indexerName, granularity, len(periods), elapsed)
+			slog.Info("Granular metric processed", "chain_id", r.chainId, "indexer", indexerName, "granularity", granularity, "periods", len(periods), "elapsed", elapsed)
 
 			// Update watermark
 			watermark.LastPeriod = periods[len(periods)-1]
 			if err := r.saveWatermarkWithGranularity(indexerName, granularity, watermark); err != nil {
-				log.Printf("[Chain %d] ERROR: Failed to save watermark for %s (%s): %v (will retry next cycle)", r.chainId, indexerName, granularity, err)
+				slog.Error("Failed to save watermark, will retry next cycle", "chain_id", r.chainId, "indexer", indexerName, "granularity", granularity, "error", err)
 				// Don't continue here - watermark wasn't updated so next cycle will reprocess (safe with ReplacingMergeTree)
 			}
 		}

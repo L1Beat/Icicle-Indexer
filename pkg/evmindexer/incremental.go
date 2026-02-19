@@ -2,7 +2,7 @@ package evmindexer
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 )
 
@@ -39,7 +39,7 @@ func (r *IndexRunner) processIncrementalBatch() bool {
 			// Run indexer for the batch
 			start := time.Now()
 			if err := r.runIncrementalIndexer(indexerFile, fromBlock, toBlock); err != nil {
-				log.Printf("[Chain %d] ERROR: Failed to run %s: %v (will retry next cycle)", r.chainId, indexerName, err)
+				slog.Error("Failed to run incremental indexer, will retry next cycle", "chain_id", r.chainId, "indexer", indexerName, "error", err)
 				continue // Skip to next indexer, watermark not updated so will retry
 			}
 			elapsed := time.Since(start)
@@ -49,15 +49,14 @@ func (r *IndexRunner) processIncrementalBatch() bool {
 
 			// Save watermark to DB
 			if err := r.saveWatermark(indexerName, watermark); err != nil {
-				log.Printf("[Chain %d] ERROR: Failed to save watermark for %s: %v (will retry next cycle)", r.chainId, indexerName, err)
+				slog.Error("Failed to save watermark, will retry next cycle", "chain_id", r.chainId, "indexer", indexerName, "error", err)
 				// Don't update hasWork - watermark wasn't saved so next cycle will reprocess (safe with ReplacingMergeTree)
 			}
 
 			// Log the batch processing
 			blockCount := toBlock - fromBlock + 1
 			remainingBlocks := r.latestBlockNum - toBlock
-			fmt.Printf("[Chain %d] %s - processed blocks %d to %d (%d blocks, %d remaining) - %s\n",
-				r.chainId, indexerName, fromBlock, toBlock, blockCount, remainingBlocks, elapsed)
+			slog.Info("Incremental indexer processed batch", "chain_id", r.chainId, "indexer", indexerName, "from_block", fromBlock, "to_block", toBlock, "block_count", blockCount, "remaining", remainingBlocks, "elapsed", elapsed)
 
 			hasWork = true
 		}

@@ -1,7 +1,7 @@
 package api
 
 import (
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 )
@@ -66,7 +66,7 @@ type ChainMetrics struct {
 // @Failure 500 {object} ErrorResponse
 // @Router /api/v1/metrics/fees [get]
 func (s *Server) handleFeeMetrics(w http.ResponseWriter, r *http.Request) {
-	ctx := s.queryContext()
+	ctx := r.Context()
 	limit, offset := getPagination(r)
 
 	subnetID := r.URL.Query().Get("subnet_id")
@@ -135,7 +135,7 @@ func (s *Server) handleFeeMetrics(w http.ResponseWriter, r *http.Request) {
 // @Failure 404 {object} ErrorResponse
 // @Router /api/v1/metrics/evm/{chainId}/stats [get]
 func (s *Server) handleChainMetrics(w http.ResponseWriter, r *http.Request) {
-	ctx := s.queryContext()
+	ctx := r.Context()
 
 	chainID, err := getChainIDFromPath(r)
 	if err != nil {
@@ -164,7 +164,7 @@ func (s *Server) handleChainMetrics(w http.ResponseWriter, r *http.Request) {
 	`, chainID).Scan(&m.LatestBlock, &m.TotalBlocks, &m.LastBlockTime, &m.AvgGasUsed, &m.TotalGasUsed)
 
 	if err != nil {
-		log.Printf("[ERROR] Chain stats query failed for chain %d: %v", chainID, err)
+		slog.Error("Chain stats query failed", "chain_id", chainID, "error", err)
 		writeNotFoundError(w, "Chain")
 		return
 	}
@@ -203,7 +203,7 @@ func (s *Server) handleChainMetrics(w http.ResponseWriter, r *http.Request) {
 // @Failure 500 {object} ErrorResponse
 // @Router /api/v1/metrics/evm/{chainId}/timeseries [get]
 func (s *Server) handleListMetrics(w http.ResponseWriter, r *http.Request) {
-	ctx := s.queryContext()
+	ctx := r.Context()
 
 	chainID, err := getChainIDFromPath(r)
 	if err != nil {
@@ -259,7 +259,7 @@ func (s *Server) handleListMetrics(w http.ResponseWriter, r *http.Request) {
 // @Failure 500 {object} ErrorResponse
 // @Router /api/v1/metrics/evm/{chainId}/timeseries/{metric} [get]
 func (s *Server) handleGetMetric(w http.ResponseWriter, r *http.Request) {
-	ctx := s.queryContext()
+	ctx := r.Context()
 
 	chainID, err := getChainIDFromPath(r)
 	if err != nil {

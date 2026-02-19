@@ -54,7 +54,7 @@ type SubnetDetail struct {
 // @Failure 500 {object} ErrorResponse
 // @Router /api/v1/data/subnets [get]
 func (s *Server) handleListSubnets(w http.ResponseWriter, r *http.Request) {
-	ctx := s.queryContext()
+	ctx := r.Context()
 	limit, offset := getPagination(r)
 
 	subnetType := r.URL.Query().Get("type") // regular, elastic, l1
@@ -119,7 +119,7 @@ func (s *Server) handleListSubnets(w http.ResponseWriter, r *http.Request) {
 // @Failure 404 {object} ErrorResponse
 // @Router /api/v1/data/subnets/{subnetId} [get]
 func (s *Server) handleGetSubnet(w http.ResponseWriter, r *http.Request) {
-	ctx := s.queryContext()
+	ctx := r.Context()
 	subnetID := r.PathValue("subnetId")
 
 	// Get subnet info
@@ -201,7 +201,7 @@ func (s *Server) handleGetSubnet(w http.ResponseWriter, r *http.Request) {
 // @Failure 500 {object} ErrorResponse
 // @Router /api/v1/data/l1s [get]
 func (s *Server) handleListL1s(w http.ResponseWriter, r *http.Request) {
-	ctx := s.queryContext()
+	ctx := r.Context()
 	limit, offset := getPagination(r)
 
 	// Join subnets with registry for L1-specific endpoint
@@ -288,7 +288,7 @@ func (s *Server) handleListL1s(w http.ResponseWriter, r *http.Request) {
 // @Failure 500 {object} ErrorResponse
 // @Router /api/v1/data/chains [get]
 func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
-	ctx := s.queryContext()
+	ctx := r.Context()
 	limit, offset := getPagination(r)
 
 	subnetID := r.URL.Query().Get("subnet_id")

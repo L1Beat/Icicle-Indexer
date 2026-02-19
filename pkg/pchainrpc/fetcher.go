@@ -2,18 +2,20 @@ package pchainrpc
 
 import (
 	"bytes"
-	"icicle/pkg/cache"
 	"context"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"icicle/pkg/cache"
+	"icicle/pkg/circuitbreaker"
 
 	"github.com/ava-labs/avalanchego/ids"
 	"github.com/ava-labs/avalanchego/utils/cb58"
@@ -162,6 +164,9 @@ type Fetcher struct {
 
 	// Concurrency control
 	rpcLimit chan struct{}
+
+	// Circuit breaker for RPC calls
+	cb *circuitbreaker.CircuitBreaker
 }
 
 func NewFetcher(opts FetcherOptions) *Fetcher {
@@ -192,6 +197,10 @@ func NewFetcher(opts FetcherOptions) *Fetcher {
 		retryDelay: opts.RetryDelay,
 		cache:      opts.Cache,
 		rpcLimit:   make(chan struct{}, opts.MaxConcurrency),
+		cb: circuitbreaker.New(circuitbreaker.Options{
+			FailureThreshold: 5,
+			CooldownPeriod:   30 * time.Second,
+		}),
 	}
 
 	return f
@@ -199,6 +208,10 @@ func NewFetcher(opts FetcherOptions) *Fetcher {
 
 // GetLatestBlock returns the latest block height from the P-chain
 func (f *Fetcher) GetLatestBlock() (int64, error) {
+	if err := f.cb.Allow(); err != nil {
+		return 0, fmt.Errorf("P-chain RPC circuit breaker open: %w", err)
+	}
+
 	var lastErr error
 	for attempt := 0; attempt <= f.maxRetries; attempt++ {
 		if attempt > 0 {
@@ -206,7 +219,7 @@ func (f *Fetcher) GetLatestBlock() (int64, error) {
 			if delay > 10*time.Second {
 				delay = 10 * time.Second
 			}
-			log.Printf("WARNING: GetHeight failed: %v. Retrying (attempt %d/%d) after %v", lastErr, attempt, f.maxRetries, delay)
+			slog.Warn("GetHeight failed, retrying", "error", lastErr, "attempt", attempt, "max_retries", f.maxRetries, "delay", delay)
 			time.Sleep(delay)
 		}
 
@@ -215,9 +228,11 @@ func (f *Fetcher) GetLatestBlock() (int64, error) {
 			lastErr = err
 			continue
 		}
+		f.cb.RecordSuccess()
 		return int64(height), nil
 	}
 
+	f.cb.RecordFailure()
 	return 0, fmt.Errorf("failed to get latest block after %d retries: %w", f.maxRetries, lastErr)
 }
 
@@ -249,7 +264,7 @@ func (f *Fetcher) FetchBlockRange(from, to int64) ([]*NormalizedBlock, error) {
 			// Cache hit - parse and normalize raw bytes
 			normalized, err := f.parseAndNormalize(rawBytes)
 			if err != nil {
-				log.Printf("Warning: failed to parse cached block %d: %v", blockNum, err)
+				slog.Warn("Failed to parse cached block", "block", blockNum, "error", err)
 				missingBlocks = append(missingBlocks, blockNum)
 			} else {
 				result[int(i)] = normalized
@@ -546,8 +561,8 @@ func (f *Fetcher) normalizeBlock(blk block.Block) (*NormalizedBlock, error) {
 
 	// Debug logging for specific block
 	if blk.Height() == 1570934 {
-		log.Printf("[DEBUG] Block 1570934 - Block type: %T", blk)
-		log.Printf("[DEBUG] Block 1570934 - Initial timestamp from visitor: %v (IsZero=%v)", blockTime, blockTime.IsZero())
+		slog.Debug("Block 1570934 details", "block_type", fmt.Sprintf("%T", blk))
+		slog.Debug("Block 1570934 timestamp", "timestamp", blockTime, "is_zero", blockTime.IsZero())
 	}
 
 	// For Apricot blocks (pre-Banff), find exact timestamp from AdvanceTimeTx
@@ -561,7 +576,7 @@ func (f *Fetcher) normalizeBlock(blk block.Block) (*NormalizedBlock, error) {
 			if advTimeTx, ok := tx.Unsigned.(*txs.AdvanceTimeTx); ok {
 				blockTime = advTimeTx.Timestamp()
 				if blk.Height() == 1570934 {
-					log.Printf("[DEBUG] Block 1570934 - Found AdvanceTimeTx in block: %v", blockTime)
+					slog.Debug("Block 1570934 found AdvanceTimeTx", "timestamp", blockTime)
 				}
 				break
 			}
@@ -575,11 +590,11 @@ func (f *Fetcher) normalizeBlock(blk block.Block) (*NormalizedBlock, error) {
 				return nil, fmt.Errorf("failed to find timestamp for Apricot block: %w", err)
 			}
 			if blk.Height() == 1570934 {
-				log.Printf("[DEBUG] Block 1570934 - Timestamp from backward search: %v", blockTime)
+				slog.Debug("Block 1570934 timestamp from backward search", "timestamp", blockTime)
 			}
 		}
 	} else if blk.Height() == 1570934 {
-		log.Printf("[DEBUG] Block 1570934 - Using Banff timestamp: %v", blockTime)
+		slog.Debug("Block 1570934 using Banff timestamp", "timestamp", blockTime)
 	}
 
 	normalized := &NormalizedBlock{
@@ -992,6 +1007,10 @@ func (f *Fetcher) parseAndNormalizeToJSON(blockBytes []byte) (*JSONBlock, error)
 
 // fetchSingleJSONBlock fetches a single block by height with retry logic and returns JSON format
 func (f *Fetcher) fetchSingleJSONBlock(height int64) (*JSONBlock, error) {
+	if err := f.cb.Allow(); err != nil {
+		return nil, fmt.Errorf("P-chain RPC circuit breaker open: %w", err)
+	}
+
 	var lastErr error
 
 	for attempt := 0; attempt <= f.maxRetries; attempt++ {
@@ -1024,9 +1043,11 @@ func (f *Fetcher) fetchSingleJSONBlock(height int64) (*JSONBlock, error) {
 			continue
 		}
 
+		f.cb.RecordSuccess()
 		return jsonBlock, nil
 	}
 
+	f.cb.RecordFailure()
 	return nil, fmt.Errorf("failed to fetch block %d after %d retries: %w", height, f.maxRetries, lastErr)
 }
 
@@ -1043,8 +1064,7 @@ func (f *Fetcher) GetCurrentValidators(ctx context.Context, subnetID string) (*G
 			if delay > 10*time.Second {
 				delay = 10 * time.Second
 			}
-			log.Printf("WARNING: GetCurrentValidators failed for subnet %s: %v. Retrying (attempt %d/%d) after %v",
-				subnetID, lastErr, attempt, f.maxRetries, delay)
+			slog.Warn("GetCurrentValidators failed, retrying", "subnet_id", subnetID, "error", lastErr, "attempt", attempt, "max_retries", f.maxRetries, "delay", delay)
 			time.Sleep(delay)
 		}
 
@@ -1086,7 +1106,7 @@ func ParseValidatorInfo(info ValidatorInfo, subnetID ids.ID) (*ValidatorState, e
 			return nil, fmt.Errorf("invalid hex node ID length %d (expected 20): %s", len(nodeBytes), nodeIDStr)
 		}
 		copy(nodeID[:], nodeBytes)
-		log.Printf("DEBUG: Converted hex NodeID %s to CB58 %s", nodeIDStr, nodeID.String())
+		slog.Debug("Converted hex NodeID to CB58", "hex", nodeIDStr, "cb58", nodeID.String())
 	} else if strings.HasPrefix(nodeIDStr, "NodeID-") {
 		// Check if the suffix looks like hex (40 hex chars = 20 bytes)
 		suffix := strings.TrimPrefix(nodeIDStr, "NodeID-")
@@ -1095,7 +1115,7 @@ func ParseValidatorInfo(info ValidatorInfo, subnetID ids.ID) (*ValidatorState, e
 			nodeBytes, hexErr := hex.DecodeString(suffix)
 			if hexErr == nil && len(nodeBytes) == 20 {
 				copy(nodeID[:], nodeBytes)
-				log.Printf("DEBUG: Converted hex NodeID %s to CB58 %s", nodeIDStr, nodeID.String())
+				slog.Debug("Converted hex NodeID to CB58", "hex", nodeIDStr, "cb58", nodeID.String())
 			} else {
 				// Fall back to standard parsing
 				nodeID, err = ids.NodeIDFromString(nodeIDStr)

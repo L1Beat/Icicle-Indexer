@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
-	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,7 +21,7 @@ const (
 
 // SyncRegistry clones the L1 registry and ingests metadata into ClickHouse
 func SyncRegistry(ctx context.Context, conn clickhouse.Conn) error {
-	log.Println("[Registry] Starting L1 registry sync...")
+	slog.Info("Starting L1 registry sync")
 
 	// Create temp dir
 	tempDir, err := os.MkdirTemp("", TempDirPrefix)
@@ -31,7 +31,7 @@ func SyncRegistry(ctx context.Context, conn clickhouse.Conn) error {
 	defer os.RemoveAll(tempDir)
 
 	// Clone repo
-	log.Printf("[Registry] Cloning %s to %s", RegistryRepoURL, tempDir)
+	slog.Info("Cloning registry repo", "url", RegistryRepoURL, "dir", tempDir)
 	cmd := exec.CommandContext(ctx, "git", "clone", "--depth=1", RegistryRepoURL, tempDir)
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git clone failed: %s: %w", string(output), err)
@@ -55,13 +55,13 @@ func SyncRegistry(ctx context.Context, conn clickhouse.Conn) error {
 		// Read and parse chain.json
 		content, err := os.ReadFile(path)
 		if err != nil {
-			log.Printf("[Registry] Failed to read %s: %v", path, err)
+			slog.Warn("Failed to read registry file", "path", path, "error", err)
 			return nil
 		}
 
 		var chain ChainRegistry
 		if err := json.Unmarshal(content, &chain); err != nil {
-			log.Printf("[Registry] Failed to parse %s: %v", path, err)
+			slog.Warn("Failed to parse registry file", "path", path, "error", err)
 			return nil
 		}
 
@@ -76,7 +76,7 @@ func SyncRegistry(ctx context.Context, conn clickhouse.Conn) error {
 		return fmt.Errorf("failed to walk data dir: %w", err)
 	}
 
-	log.Printf("[Registry] Found %d chains metadata", len(chains))
+	slog.Info("Found chains metadata", "count", len(chains))
 
 	// Insert into ClickHouse
 	if len(chains) > 0 {
@@ -85,7 +85,7 @@ func SyncRegistry(ctx context.Context, conn clickhouse.Conn) error {
 		}
 	}
 
-	log.Println("[Registry] Sync completed successfully")
+	slog.Info("Registry sync completed successfully")
 	return nil
 }
 

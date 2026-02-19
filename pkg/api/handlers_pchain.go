@@ -27,7 +27,7 @@ type PChainTx struct {
 // @Failure 500 {object} ErrorResponse
 // @Router /api/v1/data/pchain/txs [get]
 func (s *Server) handleListPChainTxs(w http.ResponseWriter, r *http.Request) {
-	ctx := s.queryContext()
+	ctx := r.Context()
 	limit, offset := getPagination(r)
 
 	txType := r.URL.Query().Get("tx_type")
@@ -112,7 +112,7 @@ func (s *Server) handleListPChainTxs(w http.ResponseWriter, r *http.Request) {
 // @Failure 404 {object} ErrorResponse
 // @Router /api/v1/data/pchain/txs/{txId} [get]
 func (s *Server) handleGetPChainTx(w http.ResponseWriter, r *http.Request) {
-	ctx := s.queryContext()
+	ctx := r.Context()
 	txID := r.PathValue("txId")
 
 	var tx PChainTx
@@ -140,7 +140,7 @@ func (s *Server) handleGetPChainTx(w http.ResponseWriter, r *http.Request) {
 // @Failure 500 {object} ErrorResponse
 // @Router /api/v1/data/pchain/tx-types [get]
 func (s *Server) handlePChainTxTypes(w http.ResponseWriter, r *http.Request) {
-	ctx := s.queryContext()
+	ctx := r.Context()
 
 	rows, err := s.conn.Query(ctx, `
 		SELECT tx_type, count() as count

@@ -1,10 +1,7 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
-	"fmt"
-	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -100,10 +97,13 @@ func NewServer(conn driver.Conn, cfg Config) *Server {
 	go s.wsHub.Run()
 	go s.wsHub.StartPoller()
 
-	// Chain middlewares: CORS -> Logging -> RateLimit -> Router
+	// Chain middlewares: Recovery -> CORS -> Metrics -> Timeout -> Logging -> RateLimit -> Router
 	s.handler = Chain(
 		s.router,
+		RecoveryMiddleware,
 		CORSMiddleware("*"),
+		MetricsMiddleware,
+		TimeoutMiddleware(30*time.Second),
 		LoggingMiddleware,
 		s.rateLimiter.Middleware,
 	)
@@ -114,6 +114,7 @@ func NewServer(conn driver.Conn, cfg Config) *Server {
 func (s *Server) registerRoutes() {
 	// System endpoints (no versioning)
 	s.router.HandleFunc("GET /health", s.handleHealth)
+	s.router.Handle("GET /metrics", PrometheusHandler())
 
 	// Swagger documentation
 	s.router.HandleFunc("GET /api/docs/", httpSwagger.WrapHandler)
@@ -181,15 +182,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.handler.ServeHTTP(w, r)
 }
 
-func (s *Server) Start(port int) error {
-	addr := fmt.Sprintf(":%d", port)
-	log.Printf("Starting API server on %s", addr)
-	log.Printf("  Data API:    /api/v1/data/*")
-	log.Printf("  Metrics API: /api/v1/metrics/*")
-	log.Printf("  WebSocket:   /ws/blocks/{chainId}")
-	return http.ListenAndServe(addr, s)
-}
-
 // Stop cleans up server resources
 func (s *Server) Stop() {
 	if s.rateLimiter != nil {
@@ -231,10 +223,6 @@ func getChainIDFromPath(r *http.Request) (uint32, error) {
 		return 0, err
 	}
 	return uint32(parsed), nil
-}
-
-func (s *Server) queryContext() context.Context {
-	return context.Background()
 }
 
 func normalizeHash(hash string) string {

@@ -2,9 +2,11 @@ package api
 
 import (
 	"bufio"
-	"log"
+	"context"
+	"log/slog"
 	"net"
 	"net/http"
+	"runtime/debug"
 	"time"
 )
 
@@ -48,7 +50,7 @@ func LoggingMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(lrw, r)
 
 		duration := time.Since(start)
-		log.Printf("%s %s %d %v", r.Method, r.URL.Path, lrw.statusCode, duration)
+		slog.Info("HTTP request", "method", r.Method, "path", r.URL.Path, "status", lrw.statusCode, "duration", duration)
 	})
 }
 
@@ -69,4 +71,28 @@ func (lrw *loggingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) 
 		return hijacker.Hijack()
 	}
 	return nil, nil, http.ErrNotSupported
+}
+
+// RecoveryMiddleware catches panics in handlers, logs the stack trace, and returns 500
+func RecoveryMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if err := recover(); err != nil {
+				slog.Error("PANIC RECOVERED", "error", err, "stack", string(debug.Stack()))
+				http.Error(w, `{"error":"INTERNAL_ERROR"}`, http.StatusInternalServerError)
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
+}
+
+// TimeoutMiddleware adds a server-side timeout to each request's context
+func TimeoutMiddleware(timeout time.Duration) Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx, cancel := context.WithTimeout(r.Context(), timeout)
+			defer cancel()
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
 }

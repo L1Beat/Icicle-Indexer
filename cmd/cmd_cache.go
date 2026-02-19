@@ -2,11 +2,13 @@ package cmd
 
 import (
 	"icicle/pkg/cache"
-	"icicle/pkg/evmrpc"
-	"icicle/pkg/pchainrpc"
 	"fmt"
 	"log"
+	"log/slog"
 	"sync"
+
+	"icicle/pkg/evmrpc"
+	"icicle/pkg/pchainrpc"
 	"sync/atomic"
 	"time"
 
@@ -14,7 +16,7 @@ import (
 )
 
 func RunCache() {
-	log.Println("Starting cache-only mode (no ClickHouse)...")
+	slog.Info("Starting cache-only mode (no ClickHouse)")
 
 	// Load configuration from YAML
 	configs, err := LoadConfig("config.yaml")
@@ -41,12 +43,12 @@ func RunCache() {
 			case "p":
 				err = runPChainCache(chainCfg)
 			default:
-				log.Printf("[Chain %d] Unsupported VM type: %s", chainCfg.ChainID, chainCfg.VM)
+				slog.Error("Unsupported VM type", "chain_id", chainCfg.ChainID, "vm", chainCfg.VM)
 				return
 			}
 
 			if err != nil {
-				log.Printf("[Chain %d - %s] Cache failed: %v", chainCfg.ChainID, chainCfg.Name, err)
+				slog.Error("Cache failed", "chain_id", chainCfg.ChainID, "chain_name", chainCfg.Name, "error", err)
 			}
 		}(cfg)
 	}
@@ -65,7 +67,7 @@ func runEVMCache(cfg ChainConfig) error {
 		fetchBatchSize = 1000
 	}
 
-	log.Printf("[Chain %d - %s] Creating cache at ./rpc_cache/%d", cfg.ChainID, cfg.Name, cfg.ChainID)
+	slog.Info("Creating cache", "chain_id", cfg.ChainID, "chain_name", cfg.Name, "path", fmt.Sprintf("./rpc_cache/%d", cfg.ChainID))
 	cacheInstance, err := cache.New("./rpc_cache", cfg.ChainID)
 	if err != nil {
 		return fmt.Errorf("failed to create cache: %w", err)
@@ -79,11 +81,10 @@ func runEVMCache(cfg ChainConfig) error {
 	}
 
 	if checkpoint > 0 {
-		log.Printf("[Chain %d - %s] Found checkpoint at block %d, resuming from there", cfg.ChainID, cfg.Name, checkpoint)
+		slog.Info("Found checkpoint, resuming", "chain_id", cfg.ChainID, "chain_name", cfg.Name, "checkpoint_block", checkpoint)
 	}
 
-	log.Printf("[Chain %d - %s] Creating fetcher with concurrency=%d, batchSize=%d",
-		cfg.ChainID, cfg.Name, maxConcurrency, fetchBatchSize)
+	slog.Info("Creating fetcher", "chain_id", cfg.ChainID, "chain_name", cfg.Name, "concurrency", maxConcurrency, "batch_size", fetchBatchSize)
 	fetcher := evmrpc.NewFetcher(evmrpc.FetcherOptions{
 		RpcURL:         cfg.RpcURL,
 		ChainID:        cfg.ChainID,
@@ -118,19 +119,16 @@ func runEVMCache(cfg ChainConfig) error {
 	endBlock := latestBlock
 
 	if startBlock > endBlock {
-		log.Printf("[Chain %d - %s] Already caught up to block %d, nothing to do",
-			cfg.ChainID, cfg.Name, endBlock)
+		slog.Info("Already caught up, nothing to do", "chain_id", cfg.ChainID, "chain_name", cfg.Name, "end_block", endBlock)
 		select {} // Block forever
 	}
 
 	totalBlocks := endBlock - originalStartBlock + 1
 	remainingBlocks := endBlock - startBlock + 1
 	if checkpoint > 0 {
-		log.Printf("[Chain %d - %s] Resuming: caching blocks %d to %d (%s blocks remaining, %s total)",
-			cfg.ChainID, cfg.Name, startBlock, endBlock, humanize.Comma(remainingBlocks), humanize.Comma(totalBlocks))
+		slog.Info("Resuming cache", "chain_id", cfg.ChainID, "chain_name", cfg.Name, "start_block", startBlock, "end_block", endBlock, "remaining", humanize.Comma(remainingBlocks), "total", humanize.Comma(totalBlocks))
 	} else {
-		log.Printf("[Chain %d - %s] Caching blocks %d to %d (%s total blocks)",
-			cfg.ChainID, cfg.Name, startBlock, endBlock, humanize.Comma(totalBlocks))
+		slog.Info("Caching blocks", "chain_id", cfg.ChainID, "chain_name", cfg.Name, "start_block", startBlock, "end_block", endBlock, "total", humanize.Comma(totalBlocks))
 	}
 
 	// Progress tracking
@@ -154,15 +152,14 @@ func runEVMCache(cfg ChainConfig) error {
 				progress := float64(totalCachedSoFar) / float64(totalBlocks) * 100
 
 				blocksRemaining := totalBlocks - totalCachedSoFar
-				var etaStr string
+				var eta string
 				if rate > 0 && blocksRemaining > 0 {
 					etaSeconds := float64(blocksRemaining) / rate
 					etaDuration := time.Duration(etaSeconds * float64(time.Second))
-					etaStr = fmt.Sprintf(" | ETA: %s", etaDuration.Round(time.Second))
+					eta = etaDuration.Round(time.Second).String()
 				}
 
-				log.Printf("[Chain %d - %s] Progress: %s/%s blocks (%.1f%%) | Rate: %.1f blocks/sec | Elapsed: %s%s",
-					cfg.ChainID, cfg.Name, humanize.Comma(totalCachedSoFar), humanize.Comma(totalBlocks), progress, rate, elapsed.Round(time.Second), etaStr)
+				slog.Info("Cache progress", "chain_id", cfg.ChainID, "chain_name", cfg.Name, "cached", humanize.Comma(totalCachedSoFar), "total", humanize.Comma(totalBlocks), "progress", fmt.Sprintf("%.1f%%", progress), "rate", fmt.Sprintf("%.1f/s", rate), "elapsed", elapsed.Round(time.Second), "eta", eta)
 			case <-done:
 				return
 			}
@@ -197,7 +194,7 @@ func runEVMCache(cfg ChainConfig) error {
 
 			blocks, err := fetcher.FetchBlockRange(from, to)
 			if err != nil {
-				log.Printf("[Chain %d - %s] Error fetching blocks %d-%d: %v", cfg.ChainID, cfg.Name, from, to, err)
+				slog.Error("Error fetching blocks", "chain_id", cfg.ChainID, "chain_name", cfg.Name, "from", from, "to", to, "error", err)
 				return
 			}
 
@@ -212,9 +209,9 @@ func runEVMCache(cfg ChainConfig) error {
 			// Save checkpoint every interval
 			if highestBlock-lastCheckpoint >= checkpointInterval {
 				if err := cacheInstance.SetCheckpoint(highestBlock); err != nil {
-					log.Printf("[Chain %d - %s] Failed to save checkpoint at block %d: %v", cfg.ChainID, cfg.Name, highestBlock, err)
+					slog.Error("Failed to save checkpoint", "chain_id", cfg.ChainID, "chain_name", cfg.Name, "block", highestBlock, "error", err)
 				} else {
-					log.Printf("[Chain %d - %s] Checkpoint saved at block %s", cfg.ChainID, cfg.Name, humanize.Comma(int64(highestBlock)))
+					slog.Info("Checkpoint saved", "chain_id", cfg.ChainID, "chain_name", cfg.Name, "block", humanize.Comma(int64(highestBlock)))
 					lastCheckpoint = highestBlock
 				}
 			}
@@ -229,23 +226,22 @@ func runEVMCache(cfg ChainConfig) error {
 
 	// Save checkpoint after initial sync
 	if err := cacheInstance.SetCheckpoint(endBlock); err != nil {
-		log.Printf("[Chain %d - %s] Failed to save checkpoint: %v", cfg.ChainID, cfg.Name, err)
+		slog.Error("Failed to save checkpoint", "chain_id", cfg.ChainID, "chain_name", cfg.Name, "error", err)
 	} else {
-		log.Printf("[Chain %d - %s] Checkpoint saved at block %d", cfg.ChainID, cfg.Name, endBlock)
+		slog.Info("Checkpoint saved", "chain_id", cfg.ChainID, "chain_name", cfg.Name, "block", endBlock)
 	}
 
 	elapsed := time.Since(startTime)
 	finalCount := blocksCached.Load()
 	avgRate := float64(finalCount) / elapsed.Seconds()
 
-	log.Printf("[Chain %d - %s] ✓ Initial sync complete: cached %d blocks in %s (avg %.1f blocks/sec)",
-		cfg.ChainID, cfg.Name, finalCount, elapsed.Round(time.Second), avgRate)
+	slog.Info("Initial sync complete", "chain_id", cfg.ChainID, "chain_name", cfg.Name, "blocks_cached", finalCount, "elapsed", elapsed.Round(time.Second), "avg_rate", fmt.Sprintf("%.1f/s", avgRate))
 
 	// Show cache metrics
-	log.Printf("[Chain %d - %s] Cache metrics:\n%s", cfg.ChainID, cfg.Name, cacheInstance.GetMetrics())
+	slog.Info("Cache metrics", "chain_id", cfg.ChainID, "chain_name", cfg.Name, "metrics", cacheInstance.GetMetrics())
 
 	// Done caching, block forever
-	log.Printf("[Chain %d - %s] ✓ Cache complete, nothing more to do", cfg.ChainID, cfg.Name)
+	slog.Info("Cache complete, nothing more to do", "chain_id", cfg.ChainID, "chain_name", cfg.Name)
 	select {} // Block forever
 }
 
@@ -260,7 +256,7 @@ func runPChainCache(cfg ChainConfig) error {
 		fetchBatchSize = 1000
 	}
 
-	log.Printf("[Chain %d - %s] Creating cache at ./rpc_cache/%d", cfg.ChainID, cfg.Name, cfg.ChainID)
+	slog.Info("Creating cache", "chain_id", cfg.ChainID, "chain_name", cfg.Name, "path", fmt.Sprintf("./rpc_cache/%d", cfg.ChainID))
 	cacheInstance, err := cache.New("./rpc_cache", cfg.ChainID)
 	if err != nil {
 		return fmt.Errorf("failed to create cache: %w", err)
@@ -274,11 +270,10 @@ func runPChainCache(cfg ChainConfig) error {
 	}
 
 	if checkpoint > 0 {
-		log.Printf("[Chain %d - %s] Found checkpoint at block %d, resuming from there", cfg.ChainID, cfg.Name, checkpoint)
+		slog.Info("Found checkpoint, resuming", "chain_id", cfg.ChainID, "chain_name", cfg.Name, "checkpoint_block", checkpoint)
 	}
 
-	log.Printf("[Chain %d - %s] Creating fetcher with concurrency=%d, batchSize=%d",
-		cfg.ChainID, cfg.Name, maxConcurrency, fetchBatchSize)
+	slog.Info("Creating fetcher", "chain_id", cfg.ChainID, "chain_name", cfg.Name, "concurrency", maxConcurrency, "batch_size", fetchBatchSize)
 	fetcher := pchainrpc.NewFetcher(pchainrpc.FetcherOptions{
 		RpcURL:         cfg.RpcURL,
 		MaxConcurrency: maxConcurrency,
@@ -310,19 +305,16 @@ func runPChainCache(cfg ChainConfig) error {
 	endBlock := latestBlock
 
 	if startBlock > endBlock {
-		log.Printf("[Chain %d - %s] Already caught up to block %d, nothing to do",
-			cfg.ChainID, cfg.Name, endBlock)
+		slog.Info("Already caught up, nothing to do", "chain_id", cfg.ChainID, "chain_name", cfg.Name, "end_block", endBlock)
 		select {} // Block forever
 	}
 
 	totalBlocks := endBlock - originalStartBlock + 1
 	remainingBlocks := endBlock - startBlock + 1
 	if checkpoint > 0 {
-		log.Printf("[Chain %d - %s] Resuming: caching blocks %d to %d (%s blocks remaining, %s total)",
-			cfg.ChainID, cfg.Name, startBlock, endBlock, humanize.Comma(remainingBlocks), humanize.Comma(totalBlocks))
+		slog.Info("Resuming cache", "chain_id", cfg.ChainID, "chain_name", cfg.Name, "start_block", startBlock, "end_block", endBlock, "remaining", humanize.Comma(remainingBlocks), "total", humanize.Comma(totalBlocks))
 	} else {
-		log.Printf("[Chain %d - %s] Caching blocks %d to %d (%s total blocks)",
-			cfg.ChainID, cfg.Name, startBlock, endBlock, humanize.Comma(totalBlocks))
+		slog.Info("Caching blocks", "chain_id", cfg.ChainID, "chain_name", cfg.Name, "start_block", startBlock, "end_block", endBlock, "total", humanize.Comma(totalBlocks))
 	}
 
 	// Progress tracking
@@ -346,15 +338,14 @@ func runPChainCache(cfg ChainConfig) error {
 				progress := float64(totalCachedSoFar) / float64(totalBlocks) * 100
 
 				blocksRemaining := totalBlocks - totalCachedSoFar
-				var etaStr string
+				var eta string
 				if rate > 0 && blocksRemaining > 0 {
 					etaSeconds := float64(blocksRemaining) / rate
 					etaDuration := time.Duration(etaSeconds * float64(time.Second))
-					etaStr = fmt.Sprintf(" | ETA: %s", etaDuration.Round(time.Second))
+					eta = etaDuration.Round(time.Second).String()
 				}
 
-				log.Printf("[Chain %d - %s] Progress: %s/%s blocks (%.1f%%) | Rate: %.1f blocks/sec | Elapsed: %s%s",
-					cfg.ChainID, cfg.Name, humanize.Comma(totalCachedSoFar), humanize.Comma(totalBlocks), progress, rate, elapsed.Round(time.Second), etaStr)
+				slog.Info("Cache progress", "chain_id", cfg.ChainID, "chain_name", cfg.Name, "cached", humanize.Comma(totalCachedSoFar), "total", humanize.Comma(totalBlocks), "progress", fmt.Sprintf("%.1f%%", progress), "rate", fmt.Sprintf("%.1f/s", rate), "elapsed", elapsed.Round(time.Second), "eta", eta)
 			case <-done:
 				return
 			}
@@ -389,7 +380,7 @@ func runPChainCache(cfg ChainConfig) error {
 
 			blocks, err := fetcher.FetchBlockRange(from, to)
 			if err != nil {
-				log.Printf("[Chain %d - %s] Error fetching blocks %d-%d: %v", cfg.ChainID, cfg.Name, from, to, err)
+				slog.Error("Error fetching blocks", "chain_id", cfg.ChainID, "chain_name", cfg.Name, "from", from, "to", to, "error", err)
 				return
 			}
 
@@ -404,9 +395,9 @@ func runPChainCache(cfg ChainConfig) error {
 			// Save checkpoint every interval
 			if highestBlock-lastCheckpoint >= checkpointInterval {
 				if err := cacheInstance.SetCheckpoint(highestBlock); err != nil {
-					log.Printf("[Chain %d - %s] Failed to save checkpoint at block %d: %v", cfg.ChainID, cfg.Name, highestBlock, err)
+					slog.Error("Failed to save checkpoint", "chain_id", cfg.ChainID, "chain_name", cfg.Name, "block", highestBlock, "error", err)
 				} else {
-					log.Printf("[Chain %d - %s] Checkpoint saved at block %s", cfg.ChainID, cfg.Name, humanize.Comma(int64(highestBlock)))
+					slog.Info("Checkpoint saved", "chain_id", cfg.ChainID, "chain_name", cfg.Name, "block", humanize.Comma(int64(highestBlock)))
 					lastCheckpoint = highestBlock
 				}
 			}
@@ -421,22 +412,21 @@ func runPChainCache(cfg ChainConfig) error {
 
 	// Save checkpoint after initial sync
 	if err := cacheInstance.SetCheckpoint(endBlock); err != nil {
-		log.Printf("[Chain %d - %s] Failed to save checkpoint: %v", cfg.ChainID, cfg.Name, err)
+		slog.Error("Failed to save checkpoint", "chain_id", cfg.ChainID, "chain_name", cfg.Name, "error", err)
 	} else {
-		log.Printf("[Chain %d - %s] Checkpoint saved at block %d", cfg.ChainID, cfg.Name, endBlock)
+		slog.Info("Checkpoint saved", "chain_id", cfg.ChainID, "chain_name", cfg.Name, "block", endBlock)
 	}
 
 	elapsed := time.Since(startTime)
 	finalCount := blocksCached.Load()
 	avgRate := float64(finalCount) / elapsed.Seconds()
 
-	log.Printf("[Chain %d - %s] ✓ Initial sync complete: cached %d blocks in %s (avg %.1f blocks/sec)",
-		cfg.ChainID, cfg.Name, finalCount, elapsed.Round(time.Second), avgRate)
+	slog.Info("Initial sync complete", "chain_id", cfg.ChainID, "chain_name", cfg.Name, "blocks_cached", finalCount, "elapsed", elapsed.Round(time.Second), "avg_rate", fmt.Sprintf("%.1f/s", avgRate))
 
 	// Show cache metrics
-	log.Printf("[Chain %d - %s] Cache metrics:\n%s", cfg.ChainID, cfg.Name, cacheInstance.GetMetrics())
+	slog.Info("Cache metrics", "chain_id", cfg.ChainID, "chain_name", cfg.Name, "metrics", cacheInstance.GetMetrics())
 
 	// Done caching, block forever
-	log.Printf("[Chain %d - %s] ✓ Cache complete, nothing more to do", cfg.ChainID, cfg.Name)
+	slog.Info("Cache complete, nothing more to do", "chain_id", cfg.ChainID, "chain_name", cfg.Name)
 	select {} // Block forever
 }

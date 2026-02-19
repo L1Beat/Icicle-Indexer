@@ -1,12 +1,13 @@
 package pchainsyncer
 
 import (
-	"icicle/pkg/pchainrpc"
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
+
+	"icicle/pkg/pchainrpc"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ava-labs/avalanchego/ids"
@@ -47,11 +48,11 @@ func NewValidatorSyncer(config ValidatorSyncerConfig, fetcher *pchainrpc.Fetcher
 
 // Start begins the periodic sync process
 func (vs *ValidatorSyncer) Start(ctx context.Context) {
-	log.Printf("Starting L1 validator state syncer (interval: %v, discovery: %s)", vs.config.SyncInterval, vs.config.DiscoveryMode)
+	slog.Info("Starting L1 validator state syncer", "interval", vs.config.SyncInterval, "discovery", vs.config.DiscoveryMode)
 
 	// Do initial sync immediately
 	if err := vs.syncOnce(ctx); err != nil {
-		log.Printf("ERROR: Initial validator state sync failed: %v", err)
+		slog.Error("Initial validator state sync failed", "error", err)
 	}
 
 	// Start periodic sync
@@ -62,13 +63,13 @@ func (vs *ValidatorSyncer) Start(ctx context.Context) {
 		select {
 		case <-ticker.C:
 			if err := vs.syncOnce(ctx); err != nil {
-				log.Printf("ERROR: Validator state sync failed: %v", err)
+				slog.Error("Validator state sync failed", "error", err)
 			}
 		case <-vs.stopCh:
-			log.Println("Stopping L1 validator state syncer")
+			slog.Info("Stopping L1 validator state syncer")
 			return
 		case <-ctx.Done():
-			log.Println("Context cancelled, stopping validator state syncer")
+			slog.Info("Context cancelled, stopping validator state syncer")
 			return
 		}
 	}
@@ -84,15 +85,15 @@ func (vs *ValidatorSyncer) Stop() {
 // syncOnce performs a single sync cycle
 func (vs *ValidatorSyncer) syncOnce(ctx context.Context) error {
 	startTime := time.Now()
-	log.Println("Starting validator state sync cycle...")
+	slog.Info("Starting validator state sync cycle")
 
 	// Step 0: Insert Primary Network (genesis subnet) if first run
 	if err := InsertPrimaryNetwork(ctx, vs.conn, vs.config.PChainID); err != nil {
 		// Ignore duplicate key errors (already exists)
-		log.Printf("Primary Network already exists or error: %v", err)
+		slog.Info("Primary Network already exists or error", "error", err)
 	}
 	if err := InsertPrimaryNetworkChains(ctx, vs.conn, vs.config.PChainID); err != nil {
-		log.Printf("Primary Network chains already exist or error: %v", err)
+		slog.Info("Primary Network chains already exist or error", "error", err)
 	}
 
 	// Step 1: Discover and populate all subnets
@@ -105,7 +106,7 @@ func (vs *ValidatorSyncer) syncOnce(ctx context.Context) error {
 		if err := InsertSubnets(ctx, vs.conn, allSubnets); err != nil {
 			return fmt.Errorf("failed to insert subnets: %w", err)
 		}
-		log.Printf("Discovered and updated %d total subnet(s)", len(allSubnets))
+		slog.Info("Discovered and updated subnets", "count", len(allSubnets))
 	}
 
 	// Step 2: Discover and populate subnet chains
@@ -118,18 +119,18 @@ func (vs *ValidatorSyncer) syncOnce(ctx context.Context) error {
 		if err := InsertSubnetChains(ctx, vs.conn, chains); err != nil {
 			return fmt.Errorf("failed to insert subnet chains: %w", err)
 		}
-		log.Printf("Discovered and updated %d subnet chain(s)", len(chains))
+		slog.Info("Discovered and updated subnet chains", "count", len(chains))
 	}
 
 	// Step 2.5: Discover and populate historical L1 validators from transactions
 	historicalValidators, err := DiscoverL1ValidatorHistory(ctx, vs.conn, vs.config.PChainID)
 	if err != nil {
-		log.Printf("WARNING: Failed to discover historical L1 validators: %v", err)
+		slog.Warn("Failed to discover historical L1 validators", "error", err)
 	} else if len(historicalValidators) > 0 {
 		if err := InsertL1ValidatorHistory(ctx, vs.conn, historicalValidators); err != nil {
-			log.Printf("WARNING: Failed to insert historical L1 validators: %v", err)
+			slog.Warn("Failed to insert historical L1 validators", "error", err)
 		} else {
-			log.Printf("Discovered %d historical L1 validators from transactions", len(historicalValidators))
+			slog.Info("Discovered historical L1 validators from transactions", "count", len(historicalValidators))
 		}
 	}
 
@@ -137,9 +138,9 @@ func (vs *ValidatorSyncer) syncOnce(ctx context.Context) error {
 	primarySubnetID, _ := ids.FromString("11111111111111111111111111111111LpoYY")
 	primaryValidatorCount, err := vs.syncSubnetValidators(ctx, primarySubnetID)
 	if err != nil {
-		log.Printf("WARNING: Failed to sync Primary Network validators: %v", err)
+		slog.Warn("Failed to sync Primary Network validators", "error", err)
 	} else {
-		log.Printf("Synced %d Primary Network validators", primaryValidatorCount)
+		slog.Info("Synced Primary Network validators", "count", primaryValidatorCount)
 	}
 
 	// Step 4: Discover L1 subnets for validator syncing
@@ -148,7 +149,7 @@ func (vs *ValidatorSyncer) syncOnce(ctx context.Context) error {
 		return fmt.Errorf("failed to discover L1 subnets: %w", err)
 	}
 
-	log.Printf("Found %d L1 subnet(s) to sync validators", len(l1Subnets))
+	slog.Info("Found L1 subnets to sync validators", "count", len(l1Subnets))
 
 	// Step 5: Discover regular/elastic subnets for validator syncing
 	regularSubnets, err := vs.discoverRegularSubnets(ctx)
@@ -156,7 +157,7 @@ func (vs *ValidatorSyncer) syncOnce(ctx context.Context) error {
 		return fmt.Errorf("failed to discover regular subnets: %w", err)
 	}
 
-	log.Printf("Found %d regular/elastic subnet(s) to sync validators", len(regularSubnets))
+	slog.Info("Found regular/elastic subnets to sync validators", "count", len(regularSubnets))
 
 	// Step 6: For each L1 subnet, fetch and update validator state
 	// Add small delay between subnets to prevent connection pool exhaustion
@@ -165,7 +166,7 @@ func (vs *ValidatorSyncer) syncOnce(ctx context.Context) error {
 	for i, subnet := range l1Subnets {
 		validatorCount, err := vs.syncSubnetValidators(ctx, subnet)
 		if err != nil {
-			log.Printf("WARNING: Failed to sync validators for subnet %s: %v", subnet, err)
+			slog.Warn("Failed to sync validators for subnet", "subnet_id", subnet, "error", err)
 			continue
 		}
 		l1ValidatorCount += validatorCount
@@ -182,7 +183,7 @@ func (vs *ValidatorSyncer) syncOnce(ctx context.Context) error {
 	for i, subnet := range regularSubnets {
 		validatorCount, err := vs.syncSubnetValidators(ctx, subnet)
 		if err != nil {
-			log.Printf("WARNING: Failed to sync validators for subnet %s: %v", subnet, err)
+			slog.Warn("Failed to sync validators for subnet", "subnet_id", subnet, "error", err)
 			continue
 		}
 		regularValidatorCount += validatorCount
@@ -196,34 +197,33 @@ func (vs *ValidatorSyncer) syncOnce(ctx context.Context) error {
 
 	// Step 8: Sync balance transactions for L1 validators
 	if err := SyncL1ValidatorBalanceTxs(ctx, vs.conn, vs.config.PChainID); err != nil {
-		log.Printf("WARNING: Failed to sync L1 validator balance transactions: %v", err)
+		slog.Warn("Failed to sync L1 validator balance transactions", "error", err)
 	}
 
 	// Step 9: Sync validator refunds (from DisableL1Validator transactions)
 	if err := SyncL1ValidatorRefunds(ctx, vs.conn, vs.fetcher, vs.config.PChainID); err != nil {
-		log.Printf("WARNING: Failed to sync L1 validator refunds: %v", err)
+		slog.Warn("Failed to sync L1 validator refunds", "error", err)
 	}
 
 	// Step 10: Calculate and update L1 fee statistics
 	feeStats, err := CalculateL1FeeStats(ctx, vs.conn, vs.config.PChainID)
 	if err != nil {
-		log.Printf("WARNING: Failed to calculate L1 fee stats: %v", err)
+		slog.Warn("Failed to calculate L1 fee stats", "error", err)
 	} else if len(feeStats) > 0 {
 		if err := InsertL1FeeStats(ctx, vs.conn, feeStats); err != nil {
-			log.Printf("WARNING: Failed to insert L1 fee stats: %v", err)
+			slog.Warn("Failed to insert L1 fee stats", "error", err)
 		} else {
-			log.Printf("Updated fee stats for %d L1 subnet(s)", len(feeStats))
+			slog.Info("Updated fee stats for L1 subnets", "count", len(feeStats))
 		}
 	}
 
 	// Step 11: Update per-validator fee statistics
 	if err := UpdatePerValidatorFeeStats(ctx, vs.conn, vs.config.PChainID); err != nil {
-		log.Printf("WARNING: Failed to update per-validator fee stats: %v", err)
+		slog.Warn("Failed to update per-validator fee stats", "error", err)
 	}
 
 	duration := time.Since(startTime)
-	log.Printf("Validator state sync completed: %d validators (%d Primary Network, %d across %d L1 subnets, %d across %d regular subnets) in %v",
-		totalValidators, primaryValidatorCount, l1ValidatorCount, len(l1Subnets), regularValidatorCount, len(regularSubnets), duration)
+	slog.Info("Validator state sync completed", "total_validators", totalValidators, "primary_network", primaryValidatorCount, "l1_validators", l1ValidatorCount, "l1_subnets", len(l1Subnets), "regular_validators", regularValidatorCount, "regular_subnets", len(regularSubnets), "duration", duration)
 
 	return nil
 }
@@ -285,7 +285,7 @@ func (vs *ValidatorSyncer) discoverRegularSubnets(ctx context.Context) ([]ids.ID
 
 		subnetID, err := ids.FromString(subnetIDStr)
 		if err != nil {
-			log.Printf("WARNING: Failed to parse subnet ID %s: %v", subnetIDStr, err)
+			slog.Warn("Failed to parse subnet ID", "subnet_id", subnetIDStr, "error", err)
 			continue
 		}
 
@@ -308,7 +308,7 @@ func (vs *ValidatorSyncer) syncSubnetValidators(ctx context.Context, subnetID id
 	}
 
 	if len(response.Validators) == 0 {
-		log.Printf("No validators found for subnet %s", subnetID)
+		slog.Info("No validators found for subnet", "subnet_id", subnetID)
 		return 0, nil
 	}
 
@@ -318,7 +318,7 @@ func (vs *ValidatorSyncer) syncSubnetValidators(ctx context.Context, subnetID id
 	for _, validatorInfo := range response.Validators {
 		state, err := pchainrpc.ParseValidatorInfo(validatorInfo, subnetID)
 		if err != nil {
-			log.Printf("WARNING: Failed to parse validator info for %s: %v", validatorInfo.NodeID, err)
+			slog.Warn("Failed to parse validator info", "node_id", validatorInfo.NodeID, "error", err)
 			continue
 		}
 		states = append(states, state)
@@ -335,10 +335,10 @@ func (vs *ValidatorSyncer) syncSubnetValidators(ctx context.Context, subnetID id
 	// Mark validators that are no longer in the RPC response as inactive
 	// This handles validators whose staking period has ended
 	if err := MarkInactiveValidators(ctx, vs.conn, vs.config.PChainID, subnetID.String(), activeValidationIDs); err != nil {
-		log.Printf("WARNING: Failed to mark inactive validators for subnet %s: %v", subnetID, err)
+		slog.Warn("Failed to mark inactive validators for subnet", "subnet_id", subnetID, "error", err)
 		// Don't return error - this is not critical, just log it
 	}
 
-	log.Printf("Synced %d validators for subnet %s", len(states), subnetID)
+	slog.Info("Synced validators for subnet", "count", len(states), "subnet_id", subnetID)
 	return len(states), nil
 }

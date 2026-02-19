@@ -1,19 +1,20 @@
 package cmd
 
 import (
+	"context"
 	"icicle/pkg/cache"
 	"icicle/pkg/chwrapper"
 	"icicle/pkg/registrysyncer"
-	"context"
 	"log"
+	"log/slog"
 	"sync"
 )
 
-func RunIngest(fast bool) {
+func RunIngest(ctx context.Context, fast bool) {
 	if fast {
-		log.Println("Starting ingest in FAST mode (indexers disabled)...")
+		slog.Info("Starting ingest in FAST mode (indexers disabled)")
 	} else {
-		log.Println("Starting ingest...")
+		slog.Info("Starting ingest")
 	}
 
 	// Load configuration from YAML
@@ -40,12 +41,13 @@ func RunIngest(fast bool) {
 
 	// Sync L1 Registry at startup (in background)
 	go func() {
-		if err := registrysyncer.SyncRegistry(context.Background(), conn); err != nil {
-			log.Printf("Failed to sync L1 registry: %v", err)
+		if err := registrysyncer.SyncRegistry(ctx, conn); err != nil {
+			slog.Error("Failed to sync L1 registry", "error", err)
 		}
 	}()
 
 	var wg sync.WaitGroup
+	var syncers []Syncer
 
 	// Start a syncer for each chain
 	for _, cfg := range configs {
@@ -61,26 +63,36 @@ func RunIngest(fast bool) {
 		if err != nil {
 			log.Fatalf("Failed to create syncer for chain %d (%s): %v", cfg.ChainID, cfg.VM, err)
 		}
+		syncers = append(syncers, syncer)
 
 		wg.Add(1)
 		go func(s Syncer, chainID uint32, chainName string) {
 			defer func() {
 				if r := recover(); r != nil {
-					log.Printf("[Chain %d] PANIC RECOVERED: %v", chainID, r)
+					slog.Error("PANIC RECOVERED", "chain_id", chainID, "error", r)
 				}
-				log.Printf("[Chain %d] Syncer goroutine exiting!", chainID)
+				slog.Info("Syncer goroutine exiting", "chain_id", chainID)
 				wg.Done()
 			}()
 			if err := s.Start(); err != nil {
-				log.Printf("Failed to start syncer for chain %d (%s): %v", chainID, chainName, err)
+				slog.Error("Failed to start syncer", "chain_id", chainID, "chain_name", chainName, "error", err)
 			}
 			s.Wait()
-			log.Printf("[Chain %d] Wait() returned - syncer stopped", chainID)
+			slog.Info("Wait() returned - syncer stopped", "chain_id", chainID)
 		}(syncer, cfg.ChainID, cfg.Name)
 
-		log.Printf("Started syncer for chain %d (%s - %s)", cfg.ChainID, cfg.Name, cfg.VM)
+		slog.Info("Started syncer", "chain_id", cfg.ChainID, "chain_name", cfg.Name, "vm", cfg.VM)
+	}
+
+	// Wait for shutdown signal
+	<-ctx.Done()
+	slog.Info("Shutdown signal received - stopping all syncers")
+
+	// Stop all syncers gracefully
+	for _, s := range syncers {
+		s.Stop()
 	}
 
 	wg.Wait()
-	log.Println("All syncers stopped - RunIngest() returning")
+	slog.Info("All syncers stopped - RunIngest() returning")
 }

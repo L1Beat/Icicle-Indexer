@@ -86,7 +86,7 @@ type TransactionDetail struct {
 // @Failure 500 {object} ErrorResponse
 // @Router /api/v1/data/evm/{chainId}/txs [get]
 func (s *Server) handleListTxs(w http.ResponseWriter, r *http.Request) {
-	ctx := s.queryContext()
+	ctx := r.Context()
 	limit, offset := getPagination(r)
 
 	chainID, err := getChainIDFromPath(r)
@@ -155,7 +155,7 @@ func (s *Server) handleListTxs(w http.ResponseWriter, r *http.Request) {
 // @Failure 404 {object} ErrorResponse
 // @Router /api/v1/data/evm/{chainId}/txs/{hash} [get]
 func (s *Server) handleGetTx(w http.ResponseWriter, r *http.Request) {
-	ctx := s.queryContext()
+	ctx := r.Context()
 
 	chainID, err := getChainIDFromPath(r)
 	if err != nil {
@@ -163,11 +163,8 @@ func (s *Server) handleGetTx(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	hash := normalizeHash(r.PathValue("hash"))
-
-	// Convert hex hash to bytes for validation
-	hashHex := hash[2:] // Remove 0x prefix
-	if _, err := hex.DecodeString(hashHex); err != nil || len(hashHex) != 64 {
+	hashHex, err := validateTxHash(r)
+	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid transaction hash")
 		return
 	}
@@ -395,7 +392,7 @@ func (s *Server) handleGetTx(w http.ResponseWriter, r *http.Request) {
 // @Failure 500 {object} ErrorResponse
 // @Router /api/v1/data/evm/{chainId}/address/{address}/txs [get]
 func (s *Server) handleAddressTxs(w http.ResponseWriter, r *http.Request) {
-	ctx := s.queryContext()
+	ctx := r.Context()
 	limit, offset := getPagination(r)
 
 	chainID, err := getChainIDFromPath(r)
@@ -404,11 +401,8 @@ func (s *Server) handleAddressTxs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	address := normalizeHash(r.PathValue("address"))
-
-	// Convert hex address to bytes
-	addrHex := address[2:] // Remove 0x prefix
-	if _, err := hex.DecodeString(addrHex); err != nil || len(addrHex) != 40 {
+	addrHex, err := validateAddress(r)
+	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid address")
 		return
 	}
@@ -488,7 +482,7 @@ func (s *Server) handleAddressTxs(w http.ResponseWriter, r *http.Request) {
 // @Failure 500 {object} ErrorResponse
 // @Router /api/v1/data/evm/{chainId}/address/{address}/internal-txs [get]
 func (s *Server) handleAddressInternalTxs(w http.ResponseWriter, r *http.Request) {
-	ctx := s.queryContext()
+	ctx := r.Context()
 	limit, offset := getPagination(r)
 
 	chainID, err := getChainIDFromPath(r)
@@ -497,10 +491,8 @@ func (s *Server) handleAddressInternalTxs(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	address := normalizeHash(r.PathValue("address"))
-	addrHex := address[2:] // Remove 0x prefix
-
-	if _, err := hex.DecodeString(addrHex); err != nil || len(addrHex) != 40 {
+	addrHex, err := validateAddress(r)
+	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid address")
 		return
 	}

@@ -42,7 +42,7 @@ type IndexerStatus struct {
 // @Failure 500 {object} ErrorResponse
 // @Router /api/v1/metrics/indexer/status [get]
 func (s *Server) handleIndexerStatus(w http.ResponseWriter, r *http.Request) {
-	ctx := s.queryContext()
+	ctx := r.Context()
 
 	status := IndexerStatus{
 		Healthy:    true,

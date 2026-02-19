@@ -187,10 +187,10 @@ func TestHandleAddressTxs_DatabaseError(t *testing.T) {
 func TestHandleAddressTxs_Pagination(t *testing.T) {
 	mock := &MockConn{
 		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
-			// args: chainID, addrFixed, addrFixed, limit, offset
-			require.Len(t, args, 5)
-			assert.Equal(t, 10, args[3])
-			assert.Equal(t, 20, args[4])
+			// UNION ALL args: chainID, addrHex, innerLimit, chainID, addrHex, addrHex, innerLimit, limit, offset
+			require.Len(t, args, 9)
+			assert.Equal(t, 10, args[7])
+			assert.Equal(t, 20, args[8])
 			return NewMockRows([]string{"chain_id", "hash", "block_number", "block_time", "transaction_index", "from", "to", "value", "gas_limit", "gas_price", "gas_used", "success", "type"}, [][]interface{}{}), nil
 		},
 	}

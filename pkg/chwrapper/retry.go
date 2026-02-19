@@ -2,7 +2,7 @@ package chwrapper
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -45,7 +45,7 @@ func RetryableExec(ctx context.Context, conn driver.Conn, query string, args ...
 
 		lastErr = err
 		if attempt < MaxRetries {
-			log.Printf("[ClickHouse] Retry %d/%d after error: %v (backing off %v)", attempt, MaxRetries, err, backoff)
+			slog.Warn("Retrying ClickHouse operation", "attempt", attempt, "max_retries", MaxRetries, "error", err, "backoff", backoff)
 			time.Sleep(backoff)
 			backoff = min(backoff*2, MaxBackoff)
 		}
@@ -71,7 +71,7 @@ func RetryableQuery(ctx context.Context, conn driver.Conn, query string, args ..
 
 		lastErr = err
 		if attempt < MaxRetries {
-			log.Printf("[ClickHouse] Retry %d/%d after error: %v (backing off %v)", attempt, MaxRetries, err, backoff)
+			slog.Warn("Retrying ClickHouse operation", "attempt", attempt, "max_retries", MaxRetries, "error", err, "backoff", backoff)
 			time.Sleep(backoff)
 			backoff = min(backoff*2, MaxBackoff)
 		}
@@ -104,7 +104,7 @@ func WithRetry(operation func() error) error {
 
 		lastErr = err
 		if attempt < MaxRetries {
-			log.Printf("[ClickHouse] Retry %d/%d after error: %v (backing off %v)", attempt, MaxRetries, err, backoff)
+			slog.Warn("Retrying ClickHouse operation", "attempt", attempt, "max_retries", MaxRetries, "error", err, "backoff", backoff)
 			time.Sleep(backoff)
 			backoff = min(backoff*2, MaxBackoff)
 		}

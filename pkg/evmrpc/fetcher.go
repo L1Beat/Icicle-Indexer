@@ -2,16 +2,18 @@ package evmrpc
 
 import (
 	"bytes"
-	"icicle/pkg/cache"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"icicle/pkg/cache"
+	"icicle/pkg/circuitbreaker"
 )
 
 type FetcherOptions struct {
@@ -49,6 +51,9 @@ type Fetcher struct {
 
 	// HTTP client
 	httpClient *http.Client
+
+	// Circuit breaker for RPC calls
+	cb *circuitbreaker.CircuitBreaker
 }
 
 type cacheWrite struct {
@@ -112,6 +117,10 @@ func NewFetcher(opts FetcherOptions) *Fetcher {
 			Timeout:   5 * time.Minute,
 			Transport: transport,
 		},
+		cb: circuitbreaker.New(circuitbreaker.Options{
+			FailureThreshold: 5,
+			CooldownPeriod:   30 * time.Second,
+		}),
 	}
 
 	// Start cache writer workers if cache is enabled
@@ -154,6 +163,11 @@ func (f *Fetcher) batchRpcCall(requests []jsonRpcRequest) ([]jsonRpcResponse, er
 		return []jsonRpcResponse{}, nil
 	}
 
+	// Check circuit breaker before attempting
+	if err := f.cb.Allow(); err != nil {
+		return nil, fmt.Errorf("RPC circuit breaker open for chain %d (%s): %w", f.chainID, f.chainName, err)
+	}
+
 	jsonData, err := json.Marshal(requests)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal batch request: %w", err)
@@ -168,7 +182,7 @@ func (f *Fetcher) batchRpcCall(requests []jsonRpcRequest) ([]jsonRpcResponse, er
 			if delay > 10*time.Second {
 				delay = 10 * time.Second
 			}
-			log.Printf("[Chain %d - %s] WARNING: Batch request failed: %v. Retrying (attempt %d/%d) after %v", f.chainID, f.chainName, lastErr, attempt, f.maxRetries, delay)
+			slog.Warn("Batch request failed, retrying", "chain_id", f.chainID, "chain_name", f.chainName, "error", lastErr, "attempt", attempt, "max_retries", f.maxRetries, "delay", delay)
 			time.Sleep(delay)
 		}
 
@@ -226,9 +240,11 @@ func (f *Fetcher) batchRpcCall(requests []jsonRpcRequest) ([]jsonRpcResponse, er
 			continue
 		}
 
+		f.cb.RecordSuccess()
 		return responses, nil
 	}
 
+	f.cb.RecordFailure()
 	return nil, fmt.Errorf("batch request failed after %d retries: %w", f.maxRetries, lastErr)
 }
 
@@ -236,6 +252,10 @@ func (f *Fetcher) batchRpcCall(requests []jsonRpcRequest) ([]jsonRpcResponse, er
 func (f *Fetcher) batchRpcCallDebug(requests []jsonRpcRequest) ([]jsonRpcResponse, error) {
 	if len(requests) == 0 {
 		return []jsonRpcResponse{}, nil
+	}
+
+	if err := f.cb.Allow(); err != nil {
+		return nil, fmt.Errorf("RPC circuit breaker open for chain %d (%s): %w", f.chainID, f.chainName, err)
 	}
 
 	jsonData, err := json.Marshal(requests)
@@ -252,7 +272,7 @@ func (f *Fetcher) batchRpcCallDebug(requests []jsonRpcRequest) ([]jsonRpcRespons
 			if delay > 10*time.Second {
 				delay = 10 * time.Second
 			}
-			log.Printf("[Chain %d - %s] WARNING: Debug batch request failed: %v. Retrying (attempt %d/%d) after %v", f.chainID, f.chainName, lastErr, attempt, f.maxRetries, delay)
+			slog.Warn("Debug batch request failed, retrying", "chain_id", f.chainID, "chain_name", f.chainName, "error", lastErr, "attempt", attempt, "max_retries", f.maxRetries, "delay", delay)
 			time.Sleep(delay)
 		}
 
@@ -303,9 +323,11 @@ func (f *Fetcher) batchRpcCallDebug(requests []jsonRpcRequest) ([]jsonRpcRespons
 			continue
 		}
 
+		f.cb.RecordSuccess()
 		return responses, nil
 	}
 
+	f.cb.RecordFailure()
 	return nil, fmt.Errorf("debug batch request failed after %d retries: %w", f.maxRetries, lastErr)
 }
 
@@ -387,7 +409,7 @@ func (f *Fetcher) FetchBlockRange(from, to int64) ([]*NormalizedBlock, error) {
 			// Cache hit - deserialize
 			var block NormalizedBlock
 			if err := json.Unmarshal(data, &block); err != nil {
-				log.Printf("[Chain %d - %s] Warning: failed to deserialize cached block %d: %v", f.chainID, f.chainName, blockNum, err)
+				slog.Warn("Failed to deserialize cached block", "chain_id", f.chainID, "chain_name", f.chainName, "block", blockNum, "error", err)
 				missingBlocks = append(missingBlocks, blockNum)
 			} else {
 				result[int(i)] = &block
@@ -874,7 +896,7 @@ func (f *Fetcher) fetchTracesBatch(from, to int64, txInfos []txInfo) (map[string
 					if delay > 10*time.Second {
 						delay = 10 * time.Second
 					}
-					log.Printf("[Chain %d - %s] Retrying trace batch %d (attempt %d/%d) after %v\n", f.chainID, f.chainName, idx, attempt, f.maxRetries, delay)
+					slog.Warn("Retrying trace batch", "chain_id", f.chainID, "chain_name", f.chainName, "batch", idx, "attempt", attempt, "max_retries", f.maxRetries, "delay", delay)
 					time.Sleep(delay)
 				}
 
@@ -919,7 +941,7 @@ func (f *Fetcher) fetchTracesBatch(from, to int64, txInfos []txInfo) (map[string
 				if resp.Error != nil {
 					// ONLY precompile errors are acceptable as nil traces
 					if isPrecompileError(fmt.Errorf("%s", resp.Error.Message)) {
-						log.Printf("[Chain %d - %s] Trace failed for tx %s (precompile), treating as nil trace", f.chainID, f.chainName, txHash)
+						slog.Warn("Trace failed for tx (precompile), treating as nil trace", "chain_id", f.chainID, "chain_name", f.chainName, "tx_hash", txHash)
 						mu.Lock()
 						tracesMap[txHash] = &TraceResultOptional{
 							TxHash: txHash,

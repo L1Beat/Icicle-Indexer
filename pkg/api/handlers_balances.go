@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/hex"
 	"net/http"
-	"strings"
 	"time"
 )
 
@@ -45,7 +44,7 @@ type TokenBalance struct {
 // @Failure 500 {object} ErrorResponse
 // @Router /api/v1/data/evm/{chainId}/address/{address}/balances [get]
 func (s *Server) handleAddressBalances(w http.ResponseWriter, r *http.Request) {
-	ctx := s.queryContext()
+	ctx := r.Context()
 
 	chainID, err := getChainIDFromPath(r)
 	if err != nil {
@@ -53,19 +52,9 @@ func (s *Server) handleAddressBalances(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get address from path and normalize
-	address := r.PathValue("address")
-	address = strings.TrimPrefix(strings.ToLower(address), "0x")
-
-	// Validate address (should be 40 hex chars = 20 bytes)
-	if len(address) != 40 {
-		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid address format")
-		return
-	}
-
-	// Validate it's valid hex
-	if _, err := hex.DecodeString(address); err != nil {
-		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid address hex")
+	address, err := validateAddress(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid address")
 		return
 	}
 
@@ -154,7 +143,7 @@ func (s *Server) handleAddressBalances(w http.ResponseWriter, r *http.Request) {
 // @Failure 500 {object} ErrorResponse
 // @Router /api/v1/data/evm/{chainId}/address/{address}/native [get]
 func (s *Server) handleAddressNativeBalance(w http.ResponseWriter, r *http.Request) {
-	ctx := s.queryContext()
+	ctx := r.Context()
 
 	chainID, err := getChainIDFromPath(r)
 	if err != nil {
@@ -162,19 +151,9 @@ func (s *Server) handleAddressNativeBalance(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Get address from path and normalize
-	address := r.PathValue("address")
-	address = strings.TrimPrefix(strings.ToLower(address), "0x")
-
-	// Validate address (should be 40 hex chars = 20 bytes)
-	if len(address) != 40 {
-		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid address format")
-		return
-	}
-
-	// Validate it's valid hex
-	if _, err := hex.DecodeString(address); err != nil {
-		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid address hex")
+	address, err := validateAddress(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid address")
 		return
 	}
 

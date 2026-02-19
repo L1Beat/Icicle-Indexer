@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"time"
@@ -85,9 +86,9 @@ func NewIndexRunner(chainId uint32, conn driver.Conn, sqlDir string, startBlock 
 	// Initialize token metadata fetcher if RPC URL provided
 	if rpcURL != "" {
 		runner.tokenMetadataFetcher = NewTokenMetadataFetcher(chainId, conn, rpcURL)
-		fmt.Printf("[Chain %d] Token metadata fetcher initialized with RPC: %s\n", chainId, rpcURL)
+		slog.Info("Token metadata fetcher initialized", "chain_id", chainId, "rpc_url", rpcURL)
 	} else {
-		fmt.Printf("[Chain %d] Token metadata fetcher NOT initialized (no RPC URL)\n", chainId)
+		slog.Info("Token metadata fetcher NOT initialized (no RPC URL)", "chain_id", chainId)
 	}
 
 	// Discover indexers
@@ -100,8 +101,7 @@ func NewIndexRunner(chainId uint32, conn driver.Conn, sqlDir string, startBlock 
 		return nil, fmt.Errorf("failed to load watermarks: %w", err)
 	}
 
-	fmt.Printf("[Chain %d] IndexRunner initialized - %d granular metrics, %d incremental indexers\n",
-		chainId, len(runner.granularMetrics), len(runner.incrementalIndexers))
+	slog.Info("IndexRunner initialized", "chain_id", chainId, "granular_metrics", len(runner.granularMetrics), "incremental_indexers", len(runner.incrementalIndexers))
 
 	return runner, nil
 }
@@ -133,7 +133,7 @@ func (r *IndexRunner) OnBlock(blockNum uint64, blockTime time.Time) {
 
 // Start begins the indexer loop (runs forever)
 func (r *IndexRunner) Start() {
-	fmt.Printf("[Chain %d] Starting indexer loop (tokenMetadataFetcher=%v)\n", r.chainId, r.tokenMetadataFetcher != nil)
+	slog.Info("Starting indexer loop", "chain_id", r.chainId, "token_metadata_fetcher_enabled", r.tokenMetadataFetcher != nil)
 
 	for {
 		// Only process if we have block data
@@ -153,11 +153,11 @@ func (r *IndexRunner) Start() {
 			r.lastMetadataFetch = time.Now()
 			count, err := r.tokenMetadataFetcher.FetchMissingMetadata(500)
 			if err != nil {
-				fmt.Printf("[Chain %d] Token metadata fetch error: %v\n", r.chainId, err)
+				slog.Error("Token metadata fetch error", "chain_id", r.chainId, "error", err)
 			} else if count > 0 {
-				fmt.Printf("[Chain %d] Fetched metadata for %d tokens\n", r.chainId, count)
+				slog.Info("Fetched token metadata", "chain_id", r.chainId, "count", count)
 			} else {
-				fmt.Printf("[Chain %d] Token metadata: no missing tokens found\n", r.chainId)
+				slog.Debug("Token metadata: no missing tokens found", "chain_id", r.chainId)
 			}
 		}
 
