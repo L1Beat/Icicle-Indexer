@@ -209,7 +209,7 @@ func NewFetcher(opts FetcherOptions) *Fetcher {
 // GetLatestBlock returns the latest block height from the P-chain
 func (f *Fetcher) GetLatestBlock() (int64, error) {
 	if err := f.cb.Allow(); err != nil {
-		return 0, fmt.Errorf("P-chain RPC circuit breaker open: %w", err)
+		return 0, fmt.Errorf("circuit breaker open: %w", err)
 	}
 
 	var lastErr error
@@ -730,6 +730,7 @@ func (f *Fetcher) normalizeTx(tx *txs.Tx, blockHeight uint64, blockTime time.Tim
 		normalized.Weight = &utx.Validator.Wght
 		stakeOutsJSON, _ := json.Marshal(utx.StakeOuts)
 		normalized.StakeOuts = stakeOutsJSON
+		//lint:ignore SA1026 concrete type behind fx.Owner interface is JSON-marshalable
 		rewardsOwnerJSON, _ := json.Marshal(utx.RewardsOwner)
 		normalized.DelegatorRewardsOwner = rewardsOwnerJSON
 
@@ -1008,7 +1009,7 @@ func (f *Fetcher) parseAndNormalizeToJSON(blockBytes []byte) (*JSONBlock, error)
 // fetchSingleJSONBlock fetches a single block by height with retry logic and returns JSON format
 func (f *Fetcher) fetchSingleJSONBlock(height int64) (*JSONBlock, error) {
 	if err := f.cb.Allow(); err != nil {
-		return nil, fmt.Errorf("P-chain RPC circuit breaker open: %w", err)
+		return nil, fmt.Errorf("circuit breaker open: %w", err)
 	}
 
 	var lastErr error

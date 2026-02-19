@@ -39,16 +39,3 @@ func validateTxHash(r *http.Request) (string, error) {
 	return raw, nil
 }
 
-// validateGranularity validates a time granularity parameter.
-func validateGranularity(r *http.Request) (string, error) {
-	g := r.URL.Query().Get("granularity")
-	if g == "" {
-		return "day", nil // default
-	}
-	switch g {
-	case "hour", "day", "week", "month":
-		return g, nil
-	default:
-		return "", fmt.Errorf("invalid granularity %q, must be one of: hour, day, week, month", g)
-	}
-}

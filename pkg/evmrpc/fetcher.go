@@ -165,7 +165,7 @@ func (f *Fetcher) batchRpcCall(requests []jsonRpcRequest) ([]jsonRpcResponse, er
 
 	// Check circuit breaker before attempting
 	if err := f.cb.Allow(); err != nil {
-		return nil, fmt.Errorf("RPC circuit breaker open for chain %d (%s): %w", f.chainID, f.chainName, err)
+		return nil, fmt.Errorf("circuit breaker open for chain %d (%s): %w", f.chainID, f.chainName, err)
 	}
 
 	jsonData, err := json.Marshal(requests)
@@ -255,7 +255,7 @@ func (f *Fetcher) batchRpcCallDebug(requests []jsonRpcRequest) ([]jsonRpcRespons
 	}
 
 	if err := f.cb.Allow(); err != nil {
-		return nil, fmt.Errorf("RPC circuit breaker open for chain %d (%s): %w", f.chainID, f.chainName, err)
+		return nil, fmt.Errorf("circuit breaker open for chain %d (%s): %w", f.chainID, f.chainName, err)
 	}
 
 	jsonData, err := json.Marshal(requests)

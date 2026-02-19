@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
@@ -225,13 +224,6 @@ func getChainIDFromPath(r *http.Request) (uint32, error) {
 	return uint32(parsed), nil
 }
 
-func normalizeHash(hash string) string {
-	hash = strings.ToLower(hash)
-	if !strings.HasPrefix(hash, "0x") {
-		hash = "0x" + hash
-	}
-	return hash
-}
 
 // parseFlexibleTime parses time from various formats: 2025-01-01, 2025-01-01T00:00:00Z, or unix timestamp
 func parseFlexibleTime(s string) time.Time {

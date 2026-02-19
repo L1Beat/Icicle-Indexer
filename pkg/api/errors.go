@@ -44,28 +44,6 @@ func writeAPIError(w http.ResponseWriter, status int, code ErrorCode, message st
 	})
 }
 
-// writeAPIErrorWithDetails writes a structured error with additional details
-func writeAPIErrorWithDetails(w http.ResponseWriter, status int, code ErrorCode, message, details string) {
-	writeJSON(w, status, ErrorResponse{
-		Error: APIError{
-			Code:    code,
-			Message: message,
-			Details: details,
-		},
-	})
-}
-
-// writeValidationError writes a validation error with field-level details
-func writeValidationError(w http.ResponseWriter, fields []FieldError) {
-	writeJSON(w, http.StatusBadRequest, ErrorResponse{
-		Error: APIError{
-			Code:    ErrValidationFailed,
-			Message: "Request validation failed",
-			Fields:  fields,
-		},
-	})
-}
-
 // writeNotFoundError writes a 404 error for a specific resource
 func writeNotFoundError(w http.ResponseWriter, resource string) {
 	writeJSON(w, http.StatusNotFound, ErrorResponse{

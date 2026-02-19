@@ -78,8 +78,7 @@ func TestHandleIndexerStatus_Healthy(t *testing.T) {
 
 	AssertJSONResponse(t, w, http.StatusOK)
 
-	var status IndexerStatus
-	status = ParseResponse[IndexerStatus](t, w)
+	status := ParseResponse[IndexerStatus](t, w)
 	assert.True(t, status.Healthy, "should be healthy when caught up")
 }
 
@@ -107,8 +106,7 @@ func TestHandleIndexerStatus_Unhealthy_EVMBehind(t *testing.T) {
 
 	AssertJSONResponse(t, w, http.StatusOK)
 
-	var status IndexerStatus
-	status = ParseResponse[IndexerStatus](t, w)
+	status := ParseResponse[IndexerStatus](t, w)
 	assert.False(t, status.Healthy, "should be unhealthy when >100 blocks behind")
 }
 
@@ -143,8 +141,7 @@ func TestHandleIndexerStatus_EmptyEVMStatus(t *testing.T) {
 
 	AssertJSONResponse(t, w, http.StatusOK)
 
-	var status IndexerStatus
-	status = ParseResponse[IndexerStatus](t, w)
+	status := ParseResponse[IndexerStatus](t, w)
 	assert.Empty(t, status.EVM)
 	assert.Nil(t, status.PChain)
 }
@@ -178,8 +175,7 @@ func TestHandleIndexerStatus_NoPChainData(t *testing.T) {
 
 	AssertJSONResponse(t, w, http.StatusOK)
 
-	var status IndexerStatus
-	status = ParseResponse[IndexerStatus](t, w)
+	status := ParseResponse[IndexerStatus](t, w)
 	assert.Nil(t, status.PChain, "should not include P-Chain status when no data")
 }
 
@@ -212,8 +208,7 @@ func TestHandleIndexerStatus_BlocksBehindCalculation(t *testing.T) {
 
 	AssertJSONResponse(t, w, http.StatusOK)
 
-	var status IndexerStatus
-	status = ParseResponse[IndexerStatus](t, w)
+	status := ParseResponse[IndexerStatus](t, w)
 	require.Len(t, status.EVM, 1)
 	assert.Equal(t, int64(5), status.EVM[0].BlocksBehind)
 	assert.True(t, status.EVM[0].IsSynced, "should be synced when <10 blocks behind")

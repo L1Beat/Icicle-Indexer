@@ -112,11 +112,6 @@ func hexToNodeID(hexStr string) (string, error) {
 	return nodeID.String(), nil
 }
 
-// idToBytes converts an ids.ID to a byte slice
-func idToBytes(id ids.ID) []byte {
-	return id[:]
-}
-
 // MaxTxsPerInsertBatch limits the number of transactions per ClickHouse insert
 // to avoid memory limit errors on servers with limited RAM
 const MaxTxsPerInsertBatch = 5000

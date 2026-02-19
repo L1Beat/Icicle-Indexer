@@ -30,8 +30,7 @@ func TestHandleListBlocks_Success(t *testing.T) {
 	AssertJSONResponse(t, w, http.StatusOK)
 	AssertCORSHeaders(t, w)
 
-	var resp Response
-	resp = ParseResponse[Response](t, w)
+	resp := ParseResponse[Response](t, w)
 	require.NotNil(t, resp.Data)
 	require.NotNil(t, resp.Meta)
 	assert.Equal(t, 20, resp.Meta.Limit)
