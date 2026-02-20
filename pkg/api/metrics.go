@@ -59,19 +59,44 @@ func MetricsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// knownExactPaths are static routes that should be recorded as-is.
+var knownExactPaths = map[string]bool{
+	"/health":                          true,
+	"/api/docs/":                       true,
+	"/api/v1/data/pchain/txs":          true,
+	"/api/v1/data/pchain/tx-types":     true,
+	"/api/v1/data/subnets":             true,
+	"/api/v1/data/l1s":                 true,
+	"/api/v1/data/chains":              true,
+	"/api/v1/data/validators":          true,
+	"/api/v1/metrics/fees":             true,
+	"/api/v1/metrics/indexer/status":   true,
+}
+
 // normalizePath replaces dynamic path segments with placeholders
 // to keep Prometheus label cardinality bounded.
+// Unknown paths are bucketed into "/unknown" to prevent scanner bots
+// from creating unbounded time series.
 func normalizePath(path string) string {
-	// Map known route patterns to normalized forms
-	// This is simpler and safer than regex-based normalization
-	parts := splitPath(path)
-	if len(parts) < 2 {
+	// Check exact matches first
+	if knownExactPaths[path] {
 		return path
 	}
+
+	parts := splitPath(path)
+	if len(parts) < 2 {
+		if path == "/" {
+			return "/"
+		}
+		return "/unknown"
+	}
+
+	matched := false
 
 	// /api/v1/data/evm/{chainId}/...
 	if len(parts) >= 5 && parts[0] == "api" && parts[1] == "v1" && parts[2] == "data" && parts[3] == "evm" {
 		parts[4] = ":chainId"
+		matched = true
 		if len(parts) >= 7 && parts[5] == "blocks" {
 			parts[6] = ":number"
 		}
@@ -88,21 +113,25 @@ func normalizePath(path string) string {
 	// /api/v1/data/pchain/txs/{txId}
 	if len(parts) >= 6 && parts[0] == "api" && parts[1] == "v1" && parts[2] == "data" && parts[3] == "pchain" && parts[4] == "txs" {
 		parts[5] = ":txId"
+		matched = true
 	}
 
 	// /api/v1/data/subnets/{subnetId}
 	if len(parts) >= 6 && parts[0] == "api" && parts[1] == "v1" && parts[2] == "data" && parts[3] == "subnets" {
 		parts[5] = ":subnetId"
+		matched = true
 	}
 
 	// /api/v1/data/validators/{id}
 	if len(parts) >= 6 && parts[0] == "api" && parts[1] == "v1" && parts[2] == "data" && parts[3] == "validators" {
 		parts[5] = ":id"
+		matched = true
 	}
 
 	// /api/v1/metrics/evm/{chainId}/...
 	if len(parts) >= 5 && parts[0] == "api" && parts[1] == "v1" && parts[2] == "metrics" && parts[3] == "evm" {
 		parts[4] = ":chainId"
+		matched = true
 		if len(parts) >= 7 && parts[5] == "timeseries" {
 			parts[6] = ":metric"
 		}
@@ -111,6 +140,11 @@ func normalizePath(path string) string {
 	// /ws/blocks/{chainId}
 	if len(parts) >= 3 && parts[0] == "ws" && parts[1] == "blocks" {
 		parts[2] = ":chainId"
+		matched = true
+	}
+
+	if !matched {
+		return "/unknown"
 	}
 
 	return "/" + joinPath(parts)
