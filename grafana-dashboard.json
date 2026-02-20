@@ -42,7 +42,7 @@
       "datasource": "Prometheus",
       "targets": [
         {
-          "expr": "rate(icicle_api_request_duration_seconds_sum[5m]) / rate(icicle_api_requests_total[5m])",
+          "expr": "rate(icicle_api_request_duration_seconds_sum[5m]) / rate(icicle_api_request_duration_seconds_count[5m])",
           "legendFormat": "{{method}} {{path}}",
           "refId": "A"
         }

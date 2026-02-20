@@ -36,8 +36,9 @@ func init() {
 // MetricsMiddleware records request duration and status code for Prometheus.
 func MetricsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Skip metrics endpoint itself to avoid recursion
-		if r.URL.Path == "/metrics" {
+		// Skip metrics endpoint and WebSocket connections
+		// WebSocket connections are long-lived and would skew latency metrics
+		if r.URL.Path == "/metrics" || len(r.URL.Path) > 4 && r.URL.Path[:4] == "/ws/" {
 			next.ServeHTTP(w, r)
 			return
 		}
