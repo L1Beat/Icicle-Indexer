@@ -319,10 +319,7 @@ func (c *WSClient) writePump() {
 
 		case <-ticker.C:
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
-
-			// Send ping message
-			pingMsg, _ := json.Marshal(WSMessage{Type: "ping"})
-			if err := c.conn.WriteMessage(websocket.TextMessage, pingMsg); err != nil {
+			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
 			}
 		}
