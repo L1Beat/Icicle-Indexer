@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/hex"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -37,6 +38,8 @@ type Block struct {
 func (s *Server) handleListBlocks(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	limit, offset := getPagination(r)
+	cursor := getCursor(r)
+	wantCount := getCountParam(r)
 
 	chainID, err := getChainIDFromPath(r)
 	if err != nil {
@@ -44,16 +47,35 @@ func (s *Server) handleListBlocks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := s.conn.Query(ctx, `
-		SELECT
-			chain_id, block_number, hash, parent_hash, block_time,
-			miner, size, gas_limit, gas_used, base_fee_per_gas, tx_count
-		FROM raw_blocks
-		WHERE chain_id = ?
-		ORDER BY block_number DESC
-		LIMIT ? OFFSET ?
-	`, chainID, limit, offset)
+	fetchLimit := limit + 1
 
+	var query string
+	var args []interface{}
+	if cursor != nil {
+		query = `
+			SELECT
+				chain_id, block_number, hash, parent_hash, block_time,
+				miner, size, gas_limit, gas_used, base_fee_per_gas, tx_count
+			FROM raw_blocks
+			WHERE chain_id = ? AND block_number < ?
+			ORDER BY block_number DESC
+			LIMIT ?
+		`
+		args = []interface{}{chainID, cursor.BlockNumber, fetchLimit}
+	} else {
+		query = `
+			SELECT
+				chain_id, block_number, hash, parent_hash, block_time,
+				miner, size, gas_limit, gas_used, base_fee_per_gas, tx_count
+			FROM raw_blocks
+			WHERE chain_id = ?
+			ORDER BY block_number DESC
+			LIMIT ? OFFSET ?
+		`
+		args = []interface{}{chainID, fetchLimit, offset}
+	}
+
+	rows, err := s.conn.Query(ctx, query, args...)
 	if err != nil {
 		writeInternalError(w, err.Error())
 		return
@@ -80,9 +102,22 @@ func (s *Server) handleListBlocks(w http.ResponseWriter, r *http.Request) {
 		blocks = append(blocks, b)
 	}
 
+	blocks, hasMore := trimResults(blocks, limit)
+
+	meta := &Meta{Limit: limit, Offset: offset, HasMore: hasMore}
+	if hasMore && len(blocks) > 0 {
+		meta.NextCursor = fmt.Sprintf("%d", blocks[len(blocks)-1].BlockNumber)
+	}
+
+	if wantCount {
+		var total int64
+		_ = s.conn.QueryRow(ctx, `SELECT count() FROM raw_blocks WHERE chain_id = ?`, chainID).Scan(&total)
+		meta.Total = total
+	}
+
 	writeJSON(w, http.StatusOK, Response{
 		Data: blocks,
-		Meta: &Meta{Limit: limit, Offset: offset},
+		Meta: meta,
 	})
 }
 

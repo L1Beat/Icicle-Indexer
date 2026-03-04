@@ -61,7 +61,7 @@ func TestHandleListTxs_Pagination(t *testing.T) {
 		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
 			require.Len(t, args, 3)
 			assert.Equal(t, uint32(43114), args[0])
-			assert.Equal(t, 25, args[1])
+			assert.Equal(t, 26, args[1]) // fetchLimit = limit+1
 			assert.Equal(t, 50, args[2])
 			return NewMockRows([]string{"chain_id", "hash", "block_number", "block_time", "transaction_index", "from", "to", "value", "gas_limit", "gas_price", "gas_used", "success", "type"}, [][]interface{}{}), nil
 		},
@@ -187,9 +187,9 @@ func TestHandleAddressTxs_DatabaseError(t *testing.T) {
 func TestHandleAddressTxs_Pagination(t *testing.T) {
 	mock := &MockConn{
 		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
-			// UNION ALL args: chainID, addrHex, innerLimit, chainID, addrHex, addrHex, innerLimit, limit, offset
+			// UNION ALL args: chainID, addrHex, innerLimit, chainID, addrHex, addrHex, innerLimit, fetchLimit, offset
 			require.Len(t, args, 9)
-			assert.Equal(t, 10, args[7])
+			assert.Equal(t, 11, args[7]) // fetchLimit = limit+1
 			assert.Equal(t, 20, args[8])
 			return NewMockRows([]string{"chain_id", "hash", "block_number", "block_time", "transaction_index", "from", "to", "value", "gas_limit", "gas_price", "gas_used", "success", "type"}, [][]interface{}{}), nil
 		},

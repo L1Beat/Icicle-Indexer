@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 )
@@ -29,54 +30,62 @@ type PChainTx struct {
 func (s *Server) handleListPChainTxs(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	limit, offset := getPagination(r)
+	cursor := getCursor(r)
+	wantCount := getCountParam(r)
 
 	txType := r.URL.Query().Get("tx_type")
 	subnetID := r.URL.Query().Get("subnet_id")
 
+	fetchLimit := limit + 1
+
+	// Build WHERE clauses
+	whereParts := []string{}
+	whereArgs := []interface{}{}
+
+	if cursor != nil {
+		whereParts = append(whereParts, "block_number < ?")
+		whereArgs = append(whereArgs, cursor.BlockNumber)
+	}
+
+	if txType != "" {
+		whereParts = append(whereParts, "tx_type = ?")
+		whereArgs = append(whereArgs, txType)
+	}
+
+	if subnetID != "" {
+		whereParts = append(whereParts, "(tx_data.Subnet = ? OR tx_data.SubnetID = ? OR tx_data.SubnetValidator.Subnet = ?)")
+		whereArgs = append(whereArgs, subnetID, subnetID, subnetID)
+	}
+
+	whereClause := ""
+	if len(whereParts) > 0 {
+		whereClause = "WHERE " + whereParts[0]
+		for _, p := range whereParts[1:] {
+			whereClause += " AND " + p
+		}
+	}
+
 	var query string
 	var args []interface{}
 
-	if txType != "" && subnetID != "" {
-		query = `
+	if cursor != nil {
+		query = fmt.Sprintf(`
 			SELECT tx_id, tx_type, block_number, block_time, tx_data
 			FROM p_chain_txs FINAL
-			WHERE tx_type = ? AND (
-				tx_data.Subnet = ? OR
-				tx_data.SubnetID = ? OR
-				tx_data.SubnetValidator.Subnet = ?
-			)
+			%s
 			ORDER BY block_number DESC
-			LIMIT ? OFFSET ?
-		`
-		args = []interface{}{txType, subnetID, subnetID, subnetID, limit, offset}
-	} else if txType != "" {
-		query = `
-			SELECT tx_id, tx_type, block_number, block_time, tx_data
-			FROM p_chain_txs FINAL
-			WHERE tx_type = ?
-			ORDER BY block_number DESC
-			LIMIT ? OFFSET ?
-		`
-		args = []interface{}{txType, limit, offset}
-	} else if subnetID != "" {
-		query = `
-			SELECT tx_id, tx_type, block_number, block_time, tx_data
-			FROM p_chain_txs FINAL
-			WHERE tx_data.Subnet = ? OR
-				tx_data.SubnetID = ? OR
-				tx_data.SubnetValidator.Subnet = ?
-			ORDER BY block_number DESC
-			LIMIT ? OFFSET ?
-		`
-		args = []interface{}{subnetID, subnetID, subnetID, limit, offset}
+			LIMIT ?
+		`, whereClause)
+		args = append(whereArgs, fetchLimit)
 	} else {
-		query = `
+		query = fmt.Sprintf(`
 			SELECT tx_id, tx_type, block_number, block_time, tx_data
 			FROM p_chain_txs FINAL
+			%s
 			ORDER BY block_number DESC
 			LIMIT ? OFFSET ?
-		`
-		args = []interface{}{limit, offset}
+		`, whereClause)
+		args = append(whereArgs, fetchLimit, offset)
 	}
 
 	rows, err := s.conn.Query(ctx, query, args...)
@@ -96,9 +105,47 @@ func (s *Server) handleListPChainTxs(w http.ResponseWriter, r *http.Request) {
 		txs = append(txs, tx)
 	}
 
+	txs, hasMore := trimResults(txs, limit)
+
+	meta := &Meta{Limit: limit, Offset: offset, HasMore: hasMore}
+	if hasMore && len(txs) > 0 {
+		meta.NextCursor = cursorBlock(txs[len(txs)-1].BlockNumber)
+	}
+
+	if wantCount {
+		countQuery := fmt.Sprintf(`SELECT count() FROM p_chain_txs FINAL %s`, whereClause)
+		// For count query, use whereArgs without cursor filter for total count
+		countArgs := []interface{}{}
+		if cursor != nil {
+			// skip the cursor arg from whereArgs for count
+			countArgs = whereArgs[1:]
+			// rebuild whereClause without cursor
+			countParts := []string{}
+			if txType != "" {
+				countParts = append(countParts, "tx_type = ?")
+			}
+			if subnetID != "" {
+				countParts = append(countParts, "(tx_data.Subnet = ? OR tx_data.SubnetID = ? OR tx_data.SubnetValidator.Subnet = ?)")
+			}
+			countWhere := ""
+			if len(countParts) > 0 {
+				countWhere = "WHERE " + countParts[0]
+				for _, p := range countParts[1:] {
+					countWhere += " AND " + p
+				}
+			}
+			countQuery = fmt.Sprintf(`SELECT count() FROM p_chain_txs FINAL %s`, countWhere)
+		} else {
+			countArgs = whereArgs
+		}
+		var total int64
+		_ = s.conn.QueryRow(ctx, countQuery, countArgs...).Scan(&total)
+		meta.Total = total
+	}
+
 	writeJSON(w, http.StatusOK, Response{
 		Data: txs,
-		Meta: &Meta{Limit: limit, Offset: offset},
+		Meta: meta,
 	})
 }
 

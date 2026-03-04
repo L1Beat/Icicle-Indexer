@@ -2,8 +2,10 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
@@ -22,7 +24,7 @@ import (
 // @description - **Metrics API** (`/api/v1/metrics/*`): Fee statistics, chain metrics, time series data
 // @description
 // @description ## Rate Limiting
-// @description All endpoints are rate limited to 60 requests/minute per IP with a burst of 10.
+// @description All endpoints are rate limited to 100 requests/second per IP (burst of 100) by default. Configurable via CLI flags.
 
 // @host localhost:8080
 // @BasePath /
@@ -78,9 +80,18 @@ type Response struct {
 }
 
 type Meta struct {
-	Total  int64 `json:"total,omitempty"`
-	Limit  int   `json:"limit"`
-	Offset int   `json:"offset"`
+	Total      int64  `json:"total,omitempty"`
+	Limit      int    `json:"limit"`
+	Offset     int    `json:"offset"`
+	HasMore    bool   `json:"has_more"`
+	NextCursor string `json:"next_cursor,omitempty"`
+}
+
+// Cursor holds decoded cursor position for keyset pagination
+type Cursor struct {
+	BlockNumber uint64
+	TxIndex     uint16
+	HasTxIndex  bool
 }
 
 func NewServer(conn driver.Conn, cfg Config) *Server {
@@ -213,6 +224,52 @@ func getPagination(r *http.Request) (limit, offset int) {
 	}
 
 	return
+}
+
+// getCursor parses ?cursor=<block> or ?cursor=<block>:<txIdx>
+func getCursor(r *http.Request) *Cursor {
+	raw := r.URL.Query().Get("cursor")
+	if raw == "" {
+		return nil
+	}
+	parts := strings.SplitN(raw, ":", 2)
+	bn, err := strconv.ParseUint(parts[0], 10, 64)
+	if err != nil {
+		return nil
+	}
+	c := &Cursor{BlockNumber: bn}
+	if len(parts) == 2 {
+		idx, err := strconv.ParseUint(parts[1], 10, 16)
+		if err != nil {
+			return nil
+		}
+		c.TxIndex = uint16(idx)
+		c.HasTxIndex = true
+	}
+	return c
+}
+
+// getCountParam returns true if ?count=true
+func getCountParam(r *http.Request) bool {
+	return r.URL.Query().Get("count") == "true"
+}
+
+// trimResults trims results to limit, returning whether more exist
+func trimResults[T any](results []T, limit int) ([]T, bool) {
+	if len(results) > limit {
+		return results[:limit], true
+	}
+	return results, false
+}
+
+// cursorBlock builds next_cursor from a block number
+func cursorBlock(block uint64) string {
+	return fmt.Sprintf("%d", block)
+}
+
+// cursorBlockTx builds next_cursor from block:txIndex
+func cursorBlockTx(block uint32, txIndex uint16) string {
+	return fmt.Sprintf("%d:%d", block, txIndex)
 }
 
 func getChainIDFromPath(r *http.Request) (uint32, error) {

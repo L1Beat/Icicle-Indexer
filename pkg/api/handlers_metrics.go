@@ -68,8 +68,11 @@ type ChainMetrics struct {
 func (s *Server) handleFeeMetrics(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	limit, offset := getPagination(r)
+	wantCount := getCountParam(r)
 
 	subnetID := r.URL.Query().Get("subnet_id")
+
+	fetchLimit := limit + 1
 
 	var query string
 	var args []interface{}
@@ -94,7 +97,7 @@ func (s *Server) handleFeeMetrics(w http.ResponseWriter, r *http.Request) {
 			ORDER BY total_fees_paid DESC
 			LIMIT ? OFFSET ?
 		`
-		args = []interface{}{limit, offset}
+		args = []interface{}{fetchLimit, offset}
 	}
 
 	rows, err := s.conn.Query(ctx, query, args...)
@@ -118,9 +121,19 @@ func (s *Server) handleFeeMetrics(w http.ResponseWriter, r *http.Request) {
 		stats = append(stats, f)
 	}
 
+	stats, hasMore := trimResults(stats, limit)
+
+	meta := &Meta{Limit: limit, Offset: offset, HasMore: hasMore}
+
+	if wantCount && subnetID == "" {
+		var total int64
+		_ = s.conn.QueryRow(ctx, `SELECT count() FROM l1_fee_stats FINAL`).Scan(&total)
+		meta.Total = total
+	}
+
 	writeJSON(w, http.StatusOK, Response{
 		Data: stats,
-		Meta: &Meta{Limit: limit, Offset: offset},
+		Meta: meta,
 	})
 }
 

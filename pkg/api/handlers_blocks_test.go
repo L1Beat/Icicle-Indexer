@@ -61,10 +61,10 @@ func TestHandleListBlocks_DatabaseError(t *testing.T) {
 func TestHandleListBlocks_Pagination(t *testing.T) {
 	mock := &MockConn{
 		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
-			// Verify pagination params are passed correctly
-			require.Len(t, args, 3) // chainID, limit, offset
+			// Verify pagination params are passed correctly (fetchLimit = limit+1)
+			require.Len(t, args, 3) // chainID, fetchLimit, offset
 			assert.Equal(t, uint32(43114), args[0])
-			assert.Equal(t, 50, args[1])
+			assert.Equal(t, 51, args[1]) // limit+1
 			assert.Equal(t, 100, args[2])
 			return NewMockRows([]string{"chain_id", "block_number", "hash", "parent_hash", "block_time", "miner", "size", "gas_limit", "gas_used", "base_fee_per_gas"}, [][]interface{}{}), nil
 		},
@@ -77,14 +77,15 @@ func TestHandleListBlocks_Pagination(t *testing.T) {
 	resp := ParseResponse[Response](t, w)
 	assert.Equal(t, 50, resp.Meta.Limit)
 	assert.Equal(t, 100, resp.Meta.Offset)
+	assert.False(t, resp.Meta.HasMore)
 }
 
 func TestHandleListBlocks_LimitCapped(t *testing.T) {
 	mock := &MockConn{
 		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
-			// Verify limit is capped at 100 when requesting more than 100
-			limit := args[1].(int)
-			assert.LessOrEqual(t, limit, 100, "limit should be capped at 100")
+			// Verify fetchLimit is capped at 101 (100+1) when requesting more than 100
+			fetchLimit := args[1].(int)
+			assert.LessOrEqual(t, fetchLimit, 101, "fetchLimit should be capped at 101 (100+1)")
 			return NewMockRows([]string{"chain_id", "block_number", "hash", "parent_hash", "block_time", "miner", "size", "gas_limit", "gas_used", "base_fee_per_gas"}, [][]interface{}{}), nil
 		},
 	}
@@ -181,4 +182,93 @@ func TestHandleGetBlock_MethodNotAllowed(t *testing.T) {
 
 	w := MakeRequest(t, server, "DELETE", "/api/v1/data/evm/43114/blocks/12345678")
 	require.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+func TestHandleListBlocks_HasMore(t *testing.T) {
+	// Return 3 rows when limit=2 → has_more=true, only 2 results returned
+	mock := &MockConn{
+		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
+			return NewMockRows(
+				[]string{"chain_id", "block_number", "hash", "parent_hash", "block_time", "miner", "size", "gas_limit", "gas_used", "base_fee_per_gas", "tx_count"},
+				[][]interface{}{
+					{uint32(43114), uint32(100), [32]byte{0x01}, [32]byte{0x02}, time.Now(), [20]byte{0x03}, uint32(1024), uint32(8000000), uint32(500000), uint64(25000000000), uint32(10)},
+					{uint32(43114), uint32(99), [32]byte{0x04}, [32]byte{0x05}, time.Now(), [20]byte{0x06}, uint32(1024), uint32(8000000), uint32(500000), uint64(25000000000), uint32(10)},
+					{uint32(43114), uint32(98), [32]byte{0x07}, [32]byte{0x08}, time.Now(), [20]byte{0x09}, uint32(1024), uint32(8000000), uint32(500000), uint64(25000000000), uint32(10)},
+				},
+			), nil
+		},
+	}
+
+	server := NewTestServer(mock)
+	w := MakeRequest(t, server, "GET", "/api/v1/data/evm/43114/blocks?limit=2")
+
+	AssertJSONResponse(t, w, http.StatusOK)
+	resp := ParseResponse[Response](t, w)
+	assert.True(t, resp.Meta.HasMore)
+	assert.Equal(t, "99", resp.Meta.NextCursor)
+}
+
+func TestHandleListBlocks_NoMore(t *testing.T) {
+	// Return 1 row when limit=2 → has_more=false
+	mock := &MockConn{
+		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
+			return NewMockRows(
+				[]string{"chain_id", "block_number", "hash", "parent_hash", "block_time", "miner", "size", "gas_limit", "gas_used", "base_fee_per_gas", "tx_count"},
+				[][]interface{}{
+					{uint32(43114), uint32(100), [32]byte{0x01}, [32]byte{0x02}, time.Now(), [20]byte{0x03}, uint32(1024), uint32(8000000), uint32(500000), uint64(25000000000), uint32(10)},
+				},
+			), nil
+		},
+	}
+
+	server := NewTestServer(mock)
+	w := MakeRequest(t, server, "GET", "/api/v1/data/evm/43114/blocks?limit=2")
+
+	AssertJSONResponse(t, w, http.StatusOK)
+	resp := ParseResponse[Response](t, w)
+	assert.False(t, resp.Meta.HasMore)
+	assert.Empty(t, resp.Meta.NextCursor)
+}
+
+func TestHandleListBlocks_Cursor(t *testing.T) {
+	mock := &MockConn{
+		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
+			// With cursor, args should be: chainID, cursorBlock, fetchLimit
+			require.Len(t, args, 3)
+			assert.Equal(t, uint32(43114), args[0])
+			assert.Equal(t, uint64(99), args[1]) // cursor block
+			assert.Equal(t, 21, args[2])          // fetchLimit = 20+1
+			return NewMockRows([]string{"chain_id", "block_number", "hash", "parent_hash", "block_time", "miner", "size", "gas_limit", "gas_used", "base_fee_per_gas", "tx_count"}, [][]interface{}{}), nil
+		},
+	}
+
+	server := NewTestServer(mock)
+	w := MakeRequest(t, server, "GET", "/api/v1/data/evm/43114/blocks?cursor=99")
+
+	AssertJSONResponse(t, w, http.StatusOK)
+}
+
+func TestHandleListBlocks_Count(t *testing.T) {
+	queryCount := 0
+	mock := &MockConn{
+		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
+			return NewMockRows([]string{"chain_id", "block_number", "hash", "parent_hash", "block_time", "miner", "size", "gas_limit", "gas_used", "base_fee_per_gas", "tx_count"}, [][]interface{}{}), nil
+		},
+		QueryRowFunc: func(ctx context.Context, query string, args ...interface{}) driver.Row {
+			queryCount++
+			return &MockRow{
+				scanFunc: func(dest ...interface{}) error {
+					*dest[0].(*int64) = 12345
+					return nil
+				},
+			}
+		},
+	}
+
+	server := NewTestServer(mock)
+	w := MakeRequest(t, server, "GET", "/api/v1/data/evm/43114/blocks?count=true")
+
+	AssertJSONResponse(t, w, http.StatusOK)
+	resp := ParseResponse[Response](t, w)
+	assert.Equal(t, int64(12345), resp.Meta.Total)
 }

@@ -59,10 +59,10 @@ func (s *Server) handleAddressBalances(w http.ResponseWriter, r *http.Request) {
 	}
 
 	limit, offset := getPagination(r)
+	wantCount := getCountParam(r)
 
-	// Use unhex() in SQL to convert hex string to FixedString(20)
-	// Cast Int256 results to String for Go compatibility
-	// Left join with token_metadata to get name, symbol, decimals
+	fetchLimit := limit + 1
+
 	query := `
 		SELECT
 			b.token,
@@ -82,7 +82,7 @@ func (s *Server) handleAddressBalances(w http.ResponseWriter, r *http.Request) {
 		LIMIT ? OFFSET ?
 	`
 
-	rows, err := s.conn.Query(ctx, query, chainID, address, limit, offset)
+	rows, err := s.conn.Query(ctx, query, chainID, address, fetchLimit, offset)
 	if err != nil {
 		writeInternalError(w, err.Error())
 		return
@@ -124,9 +124,22 @@ func (s *Server) handleAddressBalances(w http.ResponseWriter, r *http.Request) {
 		balances = append(balances, tb)
 	}
 
+	balances, hasMore := trimResults(balances, limit)
+
+	meta := &Meta{Limit: limit, Offset: offset, HasMore: hasMore}
+
+	if wantCount {
+		var total int64
+		_ = s.conn.QueryRow(ctx, `
+			SELECT count() FROM erc20_balances FINAL
+			WHERE chain_id = ? AND wallet = unhex(?) AND balance > toInt256(0)
+		`, chainID, address).Scan(&total)
+		meta.Total = total
+	}
+
 	writeJSON(w, http.StatusOK, Response{
 		Data: balances,
-		Meta: &Meta{Limit: limit, Offset: offset},
+		Meta: meta,
 	})
 }
 

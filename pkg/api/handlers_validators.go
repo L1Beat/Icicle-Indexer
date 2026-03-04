@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 )
@@ -46,61 +47,43 @@ type ValidatorDeposit struct {
 func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	limit, offset := getPagination(r)
+	wantCount := getCountParam(r)
 
 	subnetID := r.URL.Query().Get("subnet_id")
 	activeOnly := r.URL.Query().Get("active") == "true"
 
-	var query string
-	var args []interface{}
+	fetchLimit := limit + 1
 
-	if subnetID != "" && activeOnly {
-		query = `
-			SELECT
-				subnet_id, validation_id, node_id, balance, weight,
-				start_time, end_time, uptime_percentage, active,
-				initial_deposit, total_topups, refund_amount, fees_paid
-			FROM l1_validator_state FINAL
-			WHERE subnet_id = ? AND active = true
-			ORDER BY weight DESC
-			LIMIT ? OFFSET ?
-		`
-		args = []interface{}{subnetID, limit, offset}
-	} else if subnetID != "" {
-		query = `
-			SELECT
-				subnet_id, validation_id, node_id, balance, weight,
-				start_time, end_time, uptime_percentage, active,
-				initial_deposit, total_topups, refund_amount, fees_paid
-			FROM l1_validator_state FINAL
-			WHERE subnet_id = ?
-			ORDER BY weight DESC
-			LIMIT ? OFFSET ?
-		`
-		args = []interface{}{subnetID, limit, offset}
-	} else if activeOnly {
-		query = `
-			SELECT
-				subnet_id, validation_id, node_id, balance, weight,
-				start_time, end_time, uptime_percentage, active,
-				initial_deposit, total_topups, refund_amount, fees_paid
-			FROM l1_validator_state FINAL
-			WHERE active = true
-			ORDER BY weight DESC
-			LIMIT ? OFFSET ?
-		`
-		args = []interface{}{limit, offset}
-	} else {
-		query = `
-			SELECT
-				subnet_id, validation_id, node_id, balance, weight,
-				start_time, end_time, uptime_percentage, active,
-				initial_deposit, total_topups, refund_amount, fees_paid
-			FROM l1_validator_state FINAL
-			ORDER BY weight DESC
-			LIMIT ? OFFSET ?
-		`
-		args = []interface{}{limit, offset}
+	// Build WHERE clause
+	whereParts := []string{}
+	whereArgs := []interface{}{}
+	if subnetID != "" {
+		whereParts = append(whereParts, "subnet_id = ?")
+		whereArgs = append(whereArgs, subnetID)
 	}
+	if activeOnly {
+		whereParts = append(whereParts, "active = true")
+	}
+
+	whereClause := ""
+	if len(whereParts) > 0 {
+		whereClause = "WHERE " + whereParts[0]
+		for _, p := range whereParts[1:] {
+			whereClause += " AND " + p
+		}
+	}
+
+	query := fmt.Sprintf(`
+		SELECT
+			subnet_id, validation_id, node_id, balance, weight,
+			start_time, end_time, uptime_percentage, active,
+			initial_deposit, total_topups, refund_amount, fees_paid
+		FROM l1_validator_state FINAL
+		%s
+		ORDER BY weight DESC
+		LIMIT ? OFFSET ?
+	`, whereClause)
+	args := append(whereArgs, fetchLimit, offset)
 
 	rows, err := s.conn.Query(ctx, query, args...)
 	if err != nil {
@@ -123,9 +106,20 @@ func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 		validators = append(validators, v)
 	}
 
+	validators, hasMore := trimResults(validators, limit)
+
+	meta := &Meta{Limit: limit, Offset: offset, HasMore: hasMore}
+
+	if wantCount {
+		countQuery := fmt.Sprintf(`SELECT count() FROM l1_validator_state FINAL %s`, whereClause)
+		var total int64
+		_ = s.conn.QueryRow(ctx, countQuery, whereArgs...).Scan(&total)
+		meta.Total = total
+	}
+
 	writeJSON(w, http.StatusOK, Response{
 		Data: validators,
-		Meta: &Meta{Limit: limit, Offset: offset},
+		Meta: meta,
 	})
 }
 
@@ -179,16 +173,36 @@ func (s *Server) handleGetValidator(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleValidatorDeposits(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	limit, offset := getPagination(r)
+	cursor := getCursor(r)
+	wantCount := getCountParam(r)
 	id := r.PathValue("id")
 
-	rows, err := s.conn.Query(ctx, `
-		SELECT tx_id, tx_type, block_number, block_time, amount
-		FROM l1_validator_balance_txs FINAL
-		WHERE validation_id = ? OR node_id = ?
-		ORDER BY block_number DESC
-		LIMIT ? OFFSET ?
-	`, id, id, limit, offset)
+	fetchLimit := limit + 1
 
+	var query string
+	var args []interface{}
+
+	if cursor != nil {
+		query = `
+			SELECT tx_id, tx_type, block_number, block_time, amount
+			FROM l1_validator_balance_txs FINAL
+			WHERE (validation_id = ? OR node_id = ?) AND block_number < ?
+			ORDER BY block_number DESC
+			LIMIT ?
+		`
+		args = []interface{}{id, id, cursor.BlockNumber, fetchLimit}
+	} else {
+		query = `
+			SELECT tx_id, tx_type, block_number, block_time, amount
+			FROM l1_validator_balance_txs FINAL
+			WHERE validation_id = ? OR node_id = ?
+			ORDER BY block_number DESC
+			LIMIT ? OFFSET ?
+		`
+		args = []interface{}{id, id, fetchLimit, offset}
+	}
+
+	rows, err := s.conn.Query(ctx, query, args...)
 	if err != nil {
 		writeInternalError(w, err.Error())
 		return
@@ -205,8 +219,24 @@ func (s *Server) handleValidatorDeposits(w http.ResponseWriter, r *http.Request)
 		deposits = append(deposits, d)
 	}
 
+	deposits, hasMore := trimResults(deposits, limit)
+
+	meta := &Meta{Limit: limit, Offset: offset, HasMore: hasMore}
+	if hasMore && len(deposits) > 0 {
+		meta.NextCursor = cursorBlock(deposits[len(deposits)-1].BlockNumber)
+	}
+
+	if wantCount {
+		var total int64
+		_ = s.conn.QueryRow(ctx, `
+			SELECT count() FROM l1_validator_balance_txs FINAL
+			WHERE validation_id = ? OR node_id = ?
+		`, id, id).Scan(&total)
+		meta.Total = total
+	}
+
 	writeJSON(w, http.StatusOK, Response{
 		Data: deposits,
-		Meta: &Meta{Limit: limit, Offset: offset},
+		Meta: meta,
 	})
 }

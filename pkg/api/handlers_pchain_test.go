@@ -94,7 +94,7 @@ func TestHandleListPChainTxs_DatabaseError(t *testing.T) {
 func TestHandleListPChainTxs_Pagination(t *testing.T) {
 	mock := &MockConn{
 		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
-			assert.Equal(t, 40, args[len(args)-2])
+			assert.Equal(t, 41, args[len(args)-2]) // fetchLimit = limit+1
 			assert.Equal(t, 80, args[len(args)-1])
 			return NewMockRows([]string{"tx_id", "tx_type", "block_number", "block_time", "tx_data"}, [][]interface{}{}), nil
 		},

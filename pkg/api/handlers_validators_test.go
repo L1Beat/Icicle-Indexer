@@ -94,8 +94,8 @@ func TestHandleListValidators_DatabaseError(t *testing.T) {
 func TestHandleListValidators_Pagination(t *testing.T) {
 	mock := &MockConn{
 		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
-			// Last two args should be limit and offset
-			assert.Equal(t, 30, args[len(args)-2])
+			// Last two args should be fetchLimit and offset
+			assert.Equal(t, 31, args[len(args)-2]) // fetchLimit = limit+1
 			assert.Equal(t, 60, args[len(args)-1])
 			return NewMockRows([]string{"subnet_id", "validation_id", "node_id", "balance", "weight", "start_time", "end_time", "uptime_percentage", "active", "initial_deposit", "total_topups", "refund_amount", "fees_paid"}, [][]interface{}{}), nil
 		},
@@ -227,9 +227,9 @@ func TestHandleValidatorDeposits_DatabaseError(t *testing.T) {
 func TestHandleValidatorDeposits_Pagination(t *testing.T) {
 	mock := &MockConn{
 		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
-			// args: id, id, limit, offset
+			// args: id, id, fetchLimit, offset
 			require.Len(t, args, 4)
-			assert.Equal(t, 15, args[2])
+			assert.Equal(t, 16, args[2]) // fetchLimit = limit+1
 			assert.Equal(t, 30, args[3])
 			return NewMockRows([]string{"tx_id", "tx_type", "block_number", "block_time", "amount"}, [][]interface{}{}), nil
 		},

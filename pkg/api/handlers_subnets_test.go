@@ -66,7 +66,7 @@ func TestHandleListSubnets_DatabaseError(t *testing.T) {
 func TestHandleListSubnets_Pagination(t *testing.T) {
 	mock := &MockConn{
 		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
-			assert.Equal(t, 25, args[len(args)-2])
+			assert.Equal(t, 26, args[len(args)-2]) // fetchLimit = limit+1
 			assert.Equal(t, 50, args[len(args)-1])
 			return NewMockRows([]string{"subnet_id", "subnet_type", "created_block", "created_time", "chain_id", "converted_block", "converted_time"}, [][]interface{}{}), nil
 		},

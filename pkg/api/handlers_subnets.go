@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 )
@@ -56,31 +57,58 @@ type SubnetDetail struct {
 func (s *Server) handleListSubnets(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	limit, offset := getPagination(r)
+	cursor := getCursor(r)
+	wantCount := getCountParam(r)
 
-	subnetType := r.URL.Query().Get("type") // regular, elastic, l1
+	subnetType := r.URL.Query().Get("type")
+	fetchLimit := limit + 1
 
 	var query string
 	var args []interface{}
 
-	if subnetType != "" {
-		query = `
-			SELECT subnet_id, subnet_type, created_block, created_time,
-				chain_id, converted_block, converted_time
-			FROM subnets FINAL
-			WHERE subnet_type = ?
-			ORDER BY created_block DESC
-			LIMIT ? OFFSET ?
-		`
-		args = []interface{}{subnetType, limit, offset}
+	if cursor != nil {
+		if subnetType != "" {
+			query = `
+				SELECT subnet_id, subnet_type, created_block, created_time,
+					chain_id, converted_block, converted_time
+				FROM subnets FINAL
+				WHERE subnet_type = ? AND created_block < ?
+				ORDER BY created_block DESC
+				LIMIT ?
+			`
+			args = []interface{}{subnetType, cursor.BlockNumber, fetchLimit}
+		} else {
+			query = `
+				SELECT subnet_id, subnet_type, created_block, created_time,
+					chain_id, converted_block, converted_time
+				FROM subnets FINAL
+				WHERE created_block < ?
+				ORDER BY created_block DESC
+				LIMIT ?
+			`
+			args = []interface{}{cursor.BlockNumber, fetchLimit}
+		}
 	} else {
-		query = `
-			SELECT subnet_id, subnet_type, created_block, created_time,
-				chain_id, converted_block, converted_time
-			FROM subnets FINAL
-			ORDER BY created_block DESC
-			LIMIT ? OFFSET ?
-		`
-		args = []interface{}{limit, offset}
+		if subnetType != "" {
+			query = `
+				SELECT subnet_id, subnet_type, created_block, created_time,
+					chain_id, converted_block, converted_time
+				FROM subnets FINAL
+				WHERE subnet_type = ?
+				ORDER BY created_block DESC
+				LIMIT ? OFFSET ?
+			`
+			args = []interface{}{subnetType, fetchLimit, offset}
+		} else {
+			query = `
+				SELECT subnet_id, subnet_type, created_block, created_time,
+					chain_id, converted_block, converted_time
+				FROM subnets FINAL
+				ORDER BY created_block DESC
+				LIMIT ? OFFSET ?
+			`
+			args = []interface{}{fetchLimit, offset}
+		}
 	}
 
 	rows, err := s.conn.Query(ctx, query, args...)
@@ -103,9 +131,28 @@ func (s *Server) handleListSubnets(w http.ResponseWriter, r *http.Request) {
 		subnets = append(subnets, sub)
 	}
 
+	subnets, hasMore := trimResults(subnets, limit)
+
+	meta := &Meta{Limit: limit, Offset: offset, HasMore: hasMore}
+	if hasMore && len(subnets) > 0 {
+		meta.NextCursor = cursorBlock(subnets[len(subnets)-1].CreatedBlock)
+	}
+
+	if wantCount {
+		countQuery := `SELECT count() FROM subnets FINAL`
+		var countArgs []interface{}
+		if subnetType != "" {
+			countQuery += ` WHERE subnet_type = ?`
+			countArgs = []interface{}{subnetType}
+		}
+		var total int64
+		_ = s.conn.QueryRow(ctx, countQuery, countArgs...).Scan(&total)
+		meta.Total = total
+	}
+
 	writeJSON(w, http.StatusOK, Response{
 		Data: subnets,
-		Meta: &Meta{Limit: limit, Offset: offset},
+		Meta: meta,
 	})
 }
 
@@ -203,27 +250,42 @@ func (s *Server) handleGetSubnet(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleListL1s(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	limit, offset := getPagination(r)
+	cursor := getCursor(r)
+	wantCount := getCountParam(r)
 
-	// Join subnets with registry for L1-specific endpoint
-	// Use subqueries for FINAL since ClickHouse doesn't support FINAL on joined tables
-	rows, err := s.conn.Query(ctx, `
-		SELECT
-			s.subnet_id,
-			s.created_block,
-			s.created_time,
-			s.chain_id,
-			s.converted_block,
-			s.converted_time,
-			r.name,
-			r.description,
-			r.logo_url,
-			r.website_url
-		FROM (SELECT * FROM subnets FINAL WHERE subnet_type = 'l1') s
-		LEFT JOIN (SELECT * FROM l1_registry FINAL) r ON s.subnet_id = r.subnet_id
-		ORDER BY s.converted_block DESC
-		LIMIT ? OFFSET ?
-	`, limit, offset)
+	fetchLimit := limit + 1
 
+	var query string
+	var args []interface{}
+
+	if cursor != nil {
+		query = `
+			SELECT
+				s.subnet_id, s.created_block, s.created_time,
+				s.chain_id, s.converted_block, s.converted_time,
+				r.name, r.description, r.logo_url, r.website_url
+			FROM (SELECT * FROM subnets FINAL WHERE subnet_type = 'l1') s
+			LEFT JOIN (SELECT * FROM l1_registry FINAL) r ON s.subnet_id = r.subnet_id
+			WHERE s.converted_block < ?
+			ORDER BY s.converted_block DESC
+			LIMIT ?
+		`
+		args = []interface{}{cursor.BlockNumber, fetchLimit}
+	} else {
+		query = `
+			SELECT
+				s.subnet_id, s.created_block, s.created_time,
+				s.chain_id, s.converted_block, s.converted_time,
+				r.name, r.description, r.logo_url, r.website_url
+			FROM (SELECT * FROM subnets FINAL WHERE subnet_type = 'l1') s
+			LEFT JOIN (SELECT * FROM l1_registry FINAL) r ON s.subnet_id = r.subnet_id
+			ORDER BY s.converted_block DESC
+			LIMIT ? OFFSET ?
+		`
+		args = []interface{}{fetchLimit, offset}
+	}
+
+	rows, err := s.conn.Query(ctx, query, args...)
 	if err != nil {
 		writeInternalError(w, err.Error())
 		return
@@ -270,9 +332,22 @@ func (s *Server) handleListL1s(w http.ResponseWriter, r *http.Request) {
 		l1s = append(l1s, l1)
 	}
 
+	l1s, hasMore := trimResults(l1s, limit)
+
+	meta := &Meta{Limit: limit, Offset: offset, HasMore: hasMore}
+	if hasMore && len(l1s) > 0 {
+		meta.NextCursor = fmt.Sprintf("%d", l1s[len(l1s)-1].ConvertedBlock)
+	}
+
+	if wantCount {
+		var total int64
+		_ = s.conn.QueryRow(ctx, `SELECT count() FROM subnets FINAL WHERE subnet_type = 'l1'`).Scan(&total)
+		meta.Total = total
+	}
+
 	writeJSON(w, http.StatusOK, Response{
 		Data: l1s,
-		Meta: &Meta{Limit: limit, Offset: offset},
+		Meta: meta,
 	})
 }
 
@@ -290,29 +365,54 @@ func (s *Server) handleListL1s(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	limit, offset := getPagination(r)
+	cursor := getCursor(r)
+	wantCount := getCountParam(r)
 
 	subnetID := r.URL.Query().Get("subnet_id")
+	fetchLimit := limit + 1
 
 	var query string
 	var args []interface{}
 
-	if subnetID != "" {
-		query = `
-			SELECT chain_id, subnet_id, chain_name, vm_id, created_block, created_time
-			FROM subnet_chains FINAL
-			WHERE subnet_id = ?
-			ORDER BY created_block DESC
-			LIMIT ? OFFSET ?
-		`
-		args = []interface{}{subnetID, limit, offset}
+	if cursor != nil {
+		if subnetID != "" {
+			query = `
+				SELECT chain_id, subnet_id, chain_name, vm_id, created_block, created_time
+				FROM subnet_chains FINAL
+				WHERE subnet_id = ? AND created_block < ?
+				ORDER BY created_block DESC
+				LIMIT ?
+			`
+			args = []interface{}{subnetID, cursor.BlockNumber, fetchLimit}
+		} else {
+			query = `
+				SELECT chain_id, subnet_id, chain_name, vm_id, created_block, created_time
+				FROM subnet_chains FINAL
+				WHERE created_block < ?
+				ORDER BY created_block DESC
+				LIMIT ?
+			`
+			args = []interface{}{cursor.BlockNumber, fetchLimit}
+		}
 	} else {
-		query = `
-			SELECT chain_id, subnet_id, chain_name, vm_id, created_block, created_time
-			FROM subnet_chains FINAL
-			ORDER BY created_block DESC
-			LIMIT ? OFFSET ?
-		`
-		args = []interface{}{limit, offset}
+		if subnetID != "" {
+			query = `
+				SELECT chain_id, subnet_id, chain_name, vm_id, created_block, created_time
+				FROM subnet_chains FINAL
+				WHERE subnet_id = ?
+				ORDER BY created_block DESC
+				LIMIT ? OFFSET ?
+			`
+			args = []interface{}{subnetID, fetchLimit, offset}
+		} else {
+			query = `
+				SELECT chain_id, subnet_id, chain_name, vm_id, created_block, created_time
+				FROM subnet_chains FINAL
+				ORDER BY created_block DESC
+				LIMIT ? OFFSET ?
+			`
+			args = []interface{}{fetchLimit, offset}
+		}
 	}
 
 	rows, err := s.conn.Query(ctx, query, args...)
@@ -335,8 +435,27 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 		chains = append(chains, chain)
 	}
 
+	chains, hasMore := trimResults(chains, limit)
+
+	meta := &Meta{Limit: limit, Offset: offset, HasMore: hasMore}
+	if hasMore && len(chains) > 0 {
+		meta.NextCursor = cursorBlock(chains[len(chains)-1].CreatedBlock)
+	}
+
+	if wantCount {
+		countQuery := `SELECT count() FROM subnet_chains FINAL`
+		var countArgs []interface{}
+		if subnetID != "" {
+			countQuery += ` WHERE subnet_id = ?`
+			countArgs = []interface{}{subnetID}
+		}
+		var total int64
+		_ = s.conn.QueryRow(ctx, countQuery, countArgs...).Scan(&total)
+		meta.Total = total
+	}
+
 	writeJSON(w, http.StatusOK, Response{
 		Data: chains,
-		Meta: &Meta{Limit: limit, Offset: offset},
+		Meta: meta,
 	})
 }

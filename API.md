@@ -16,13 +16,20 @@ Base URL: `http://localhost:8080`
 **Success:**
 ```json
 {
-  "data": { ... },
+  "data": [ ... ],
   "meta": {
     "limit": 20,
-    "offset": 0
+    "offset": 0,
+    "has_more": true,
+    "next_cursor": "54000000",
+    "total": 1234567
   }
 }
 ```
+
+- `has_more` — always present, indicates whether additional results exist beyond this page
+- `next_cursor` — present when `has_more` is true on cursor-eligible endpoints; pass as `?cursor=` for the next page
+- `total` — only present when `?count=true` is passed; the total number of matching records
 
 **Error:**
 ```json
@@ -42,7 +49,7 @@ Base URL: `http://localhost:8080`
 
 ## Rate Limiting
 
-All endpoints are rate limited to 100 requests/second per IP with a burst of 100.
+All endpoints are rate limited to 100 requests/second per IP (burst of 100) by default. Configurable via `--rate-limit` and `--burst` CLI flags.
 
 When rate limited, you'll receive:
 - HTTP 429 status
@@ -54,6 +61,18 @@ When rate limited, you'll receive:
 |-----------|------|---------|-------------|
 | `limit` | int | 20 | Number of results (max 100) |
 | `offset` | int | 0 | Pagination offset |
+| `cursor` | string | - | Cursor for keyset pagination (use `next_cursor` from previous response) |
+| `count` | string | - | Set to `true` to include total count in response |
+
+### Pagination
+
+All list endpoints support **offset-based** pagination (`?limit=20&offset=40`).
+
+Most endpoints also support **cursor-based** pagination, which is more efficient for deep pagination. When a response has `"has_more": true`, the `next_cursor` field contains the value to pass as `?cursor=` for the next page. When using cursor, offset is ignored.
+
+**Cursor-eligible endpoints:** blocks, transactions, address transactions, address internal transactions, P-Chain transactions, subnets, L1s, chains, validator deposits.
+
+**Offset-only endpoints** (sorted by non-monotonic fields): validators, fee metrics, token balances.
 
 ---
 
@@ -162,7 +181,8 @@ List recent blocks for a chain.
   ],
   "meta": {
     "limit": 20,
-    "offset": 0
+    "offset": 0,
+    "has_more": true
   }
 }
 ```
@@ -237,7 +257,8 @@ List recent transactions for a chain.
   ],
   "meta": {
     "limit": 20,
-    "offset": 0
+    "offset": 0,
+    "has_more": true
   }
 }
 ```
@@ -335,7 +356,8 @@ Get internal transactions (traces) for a specific address.
   ],
   "meta": {
     "limit": 20,
-    "offset": 0
+    "offset": 0,
+    "has_more": true
   }
 }
 ```
@@ -379,7 +401,8 @@ Get ERC-20 token balances for an address.
   ],
   "meta": {
     "limit": 20,
-    "offset": 0
+    "offset": 0,
+    "has_more": true
   }
 }
 ```
@@ -456,7 +479,8 @@ List P-Chain transactions.
   ],
   "meta": {
     "limit": 20,
-    "offset": 0
+    "offset": 0,
+    "has_more": true
   }
 }
 ```
@@ -531,7 +555,8 @@ List all subnets.
   ],
   "meta": {
     "limit": 20,
-    "offset": 0
+    "offset": 0,
+    "has_more": true
   }
 }
 ```
@@ -653,7 +678,8 @@ List L1 validators.
   ],
   "meta": {
     "limit": 20,
-    "offset": 0
+    "offset": 0,
+    "has_more": true
   }
 }
 ```
@@ -697,7 +723,8 @@ Get deposit history for a validator.
   ],
   "meta": {
     "limit": 20,
-    "offset": 0
+    "offset": 0,
+    "has_more": true
   }
 }
 ```
@@ -735,7 +762,8 @@ Get L1 validation fee statistics.
   ],
   "meta": {
     "limit": 20,
-    "offset": 0
+    "offset": 0,
+    "has_more": true
   }
 }
 ```
