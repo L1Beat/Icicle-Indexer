@@ -113,13 +113,10 @@ func (s *Server) handleListPChainTxs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if wantCount {
-		countQuery := fmt.Sprintf(`SELECT count() FROM p_chain_txs FINAL %s`, whereClause)
-		// For count query, use whereArgs without cursor filter for total count
-		countArgs := []interface{}{}
+		var countQuery string
+		var countArgs []interface{}
 		if cursor != nil {
-			// skip the cursor arg from whereArgs for count
-			countArgs = whereArgs[1:]
-			// rebuild whereClause without cursor
+			// Rebuild WHERE without cursor filter for total count
 			countParts := []string{}
 			if txType != "" {
 				countParts = append(countParts, "tx_type = ?")
@@ -135,7 +132,9 @@ func (s *Server) handleListPChainTxs(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			countQuery = fmt.Sprintf(`SELECT count() FROM p_chain_txs FINAL %s`, countWhere)
+			countArgs = whereArgs[1:] // skip cursor arg
 		} else {
+			countQuery = fmt.Sprintf(`SELECT count() FROM p_chain_txs FINAL %s`, whereClause)
 			countArgs = whereArgs
 		}
 		var total int64
