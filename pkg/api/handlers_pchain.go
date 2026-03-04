@@ -131,10 +131,10 @@ func (s *Server) handleListPChainTxs(w http.ResponseWriter, r *http.Request) {
 					countWhere += " AND " + p
 				}
 			}
-			countQuery = fmt.Sprintf(`SELECT count() FROM p_chain_txs FINAL %s`, countWhere)
+			countQuery = fmt.Sprintf(`SELECT toInt64(count()) FROM p_chain_txs FINAL %s`, countWhere)
 			countArgs = whereArgs[1:] // skip cursor arg
 		} else {
-			countQuery = fmt.Sprintf(`SELECT count() FROM p_chain_txs FINAL %s`, whereClause)
+			countQuery = fmt.Sprintf(`SELECT toInt64(count()) FROM p_chain_txs FINAL %s`, whereClause)
 			countArgs = whereArgs
 		}
 		var total int64

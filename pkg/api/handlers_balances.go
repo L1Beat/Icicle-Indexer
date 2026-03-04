@@ -131,7 +131,7 @@ func (s *Server) handleAddressBalances(w http.ResponseWriter, r *http.Request) {
 	if wantCount {
 		var total int64
 		_ = s.conn.QueryRow(ctx, `
-			SELECT count() FROM erc20_balances FINAL
+			SELECT toInt64(count()) FROM erc20_balances FINAL
 			WHERE chain_id = ? AND wallet = unhex(?) AND balance > toInt256(0)
 		`, chainID, address).Scan(&total)
 		meta.Total = total

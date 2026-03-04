@@ -139,7 +139,7 @@ func (s *Server) handleListSubnets(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if wantCount {
-		countQuery := `SELECT count() FROM subnets FINAL`
+		countQuery := `SELECT toInt64(count()) FROM subnets FINAL`
 		var countArgs []interface{}
 		if subnetType != "" {
 			countQuery += ` WHERE subnet_type = ?`
@@ -341,7 +341,7 @@ func (s *Server) handleListL1s(w http.ResponseWriter, r *http.Request) {
 
 	if wantCount {
 		var total int64
-		_ = s.conn.QueryRow(ctx, `SELECT count() FROM subnets FINAL WHERE subnet_type = 'l1'`).Scan(&total)
+		_ = s.conn.QueryRow(ctx, `SELECT toInt64(count()) FROM subnets FINAL WHERE subnet_type = 'l1'`).Scan(&total)
 		meta.Total = total
 	}
 
@@ -443,7 +443,7 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if wantCount {
-		countQuery := `SELECT count() FROM subnet_chains FINAL`
+		countQuery := `SELECT toInt64(count()) FROM subnet_chains FINAL`
 		var countArgs []interface{}
 		if subnetID != "" {
 			countQuery += ` WHERE subnet_id = ?`

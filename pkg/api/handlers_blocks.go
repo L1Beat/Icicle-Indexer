@@ -111,7 +111,7 @@ func (s *Server) handleListBlocks(w http.ResponseWriter, r *http.Request) {
 
 	if wantCount {
 		var total int64
-		_ = s.conn.QueryRow(ctx, `SELECT count() FROM raw_blocks WHERE chain_id = ?`, chainID).Scan(&total)
+		_ = s.conn.QueryRow(ctx, `SELECT toInt64(count()) FROM raw_blocks WHERE chain_id = ?`, chainID).Scan(&total)
 		meta.Total = total
 	}
 

@@ -127,7 +127,7 @@ func (s *Server) handleFeeMetrics(w http.ResponseWriter, r *http.Request) {
 
 	if wantCount && subnetID == "" {
 		var total int64
-		_ = s.conn.QueryRow(ctx, `SELECT count() FROM l1_fee_stats FINAL`).Scan(&total)
+		_ = s.conn.QueryRow(ctx, `SELECT toInt64(count()) FROM l1_fee_stats FINAL`).Scan(&total)
 		meta.Total = total
 	}
 

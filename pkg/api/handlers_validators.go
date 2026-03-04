@@ -111,7 +111,7 @@ func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 	meta := &Meta{Limit: limit, Offset: offset, HasMore: hasMore}
 
 	if wantCount {
-		countQuery := fmt.Sprintf(`SELECT count() FROM l1_validator_state FINAL %s`, whereClause)
+		countQuery := fmt.Sprintf(`SELECT toInt64(count()) FROM l1_validator_state FINAL %s`, whereClause)
 		var total int64
 		_ = s.conn.QueryRow(ctx, countQuery, whereArgs...).Scan(&total)
 		meta.Total = total
@@ -229,7 +229,7 @@ func (s *Server) handleValidatorDeposits(w http.ResponseWriter, r *http.Request)
 	if wantCount {
 		var total int64
 		_ = s.conn.QueryRow(ctx, `
-			SELECT count() FROM l1_validator_balance_txs FINAL
+			SELECT toInt64(count()) FROM l1_validator_balance_txs FINAL
 			WHERE validation_id = ? OR node_id = ?
 		`, id, id).Scan(&total)
 		meta.Total = total

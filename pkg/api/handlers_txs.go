@@ -168,7 +168,7 @@ func (s *Server) handleListTxs(w http.ResponseWriter, r *http.Request) {
 
 	if wantCount {
 		var total int64
-		_ = s.conn.QueryRow(ctx, `SELECT count() FROM raw_txs WHERE chain_id = ?`, chainID).Scan(&total)
+		_ = s.conn.QueryRow(ctx, `SELECT toInt64(count()) FROM raw_txs WHERE chain_id = ?`, chainID).Scan(&total)
 		meta.Total = total
 	}
 
@@ -547,9 +547,9 @@ func (s *Server) handleAddressTxs(w http.ResponseWriter, r *http.Request) {
 		var total int64
 		_ = s.conn.QueryRow(ctx, `
 			SELECT sum(cnt) FROM (
-				SELECT count() as cnt FROM raw_txs WHERE chain_id = ? AND from = unhex(?)
+				SELECT toInt64(count()) as cnt FROM raw_txs WHERE chain_id = ? AND from = unhex(?)
 				UNION ALL
-				SELECT count() as cnt FROM raw_txs WHERE chain_id = ? AND to = unhex(?) AND from != unhex(?)
+				SELECT toInt64(count()) as cnt FROM raw_txs WHERE chain_id = ? AND to = unhex(?) AND from != unhex(?)
 			)
 		`, chainID, addrHex, chainID, addrHex, addrHex).Scan(&total)
 		meta.Total = total
@@ -709,9 +709,9 @@ func (s *Server) handleAddressInternalTxs(w http.ResponseWriter, r *http.Request
 		var total int64
 		_ = s.conn.QueryRow(ctx, `
 			SELECT sum(cnt) FROM (
-				SELECT count() as cnt FROM raw_traces WHERE chain_id = ? AND from = unhex(?) AND (value > 0 OR call_type IN ('CREATE', 'CREATE2'))
+				SELECT toInt64(count()) as cnt FROM raw_traces WHERE chain_id = ? AND from = unhex(?) AND (value > 0 OR call_type IN ('CREATE', 'CREATE2'))
 				UNION ALL
-				SELECT count() as cnt FROM raw_traces WHERE chain_id = ? AND to = unhex(?) AND from != unhex(?) AND (value > 0 OR call_type IN ('CREATE', 'CREATE2'))
+				SELECT toInt64(count()) as cnt FROM raw_traces WHERE chain_id = ? AND to = unhex(?) AND from != unhex(?) AND (value > 0 OR call_type IN ('CREATE', 'CREATE2'))
 			)
 		`, chainID, addrHex, chainID, addrHex, addrHex).Scan(&total)
 		meta.Total = total
