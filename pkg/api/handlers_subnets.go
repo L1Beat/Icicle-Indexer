@@ -129,7 +129,7 @@ func (s *Server) handleListSubnets(w http.ResponseWriter, r *http.Request) {
 			writeInternalError(w, err.Error())
 			return
 		}
-		if !convertedTime.IsZero() {
+		if !convertedTime.IsZero() && convertedTime.Unix() > 0 {
 			sub.ConvertedTime = &convertedTime
 		}
 		subnets = append(subnets, sub)
