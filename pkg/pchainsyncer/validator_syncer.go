@@ -261,12 +261,12 @@ func (vs *ValidatorSyncer) discoverL1Subnets(ctx context.Context) ([]ids.ID, err
 	}
 }
 
-// discoverRegularSubnets discovers regular and elastic subnets from the subnets table
+// discoverRegularSubnets discovers legacy subnets from the subnets table
 func (vs *ValidatorSyncer) discoverRegularSubnets(ctx context.Context) ([]ids.ID, error) {
 	query := `
 		SELECT DISTINCT subnet_id
 		FROM subnets FINAL
-		WHERE p_chain_id = ? AND subnet_type IN ('regular', 'elastic')
+		WHERE p_chain_id = ? AND subnet_type = 'legacy'
 		ORDER BY created_time ASC
 	`
 

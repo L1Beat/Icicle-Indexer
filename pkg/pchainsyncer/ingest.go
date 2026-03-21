@@ -468,7 +468,7 @@ type Subnet struct {
 	SubnetID       ids.ID
 	CreatedBlock   uint64
 	CreatedTime    time.Time
-	SubnetType     string // 'regular', 'elastic', 'l1'
+	SubnetType     string // 'legacy', 'l1'
 	ChainID        ids.ID
 	ConvertedBlock uint64
 	ConvertedTime  time.Time
@@ -507,7 +507,7 @@ func DiscoverAllSubnets(ctx context.Context, conn clickhouse.Conn, pchainID uint
 				SubnetID:     subnetID,
 				CreatedBlock: blockNumber,
 				CreatedTime:  blockTime,
-				SubnetType:   "regular",
+				SubnetType:   "legacy",
 				PChainID:     pchainID,
 			}
 		}

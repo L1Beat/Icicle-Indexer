@@ -13,8 +13,8 @@ type Subnet struct {
 	CreatedBlock   uint64    `json:"created_block" example:"12345678"`
 	CreatedTime    time.Time `json:"created_time"`
 	ChainID        string    `json:"chain_id,omitempty" example:"2q9e4r6Mu..."`
-	ConvertedBlock uint64    `json:"converted_block,omitempty" example:"12345700"`
-	ConvertedTime  time.Time `json:"converted_time,omitempty"`
+	ConvertedBlock uint64     `json:"converted_block,omitempty" example:"12345700"`
+	ConvertedTime  *time.Time `json:"converted_time,omitempty"`
 }
 
 // SubnetChain represents a blockchain within a subnet
@@ -48,7 +48,7 @@ type SubnetDetail struct {
 // @Description Get a paginated list of subnets with optional type filtering
 // @Tags Data - Subnets
 // @Produce json
-// @Param type query string false "Filter by subnet type (regular, elastic, l1)"
+// @Param type query string false "Filter by subnet type (legacy, l1)"
 // @Param limit query int false "Number of results (max 100)" default(20)
 // @Param offset query int false "Pagination offset" default(0)
 // @Success 200 {object} Response{data=[]Subnet,meta=Meta}
@@ -121,12 +121,16 @@ func (s *Server) handleListSubnets(w http.ResponseWriter, r *http.Request) {
 	subnets := []Subnet{}
 	for rows.Next() {
 		var sub Subnet
+		var convertedTime time.Time
 		if err := rows.Scan(
 			&sub.SubnetID, &sub.SubnetType, &sub.CreatedBlock, &sub.CreatedTime,
-			&sub.ChainID, &sub.ConvertedBlock, &sub.ConvertedTime,
+			&sub.ChainID, &sub.ConvertedBlock, &convertedTime,
 		); err != nil {
 			writeInternalError(w, err.Error())
 			return
+		}
+		if !convertedTime.IsZero() {
+			sub.ConvertedTime = &convertedTime
 		}
 		subnets = append(subnets, sub)
 	}
@@ -171,6 +175,7 @@ func (s *Server) handleGetSubnet(w http.ResponseWriter, r *http.Request) {
 
 	// Get subnet info
 	var sub Subnet
+	var convertedTime time.Time
 	err := s.conn.QueryRow(ctx, `
 		SELECT subnet_id, subnet_type, created_block, created_time,
 			chain_id, converted_block, converted_time
@@ -179,8 +184,11 @@ func (s *Server) handleGetSubnet(w http.ResponseWriter, r *http.Request) {
 		LIMIT 1
 	`, subnetID).Scan(
 		&sub.SubnetID, &sub.SubnetType, &sub.CreatedBlock, &sub.CreatedTime,
-		&sub.ChainID, &sub.ConvertedBlock, &sub.ConvertedTime,
+		&sub.ChainID, &sub.ConvertedBlock, &convertedTime,
 	)
+	if !convertedTime.IsZero() {
+		sub.ConvertedTime = &convertedTime
+	}
 
 	if err != nil {
 		writeNotFoundError(w, "Subnet")
@@ -297,8 +305,8 @@ func (s *Server) handleListL1s(w http.ResponseWriter, r *http.Request) {
 		CreatedBlock   uint64    `json:"created_block"`
 		CreatedTime    time.Time `json:"created_time"`
 		ChainID        string    `json:"chain_id"`
-		ConvertedBlock uint64    `json:"converted_block"`
-		ConvertedTime  time.Time `json:"converted_time"`
+		ConvertedBlock uint64     `json:"converted_block"`
+		ConvertedTime  *time.Time `json:"converted_time,omitempty"`
 		Name           string    `json:"name,omitempty"`
 		Description    string    `json:"description,omitempty"`
 		LogoURL        string    `json:"logo_url,omitempty"`
@@ -309,13 +317,17 @@ func (s *Server) handleListL1s(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var l1 L1Info
 		var name, description, logoURL, websiteURL *string
+		var convertedTime time.Time
 		if err := rows.Scan(
 			&l1.SubnetID, &l1.CreatedBlock, &l1.CreatedTime,
-			&l1.ChainID, &l1.ConvertedBlock, &l1.ConvertedTime,
+			&l1.ChainID, &l1.ConvertedBlock, &convertedTime,
 			&name, &description, &logoURL, &websiteURL,
 		); err != nil {
 			writeInternalError(w, err.Error())
 			return
+		}
+		if !convertedTime.IsZero() {
+			l1.ConvertedTime = &convertedTime
 		}
 		if name != nil {
 			l1.Name = *name
