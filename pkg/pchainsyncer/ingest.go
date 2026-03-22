@@ -331,7 +331,7 @@ func MarkInactiveValidators(ctx context.Context, conn clickhouse.Conn, pchainID 
 			subnetID,
 			v.ValidationID,
 			v.NodeID,
-			v.Balance,
+			uint64(0), // balance is 0 when deactivated (remaining gets refunded)
 			v.Weight,
 			v.StartTime,
 			v.EndTime,
@@ -1928,6 +1928,37 @@ func SyncL1ValidatorRefunds(ctx context.Context, conn clickhouse.Conn, fetcher *
 			return fmt.Errorf("failed to send refunds batch: %w", err)
 		}
 		slog.Info("Synced validator refunds", "count", insertCount)
+
+		// Also insert refunds into l1_validator_balance_txs so they appear in balance history
+		var balanceTxs []L1ValidatorBalanceTx
+		for _, r := range refunds {
+			if r.SubnetID == "" || r.RefundAmount == 0 {
+				continue
+			}
+			// Look up node_id for this validator
+			var nodeID string
+			_ = conn.QueryRow(ctx, `
+				SELECT node_id FROM l1_validator_state FINAL
+				WHERE validation_id = ? AND p_chain_id = ?
+			`, r.ValidationID, pchainID).Scan(&nodeID)
+
+			balanceTxs = append(balanceTxs, L1ValidatorBalanceTx{
+				ValidationID: r.ValidationID,
+				TxID:         r.TxID,
+				TxType:       "DisableL1Validator",
+				BlockNumber:  r.BlockNumber,
+				BlockTime:    r.BlockTime,
+				Amount:       r.RefundAmount,
+				SubnetID:     r.SubnetID,
+				NodeID:       nodeID,
+				PChainID:     r.PChainID,
+			})
+		}
+		if len(balanceTxs) > 0 {
+			if err := InsertL1ValidatorBalanceTxs(ctx, conn, balanceTxs); err != nil {
+				slog.Warn("Failed to insert refund balance txs", "error", err)
+			}
+		}
 	}
 
 	return nil
