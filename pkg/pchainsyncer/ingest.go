@@ -1276,59 +1276,14 @@ func DiscoverL1ValidatorHistory(ctx context.Context, conn clickhouse.Conn, pchai
 		}
 
 		// Parse the Warp message to extract validator info
-		// Remove 0x prefix if present
-		messageHex = strings.TrimPrefix(messageHex, "0x")
-		messageBytes, err := hex.DecodeString(messageHex)
+		innerPayload, err := parseWarpPayload(messageHex)
 		if err != nil {
-			slog.Warn("Failed to decode message hex", "tx_id", txID, "error", err)
-			continue
-		}
-
-		// The message contains an unsigned warp message followed by BLS proof of possession.
-		// We need to manually extract just the warp message portion.
-		// Unsigned warp message format:
-		// - 2 bytes: codec version (0x0000)
-		// - 4 bytes: network ID
-		// - 32 bytes: source chain ID
-		// - 4 bytes: payload length
-		// - N bytes: payload
-		if len(messageBytes) < 42 { // 2 + 4 + 32 + 4 minimum
-			slog.Warn("Message too short", "tx_id", txID, "bytes", len(messageBytes))
-			continue
-		}
-
-		// Skip codec version (2 bytes), network ID (4 bytes), source chain ID (32 bytes)
-		payloadLenOffset := 2 + 4 + 32
-		if len(messageBytes) < payloadLenOffset+4 {
-			slog.Warn("Message too short for payload length", "tx_id", txID)
-			continue
-		}
-
-		// Read payload length (big endian uint32)
-		payloadLen := uint32(messageBytes[payloadLenOffset])<<24 |
-			uint32(messageBytes[payloadLenOffset+1])<<16 |
-			uint32(messageBytes[payloadLenOffset+2])<<8 |
-			uint32(messageBytes[payloadLenOffset+3])
-
-		payloadStart := payloadLenOffset + 4
-		payloadEnd := payloadStart + int(payloadLen)
-
-		if payloadEnd > len(messageBytes) {
-			slog.Warn("Payload extends beyond message", "tx_id", txID, "need", payloadEnd, "have", len(messageBytes))
-			continue
-		}
-
-		warpPayload := messageBytes[payloadStart:payloadEnd]
-
-		// The warp payload is an AddressedCall which wraps the actual message
-		addressedCall, err := payload.ParseAddressedCall(warpPayload)
-		if err != nil {
-			slog.Warn("Failed to parse AddressedCall", "tx_id", txID, "error", err)
+			slog.Warn("Failed to parse Warp message", "tx_id", txID, "error", err)
 			continue
 		}
 
 		// Parse the inner payload as RegisterL1Validator message
-		regMsg, err := message.ParseRegisterL1Validator(addressedCall.Payload)
+		regMsg, err := message.ParseRegisterL1Validator(innerPayload)
 		if err != nil {
 			slog.Warn("Failed to parse RegisterL1Validator payload", "tx_id", txID, "error", err)
 			continue
@@ -1778,9 +1733,53 @@ func UpdatePerValidatorFeeStats(ctx context.Context, conn clickhouse.Conn, pchai
 	return nil
 }
 
+// parseWarpPayload extracts the inner payload from a Warp message hex string.
+// It trims the 0x prefix, hex decodes, skips the 42-byte unsigned warp header,
+// reads the payload length, parses the AddressedCall, and returns the inner Payload bytes.
+func parseWarpPayload(messageHex string) ([]byte, error) {
+	messageHex = strings.TrimPrefix(messageHex, "0x")
+	messageBytes, err := hex.DecodeString(messageHex)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode hex: %w", err)
+	}
+
+	if len(messageBytes) < 42 { // 2 + 4 + 32 + 4 minimum
+		return nil, fmt.Errorf("message too short: %d bytes", len(messageBytes))
+	}
+
+	// Skip codec version (2 bytes), network ID (4 bytes), source chain ID (32 bytes)
+	payloadLenOffset := 2 + 4 + 32
+	if len(messageBytes) < payloadLenOffset+4 {
+		return nil, fmt.Errorf("message too short for payload length")
+	}
+
+	// Read payload length (big endian uint32)
+	payloadLen := uint32(messageBytes[payloadLenOffset])<<24 |
+		uint32(messageBytes[payloadLenOffset+1])<<16 |
+		uint32(messageBytes[payloadLenOffset+2])<<8 |
+		uint32(messageBytes[payloadLenOffset+3])
+
+	payloadStart := payloadLenOffset + 4
+	payloadEnd := payloadStart + int(payloadLen)
+
+	if payloadEnd > len(messageBytes) {
+		return nil, fmt.Errorf("payload extends beyond message: need %d, have %d", payloadEnd, len(messageBytes))
+	}
+
+	warpPayload := messageBytes[payloadStart:payloadEnd]
+
+	addressedCall, err := payload.ParseAddressedCall(warpPayload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse AddressedCall: %w", err)
+	}
+
+	return addressedCall.Payload, nil
+}
+
 // L1ValidatorRefund represents a refund when a validator exits
 type L1ValidatorRefund struct {
 	TxID          string
+	TxType        string
 	ValidationID  string
 	SubnetID      string
 	RefundAmount  uint64
@@ -1790,10 +1789,11 @@ type L1ValidatorRefund struct {
 	PChainID      uint32
 }
 
-// SyncL1ValidatorRefunds syncs refund transactions from DisableL1Validator txs
-// It fetches the actual refund amount from UTXOs via RPC
+// SyncL1ValidatorRefunds syncs refund transactions from DisableL1Validator and SetL1ValidatorWeight (weight=0) txs
+// It calculates the refund amount based on deposits minus fees
 func SyncL1ValidatorRefunds(ctx context.Context, conn clickhouse.Conn, fetcher *pchainrpc.Fetcher, pchainID uint32) error {
-	// Check last synced block
+	// Use last synced block as a fast filter to avoid rescanning all historical txs.
+	// The NOT IN subquery ensures correctness for any missed txs at the boundary.
 	var lastSyncedBlock uint64
 	err := conn.QueryRow(ctx, `
 		SELECT COALESCE(max(block_number), 0) FROM l1_validator_refunds WHERE p_chain_id = ?
@@ -1803,34 +1803,73 @@ func SyncL1ValidatorRefunds(ctx context.Context, conn clickhouse.Conn, fetcher *
 		lastSyncedBlock = 0
 	}
 
-	// Query DisableL1Validator transactions
+	// Query both DisableL1Validator and SetL1ValidatorWeight transactions that haven't been processed yet
 	query := `
 		SELECT
 			tx_id,
-			toString(tx_data.validationID) as validation_id,
+			tx_type,
+			CASE WHEN tx_type = 'DisableL1Validator' THEN toString(tx_data.validationID) ELSE '' END as validation_id,
+			CASE WHEN tx_type = 'SetL1ValidatorWeight' THEN toString(tx_data.message) ELSE '' END as message,
 			block_number,
 			block_time
 		FROM p_chain_txs
 		WHERE p_chain_id = ?
-		  AND tx_type = 'DisableL1Validator'
-		  AND block_number > ?
+		  AND tx_type IN ('DisableL1Validator', 'SetL1ValidatorWeight')
+		  AND block_number >= ?
+		  AND tx_id NOT IN (SELECT tx_id FROM l1_validator_refunds WHERE p_chain_id = ?)
 		ORDER BY block_number ASC
 	`
 
-	rows, err := conn.Query(ctx, query, pchainID, lastSyncedBlock)
+	rows, err := conn.Query(ctx, query, pchainID, lastSyncedBlock, pchainID)
 	if err != nil {
-		return fmt.Errorf("failed to query DisableL1Validator txs: %w", err)
+		return fmt.Errorf("failed to query refund txs: %w", err)
 	}
 	defer rows.Close()
 
 	var refunds []L1ValidatorRefund
 	for rows.Next() {
-		var r L1ValidatorRefund
-		if err := rows.Scan(&r.TxID, &r.ValidationID, &r.BlockNumber, &r.BlockTime); err != nil {
+		var txID, txType, validationID, messageHex string
+		var blockNumber uint64
+		var blockTime time.Time
+		if err := rows.Scan(&txID, &txType, &validationID, &messageHex, &blockNumber, &blockTime); err != nil {
 			slog.Warn("Failed to scan refund tx", "error", err)
 			continue
 		}
-		r.PChainID = pchainID
+
+		r := L1ValidatorRefund{
+			TxID:        txID,
+			BlockNumber: blockNumber,
+			BlockTime:   blockTime,
+			PChainID:    pchainID,
+		}
+
+		switch txType {
+		case "DisableL1Validator":
+			r.ValidationID = validationID
+			r.TxType = txType
+		case "SetL1ValidatorWeight":
+			// Parse Warp message to get L1ValidatorWeight
+			innerPayload, err := parseWarpPayload(messageHex)
+			if err != nil {
+				slog.Warn("Failed to parse Warp message for SetL1ValidatorWeight", "tx_id", txID, "error", err)
+				continue
+			}
+			weightMsg, err := message.ParseL1ValidatorWeight(innerPayload)
+			if err != nil {
+				slog.Warn("Failed to parse L1ValidatorWeight payload", "tx_id", txID, "error", err)
+				continue
+			}
+			// Only weight=0 means validator removal/refund
+			if weightMsg.Weight > 0 {
+				continue
+			}
+			r.ValidationID = weightMsg.ValidationID.String()
+			r.TxType = txType
+		}
+
+		if r.ValidationID == "" {
+			continue
+		}
 		refunds = append(refunds, r)
 	}
 
@@ -1945,7 +1984,7 @@ func SyncL1ValidatorRefunds(ctx context.Context, conn clickhouse.Conn, fetcher *
 			balanceTxs = append(balanceTxs, L1ValidatorBalanceTx{
 				ValidationID: r.ValidationID,
 				TxID:         r.TxID,
-				TxType:       "DisableL1Validator",
+				TxType:       r.TxType,
 				BlockNumber:  r.BlockNumber,
 				BlockTime:    r.BlockTime,
 				Amount:       r.RefundAmount,
@@ -1975,15 +2014,14 @@ func calculateRefundFromDeposits(ctx context.Context, conn clickhouse.Conn, vali
 	var startTime time.Time
 	var previousDisableTime time.Time
 
-	// Check if there was a previous disable for this validator (before current disableTime)
-	// Query p_chain_txs directly since l1_validator_refunds may not have been populated yet
+	// Check if there was a previous removal for this validator (before current disableTime)
+	// Query l1_validator_refunds which covers both DisableL1Validator and SetL1ValidatorWeight removals
 	err := conn.QueryRow(ctx, `
 		SELECT MAX(block_time)
-		FROM p_chain_txs FINAL
-		WHERE tx_type = 'DisableL1Validator'
-		  AND p_chain_id = ?
+		FROM l1_validator_refunds FINAL
+		WHERE p_chain_id = ?
 		  AND block_time < ?
-		  AND toString(tx_data.validationID) = ?
+		  AND validation_id = ?
 	`, pchainID, disableTime, validationID).Scan(&previousDisableTime)
 
 	// ClickHouse returns epoch time (1970-01-01) when MAX() finds no rows

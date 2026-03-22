@@ -204,7 +204,7 @@ func (vs *ValidatorSyncer) syncOnce(ctx context.Context) error {
 		slog.Warn("Failed to sync L1 validator balance transactions", "error", err)
 	}
 
-	// Step 9: Sync validator refunds (from DisableL1Validator transactions)
+	// Step 9: Sync validator refunds (from DisableL1Validator and SetL1ValidatorWeight transactions)
 	if err := SyncL1ValidatorRefunds(ctx, vs.conn, vs.fetcher, vs.config.PChainID); err != nil {
 		slog.Warn("Failed to sync L1 validator refunds", "error", err)
 	}
