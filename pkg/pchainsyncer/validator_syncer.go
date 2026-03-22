@@ -132,6 +132,10 @@ func (vs *ValidatorSyncer) syncOnce(ctx context.Context) error {
 		} else {
 			slog.Info("Discovered historical L1 validators from transactions", "count", len(historicalValidators))
 		}
+		// Also backfill l1_validator_state so the API has all validators in one table
+		if err := BackfillValidatorStateFromHistory(ctx, vs.conn, vs.config.PChainID, historicalValidators); err != nil {
+			slog.Warn("Failed to backfill validator state from history", "error", err)
+		}
 	}
 
 	// Step 3: Sync Primary Network validators

@@ -21,8 +21,6 @@ type Validator struct {
 	TotalTopups      uint64    `json:"total_topups" example:"50000000000"`
 	RefundAmount     uint64    `json:"refund_amount" example:"0"`
 	FeesPaid         uint64    `json:"fees_paid" example:"5000000000"`
-	CreatedTxType    string    `json:"created_tx_type,omitempty" example:"RegisterL1Validator"`
-	CreatedTime      time.Time `json:"created_time,omitempty"`
 }
 
 // ValidatorDeposit represents a balance transaction for a validator
@@ -56,15 +54,15 @@ func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 
 	fetchLimit := limit + 1
 
-	// Build WHERE clause (using h. prefix for history table, s. for state table)
+	// Build WHERE clause
 	whereParts := []string{}
 	whereArgs := []interface{}{}
 	if subnetID != "" {
-		whereParts = append(whereParts, "h.subnet_id = ?")
+		whereParts = append(whereParts, "subnet_id = ?")
 		whereArgs = append(whereArgs, subnetID)
 	}
 	if activeOnly {
-		whereParts = append(whereParts, "s.active = true")
+		whereParts = append(whereParts, "active = true")
 	}
 
 	whereClause := ""
@@ -75,28 +73,12 @@ func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Merge l1_validator_state (live RPC data) with l1_validator_history (tx-discovered validators)
-	// so validators that were never seen by the RPC syncer are still returned.
 	query := fmt.Sprintf(`
 		SELECT
-			h.subnet_id,
-			COALESCE(NULLIF(s.validation_id, ''), h.validation_id) AS validation_id,
-			h.node_id,
-			COALESCE(s.balance, 0) AS balance,
-			IF(s.weight > 0, s.weight, h.initial_weight) AS weight,
-			COALESCE(s.start_time, h.created_time) AS start_time,
-			COALESCE(s.end_time, toDateTime64(0, 3, 'UTC')) AS end_time,
-			COALESCE(s.uptime_percentage, 0) AS uptime_percentage,
-			COALESCE(s.active, false) AS active,
-			IF(s.initial_deposit > 0, s.initial_deposit, h.initial_balance) AS initial_deposit,
-			COALESCE(s.total_topups, 0) AS total_topups,
-			COALESCE(s.refund_amount, 0) AS refund_amount,
-			COALESCE(s.fees_paid, 0) AS fees_paid,
-			h.created_tx_type,
-			h.created_time
-		FROM (SELECT * FROM l1_validator_history FINAL) h
-		LEFT JOIN (SELECT * FROM l1_validator_state FINAL) s
-			ON h.subnet_id = s.subnet_id AND h.node_id = s.node_id
+			subnet_id, validation_id, node_id, balance, weight,
+			start_time, end_time, uptime_percentage, active,
+			initial_deposit, total_topups, refund_amount, fees_paid
+		FROM l1_validator_state FINAL
 		%s
 		ORDER BY weight DESC
 		LIMIT ? OFFSET ?
@@ -117,7 +99,6 @@ func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 			&v.SubnetID, &v.ValidationID, &v.NodeID, &v.Balance, &v.Weight,
 			&v.StartTime, &v.EndTime, &v.UptimePercentage, &v.Active,
 			&v.InitialDeposit, &v.TotalTopups, &v.RefundAmount, &v.FeesPaid,
-			&v.CreatedTxType, &v.CreatedTime,
 		); err != nil {
 			writeInternalError(w, err.Error())
 			return
@@ -130,14 +111,7 @@ func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 	meta := &Meta{Limit: limit, Offset: offset, HasMore: hasMore}
 
 	if wantCount {
-		// Count query uses the same join to respect active filter
-		countQuery := fmt.Sprintf(`
-			SELECT toInt64(count())
-			FROM (SELECT * FROM l1_validator_history FINAL) h
-			LEFT JOIN (SELECT * FROM l1_validator_state FINAL) s
-				ON h.subnet_id = s.subnet_id AND h.node_id = s.node_id
-			%s
-		`, whereClause)
+		countQuery := fmt.Sprintf(`SELECT toInt64(count()) FROM l1_validator_state FINAL %s`, whereClause)
 		var total int64
 		_ = s.conn.QueryRow(ctx, countQuery, whereArgs...).Scan(&total)
 		meta.Total = total
@@ -165,31 +139,16 @@ func (s *Server) handleGetValidator(w http.ResponseWriter, r *http.Request) {
 	var v Validator
 	err := s.conn.QueryRow(ctx, `
 		SELECT
-			h.subnet_id,
-			COALESCE(NULLIF(s.validation_id, ''), h.validation_id) AS validation_id,
-			h.node_id,
-			COALESCE(s.balance, 0) AS balance,
-			IF(s.weight > 0, s.weight, h.initial_weight) AS weight,
-			COALESCE(s.start_time, h.created_time) AS start_time,
-			COALESCE(s.end_time, toDateTime64(0, 3, 'UTC')) AS end_time,
-			COALESCE(s.uptime_percentage, 0) AS uptime_percentage,
-			COALESCE(s.active, false) AS active,
-			IF(s.initial_deposit > 0, s.initial_deposit, h.initial_balance) AS initial_deposit,
-			COALESCE(s.total_topups, 0) AS total_topups,
-			COALESCE(s.refund_amount, 0) AS refund_amount,
-			COALESCE(s.fees_paid, 0) AS fees_paid,
-			h.created_tx_type,
-			h.created_time
-		FROM (SELECT * FROM l1_validator_history FINAL) h
-		LEFT JOIN (SELECT * FROM l1_validator_state FINAL) s
-			ON h.subnet_id = s.subnet_id AND h.node_id = s.node_id
-		WHERE h.validation_id = ? OR h.node_id = ?
+			subnet_id, validation_id, node_id, balance, weight,
+			start_time, end_time, uptime_percentage, active,
+			initial_deposit, total_topups, refund_amount, fees_paid
+		FROM l1_validator_state FINAL
+		WHERE validation_id = ? OR node_id = ?
 		LIMIT 1
 	`, id, id).Scan(
 		&v.SubnetID, &v.ValidationID, &v.NodeID, &v.Balance, &v.Weight,
 		&v.StartTime, &v.EndTime, &v.UptimePercentage, &v.Active,
 		&v.InitialDeposit, &v.TotalTopups, &v.RefundAmount, &v.FeesPaid,
-		&v.CreatedTxType, &v.CreatedTime,
 	)
 
 	if err != nil {

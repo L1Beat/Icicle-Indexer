@@ -15,9 +15,9 @@ func TestHandleListValidators_Success(t *testing.T) {
 	mock := &MockConn{
 		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
 			return NewMockRows(
-				[]string{"subnet_id", "validation_id", "node_id", "balance", "weight", "start_time", "end_time", "uptime_percentage", "active", "initial_deposit", "total_topups", "refund_amount", "fees_paid", "created_tx_type", "created_time"},
+				[]string{"subnet_id", "validation_id", "node_id", "balance", "weight", "start_time", "end_time", "uptime_percentage", "active", "initial_deposit", "total_topups", "refund_amount", "fees_paid"},
 				[][]interface{}{
-					{"2XDnKyAEr123", "2ZW6HUePB456", "NodeID-P7oB2McjBGgW", uint64(100000000000), uint64(2000), time.Now(), time.Now().Add(24 * time.Hour), float64(99.5), true, uint64(100000000000), uint64(50000000000), uint64(0), uint64(5000000000), "RegisterL1Validator", time.Now()},
+					{"2XDnKyAEr123", "2ZW6HUePB456", "NodeID-P7oB2McjBGgW", uint64(100000000000), uint64(2000), time.Now(), time.Now().Add(24 * time.Hour), float64(99.5), true, uint64(100000000000), uint64(50000000000), uint64(0), uint64(5000000000)},
 				},
 			), nil
 		},
@@ -37,9 +37,9 @@ func TestHandleListValidators_Success(t *testing.T) {
 func TestHandleListValidators_FilterBySubnetID(t *testing.T) {
 	mock := &MockConn{
 		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
-			require.Contains(t, query, "h.subnet_id = ?")
+			require.Contains(t, query, "subnet_id = ?")
 			assert.Equal(t, "subnet123", args[0])
-			return NewMockRows([]string{"subnet_id", "validation_id", "node_id", "balance", "weight", "start_time", "end_time", "uptime_percentage", "active", "initial_deposit", "total_topups", "refund_amount", "fees_paid", "created_tx_type", "created_time"}, [][]interface{}{}), nil
+			return NewMockRows([]string{"subnet_id", "validation_id", "node_id", "balance", "weight", "start_time", "end_time", "uptime_percentage", "active", "initial_deposit", "total_topups", "refund_amount", "fees_paid"}, [][]interface{}{}), nil
 		},
 	}
 
@@ -52,8 +52,8 @@ func TestHandleListValidators_FilterBySubnetID(t *testing.T) {
 func TestHandleListValidators_FilterByActive(t *testing.T) {
 	mock := &MockConn{
 		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
-			require.Contains(t, query, "s.active = true")
-			return NewMockRows([]string{"subnet_id", "validation_id", "node_id", "balance", "weight", "start_time", "end_time", "uptime_percentage", "active", "initial_deposit", "total_topups", "refund_amount", "fees_paid", "created_tx_type", "created_time"}, [][]interface{}{}), nil
+			require.Contains(t, query, "active = true")
+			return NewMockRows([]string{"subnet_id", "validation_id", "node_id", "balance", "weight", "start_time", "end_time", "uptime_percentage", "active", "initial_deposit", "total_topups", "refund_amount", "fees_paid"}, [][]interface{}{}), nil
 		},
 	}
 
@@ -66,9 +66,9 @@ func TestHandleListValidators_FilterByActive(t *testing.T) {
 func TestHandleListValidators_FilterBoth(t *testing.T) {
 	mock := &MockConn{
 		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
-			require.Contains(t, query, "h.subnet_id = ?")
-			require.Contains(t, query, "s.active = true")
-			return NewMockRows([]string{"subnet_id", "validation_id", "node_id", "balance", "weight", "start_time", "end_time", "uptime_percentage", "active", "initial_deposit", "total_topups", "refund_amount", "fees_paid", "created_tx_type", "created_time"}, [][]interface{}{}), nil
+			require.Contains(t, query, "subnet_id = ?")
+			require.Contains(t, query, "active = true")
+			return NewMockRows([]string{"subnet_id", "validation_id", "node_id", "balance", "weight", "start_time", "end_time", "uptime_percentage", "active", "initial_deposit", "total_topups", "refund_amount", "fees_paid"}, [][]interface{}{}), nil
 		},
 	}
 
@@ -97,7 +97,7 @@ func TestHandleListValidators_Pagination(t *testing.T) {
 			// Last two args should be fetchLimit and offset
 			assert.Equal(t, 31, args[len(args)-2]) // fetchLimit = limit+1
 			assert.Equal(t, 60, args[len(args)-1])
-			return NewMockRows([]string{"subnet_id", "validation_id", "node_id", "balance", "weight", "start_time", "end_time", "uptime_percentage", "active", "initial_deposit", "total_topups", "refund_amount", "fees_paid", "created_tx_type", "created_time"}, [][]interface{}{}), nil
+			return NewMockRows([]string{"subnet_id", "validation_id", "node_id", "balance", "weight", "start_time", "end_time", "uptime_percentage", "active", "initial_deposit", "total_topups", "refund_amount", "fees_paid"}, [][]interface{}{}), nil
 		},
 	}
 
@@ -128,8 +128,6 @@ func TestHandleGetValidator_Success(t *testing.T) {
 					*dest[10].(*uint64) = 50000000000
 					*dest[11].(*uint64) = 0
 					*dest[12].(*uint64) = 5000000000
-					*dest[13].(*string) = "RegisterL1Validator"
-					*dest[14].(*time.Time) = time.Now()
 					return nil
 				},
 			}
@@ -160,7 +158,7 @@ func TestHandleGetValidator_CanSearchByNodeID(t *testing.T) {
 	mock := &MockConn{
 		QueryRowFunc: func(ctx context.Context, query string, args ...interface{}) driver.Row {
 			// Verify both validation_id and node_id are passed
-			require.Contains(t, query, "h.validation_id = ? OR h.node_id = ?")
+			require.Contains(t, query, "validation_id = ? OR node_id = ?")
 			assert.Equal(t, "NodeID-P7oB2McjBGgW", args[0])
 			assert.Equal(t, "NodeID-P7oB2McjBGgW", args[1])
 			return &MockRow{
@@ -178,8 +176,6 @@ func TestHandleGetValidator_CanSearchByNodeID(t *testing.T) {
 					*dest[10].(*uint64) = 50000000000
 					*dest[11].(*uint64) = 0
 					*dest[12].(*uint64) = 5000000000
-					*dest[13].(*string) = "RegisterL1Validator"
-					*dest[14].(*time.Time) = time.Now()
 					return nil
 				},
 			}

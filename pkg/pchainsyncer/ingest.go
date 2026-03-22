@@ -1431,6 +1431,81 @@ func InsertL1ValidatorHistory(ctx context.Context, conn clickhouse.Conn, validat
 	return chwrapper.RetryableBatchSend(batch)
 }
 
+// BackfillValidatorStateFromHistory inserts history-discovered validators into l1_validator_state
+// so the API can query a single table. Only inserts validators not already present in state.
+func BackfillValidatorStateFromHistory(ctx context.Context, conn clickhouse.Conn, pchainID uint32, validators []L1ValidatorHistory) error {
+	if len(validators) == 0 {
+		return nil
+	}
+
+	// Get existing validators in state to avoid overwriting RPC-synced data
+	existing := make(map[string]bool)
+	rows, err := conn.Query(ctx, `
+		SELECT DISTINCT node_id FROM l1_validator_state FINAL WHERE p_chain_id = ?
+	`, pchainID)
+	if err != nil {
+		return fmt.Errorf("failed to query existing validators: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var nodeID string
+		if err := rows.Scan(&nodeID); err != nil {
+			return fmt.Errorf("failed to scan node_id: %w", err)
+		}
+		existing[nodeID] = true
+	}
+
+	// Filter to only new validators
+	var toInsert []L1ValidatorHistory
+	for _, v := range validators {
+		if !existing[v.NodeID] {
+			toInsert = append(toInsert, v)
+		}
+	}
+
+	if len(toInsert) == 0 {
+		return nil
+	}
+
+	batch, err := conn.PrepareBatch(ctx, `INSERT INTO l1_validator_state (
+		subnet_id, validation_id, node_id, balance, weight,
+		start_time, end_time, uptime_percentage, active, last_updated, p_chain_id,
+		initial_deposit
+	)`)
+	if err != nil {
+		return fmt.Errorf("failed to prepare batch: %w", err)
+	}
+
+	now := time.Now()
+	zeroTime := time.Unix(0, 0).UTC()
+	for _, v := range toInsert {
+		err = batch.Append(
+			v.SubnetID,
+			v.ValidationID,
+			v.NodeID,
+			uint64(0),         // balance (unknown, will be updated by RPC sync if active)
+			v.InitialWeight,   // weight from creation tx
+			v.CreatedTime,     // start_time = creation time
+			zeroTime,          // end_time unknown
+			float64(0),        // uptime unknown
+			false,             // inactive until confirmed by RPC
+			now,
+			pchainID,
+			v.InitialBalance, // initial_deposit from creation tx
+		)
+		if err != nil {
+			return fmt.Errorf("failed to append validator %s: %w", v.NodeID, err)
+		}
+	}
+
+	if err := chwrapper.RetryableBatchSend(batch); err != nil {
+		return fmt.Errorf("failed to send batch: %w", err)
+	}
+
+	slog.Info("Backfilled validator state from history", "count", len(toInsert))
+	return nil
+}
+
 // L1ValidatorBalanceTx represents a balance-affecting transaction for a validator
 type L1ValidatorBalanceTx struct {
 	ValidationID string
