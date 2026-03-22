@@ -950,7 +950,7 @@ func CalculateL1FeeStats(ctx context.Context, conn clickhouse.Conn, pchainID uin
 				subnet_id,
 				sumIf(amount, tx_type IN ('ConvertSubnetToL1', 'RegisterL1Validator')) as initial_deposits,
 				sumIf(amount, tx_type = 'IncreaseL1ValidatorBalance') as topup_deposits,
-				sum(amount) as total_deposits,
+				sumIf(amount, tx_type IN ('ConvertSubnetToL1', 'RegisterL1Validator', 'IncreaseL1ValidatorBalance')) as total_deposits,
 				countIf(tx_type IN ('ConvertSubnetToL1', 'RegisterL1Validator')) as validator_count,
 				count(*) as tx_count
 			FROM l1_validator_balance_txs FINAL
