@@ -1,84 +1,133 @@
 package registrysyncer
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/fs"
+	"io"
 	"log/slog"
-	"os"
-	"os/exec"
+	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 )
 
 const (
-	RegistryRepoURL = "https://github.com/L1Beat/l1-registry.git"
-	TempDirPrefix   = "l1-registry-sync"
+	NpmTarballURL = "https://registry.npmjs.org/l1beat-l1-registry/-/l1beat-l1-registry-latest.tgz"
+	NpmMetaURL    = "https://registry.npmjs.org/l1beat-l1-registry"
 )
 
-// SyncRegistry clones the L1 registry and ingests metadata into ClickHouse
-func SyncRegistry(ctx context.Context, conn clickhouse.Conn) error {
-	slog.Info("Starting L1 registry sync")
-
-	// Create temp dir
-	tempDir, err := os.MkdirTemp("", TempDirPrefix)
+// getLatestTarballURL fetches the npm registry metadata to get the latest tarball URL
+func getLatestTarballURL(ctx context.Context) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", NpmMetaURL, nil)
 	if err != nil {
-		return fmt.Errorf("failed to create temp dir: %w", err)
+		return "", err
 	}
-	defer os.RemoveAll(tempDir)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch npm metadata: %w", err)
+	}
+	defer resp.Body.Close()
 
-	// Clone repo
-	slog.Info("Cloning registry repo", "url", RegistryRepoURL, "dir", tempDir)
-	cmd := exec.CommandContext(ctx, "git", "clone", "--depth=1", RegistryRepoURL, tempDir)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("git clone failed: %s: %w", string(output), err)
+	var meta struct {
+		DistTags struct {
+			Latest string `json:"latest"`
+		} `json:"dist-tags"`
+		Versions map[string]struct {
+			Dist struct {
+				Tarball string `json:"tarball"`
+			} `json:"dist"`
+		} `json:"versions"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&meta); err != nil {
+		return "", fmt.Errorf("failed to parse npm metadata: %w", err)
 	}
 
-	// Walk data directory
-	dataDir := filepath.Join(tempDir, "data")
+	latest := meta.DistTags.Latest
+	if v, ok := meta.Versions[latest]; ok {
+		return v.Dist.Tarball, nil
+	}
+	return "", fmt.Errorf("latest version %s not found in npm metadata", latest)
+}
+
+// SyncRegistry downloads the l1beat-l1-registry npm package and ingests metadata into ClickHouse
+func SyncRegistry(ctx context.Context, conn clickhouse.Conn) error {
+	slog.Info("Starting L1 registry sync from npm package")
+
+	// Get latest tarball URL
+	tarballURL, err := getLatestTarballURL(ctx)
+	if err != nil {
+		slog.Warn("Failed to get latest tarball URL, using fallback", "error", err)
+		tarballURL = NpmTarballURL
+	}
+	slog.Info("Downloading registry tarball", "url", tarballURL)
+
+	// Download tarball
+	req, err := http.NewRequestWithContext(ctx, "GET", tarballURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to download tarball: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status %d downloading tarball", resp.StatusCode)
+	}
+
+	// Parse tarball (gzip -> tar)
+	gzr, err := gzip.NewReader(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to create gzip reader: %w", err)
+	}
+	defer gzr.Close()
+
+	tr := tar.NewReader(gzr)
 	var chains []ChainRegistry
 
-	err = filepath.WalkDir(dataDir, func(path string, d fs.DirEntry, err error) error {
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
 		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
-		if filepath.Base(path) != "chain.json" {
-			return nil
+			return fmt.Errorf("failed to read tar entry: %w", err)
 		}
 
-		// Read and parse chain.json
-		content, err := os.ReadFile(path)
+		// npm tarballs have a "package/" prefix; look for data/*/chain.json
+		name := header.Name
+		if header.Typeflag != tar.TypeReg {
+			continue
+		}
+		if filepath.Base(name) != "chain.json" || !strings.Contains(name, "/data/") {
+			continue
+		}
+
+		content, err := io.ReadAll(tr)
 		if err != nil {
-			slog.Warn("Failed to read registry file", "path", path, "error", err)
-			return nil
+			slog.Warn("Failed to read registry file", "path", name, "error", err)
+			continue
 		}
 
 		var chain ChainRegistry
 		if err := json.Unmarshal(content, &chain); err != nil {
-			slog.Warn("Failed to parse registry file", "path", path, "error", err)
-			return nil
+			slog.Warn("Failed to parse registry file", "path", name, "error", err)
+			continue
 		}
 
-		// Only keep mainnet chains or those with valid subnet IDs
 		if chain.SubnetID != "" {
 			chains = append(chains, chain)
 		}
-		return nil
-	})
-
-	if err != nil {
-		return fmt.Errorf("failed to walk data dir: %w", err)
 	}
 
 	slog.Info("Found chains metadata", "count", len(chains))
 
-	// Insert into ClickHouse
 	if len(chains) > 0 {
 		if err := insertRegistryData(ctx, conn, chains); err != nil {
 			return fmt.Errorf("failed to insert registry data: %w", err)
@@ -91,7 +140,11 @@ func SyncRegistry(ctx context.Context, conn clickhouse.Conn) error {
 
 func insertRegistryData(ctx context.Context, conn clickhouse.Conn, chains []ChainRegistry) error {
 	batch, err := conn.PrepareBatch(ctx, `INSERT INTO l1_registry (
-		subnet_id, name, description, logo_url, website_url, last_updated
+		subnet_id, name, description, logo_url, website_url,
+		network, is_l1, categories, socials,
+		evm_chain_id, rpc_url, explorer_url, sybil_resistance_type,
+		network_token_name, network_token_symbol, network_token_decimals, network_token_logo_uri,
+		last_updated
 	)`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare batch: %w", err)
@@ -99,12 +152,51 @@ func insertRegistryData(ctx context.Context, conn clickhouse.Conn, chains []Chai
 
 	now := time.Now()
 	for _, chain := range chains {
+		// Serialize socials to JSON
+		socialsJSON, _ := json.Marshal(chain.Socials)
+
+		// Use the first chain entry for per-chain fields
+		var evmChainID uint64
+		var rpcURL, explorerURL, sybilType string
+		var tokenName, tokenSymbol, tokenLogoURI string
+		var tokenDecimals uint8 = 18
+
+		if len(chain.Chains) > 0 {
+			c := chain.Chains[0]
+			evmChainID = c.EvmChainID
+			if len(c.RpcURLs) > 0 {
+				rpcURL = c.RpcURLs[0]
+			}
+			explorerURL = c.ExplorerURL
+			sybilType = c.SybilResistanceType
+			tokenName = c.NativeToken.Name
+			tokenSymbol = c.NativeToken.Symbol
+			tokenDecimals = c.NativeToken.Decimals
+			tokenLogoURI = c.NativeToken.LogoURI
+		}
+
+		if tokenDecimals == 0 {
+			tokenDecimals = 18
+		}
+
 		err = batch.Append(
 			chain.SubnetID,
 			chain.Name,
 			chain.Description,
 			chain.Logo,
 			chain.Website,
+			chain.Network,
+			chain.IsL1,
+			chain.Categories,
+			string(socialsJSON),
+			evmChainID,
+			rpcURL,
+			explorerURL,
+			sybilType,
+			tokenName,
+			tokenSymbol,
+			tokenDecimals,
+			tokenLogoURI,
 			now,
 		)
 		if err != nil {
@@ -114,4 +206,3 @@ func insertRegistryData(ctx context.Context, conn clickhouse.Conn, chains []Chai
 
 	return batch.Send()
 }
-

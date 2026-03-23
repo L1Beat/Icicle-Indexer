@@ -218,13 +218,32 @@ CREATE TABLE IF NOT EXISTS l1_subnets (
 ) ENGINE = ReplacingMergeTree(last_synced)
 PRIMARY KEY (p_chain_id, subnet_id);
 
--- L1 Registry table - metadata from external registry (L1Beat)
+-- L1 Registry table - metadata from external registry (l1beat-l1-registry npm package)
 CREATE TABLE IF NOT EXISTS l1_registry (
     subnet_id String,
     name String,
     description String,
     logo_url String,
     website_url String,
+
+    -- Extended fields from l1beat-l1-registry
+    network String DEFAULT 'mainnet',       -- "mainnet" or "fuji"
+    is_l1 Bool DEFAULT true,                -- L1 vs legacy subnet
+    categories Array(String),               -- e.g. ["DeFi", "Gaming"]
+    socials String DEFAULT '[]',            -- JSON array of {name, url}
+
+    -- Per-chain fields (first/primary chain)
+    evm_chain_id UInt64 DEFAULT 0,          -- EVM chain ID (e.g. 43114)
+    rpc_url String DEFAULT '',              -- Primary RPC URL
+    explorer_url String DEFAULT '',         -- Block explorer URL
+    sybil_resistance_type String DEFAULT '',-- "Proof of Stake" or "Proof of Authority"
+
+    -- Native token
+    network_token_name String DEFAULT '',
+    network_token_symbol String DEFAULT '',
+    network_token_decimals UInt8 DEFAULT 18,
+    network_token_logo_uri String DEFAULT '',
+
     last_updated DateTime64(3, 'UTC')
 ) ENGINE = ReplacingMergeTree(last_updated)
 PRIMARY KEY subnet_id;

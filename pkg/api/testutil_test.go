@@ -152,6 +152,21 @@ func (r *MockRows) Scan(dest ...interface{}) error {
 				if ptr, ok := v.(*uint32); ok {
 					*d = ptr
 				}
+			case **uint64:
+				// Handle nullable uint64 pointers
+				if ptr, ok := v.(*uint64); ok {
+					*d = ptr
+				}
+			case **uint8:
+				// Handle nullable uint8 pointers
+				if ptr, ok := v.(*uint8); ok {
+					*d = ptr
+				}
+			case **bool:
+				// Handle nullable bool pointers
+				if ptr, ok := v.(*bool); ok {
+					*d = ptr
+				}
 			case **string:
 				// Handle nullable string pointers
 				if ptr, ok := v.(*string); ok {

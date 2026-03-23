@@ -11,6 +11,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// chainColumns matches the SELECT columns in handleListChains
+var chainColumns = []string{
+	"chain_id", "chain_name", "vm_id", "created_block", "created_time",
+	"subnet_id", "subnet_type", "converted_block", "converted_time",
+	"name", "description", "logo_url", "website_url",
+	"evm_chain_id", "categories", "socials",
+	"rpc_url", "explorer_url", "sybil_resistance_type",
+	"network_token_name", "network_token_symbol", "network_token_decimals", "network_token_logo_uri",
+	"network", "is_l1",
+	"validator_count", "total_fees_paid",
+	"active_validators", "total_staked",
+}
+
 func TestHandleGetSubnet_Success(t *testing.T) {
 	queryCount := 0
 	mock := &MockConn{
@@ -75,24 +88,19 @@ func TestHandleGetSubnet_NotFound(t *testing.T) {
 func TestHandleListChains_Success(t *testing.T) {
 	mock := &MockConn{
 		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
-			return NewMockRows(
-				[]string{
-					"chain_id", "chain_name", "vm_id", "created_block", "created_time",
-					"subnet_id", "subnet_type", "converted_block", "converted_time",
-					"name", "description", "logo_url", "website_url",
-					"validator_count", "total_fees_paid",
-					"active_validators", "total_staked",
+			return NewMockRows(chainColumns, [][]interface{}{
+				{
+					"chain123", "My Chain", "subnetevm", uint64(12345678), time.Now(),
+					"subnet123", "l1", uint64(12345700), time.Now(),
+					stringPtr("My L1"), stringPtr("Description"), stringPtr("https://logo.png"), stringPtr("https://website.com"),
+					uint64Ptr(43114), []string{"DeFi", "Gaming"}, stringPtr(`[{"name":"twitter","url":"https://x.com/test"}]`),
+					stringPtr("https://rpc.example.com"), stringPtr("https://explorer.example.com"), stringPtr("Proof of Stake"),
+					stringPtr("AVAX"), stringPtr("Avalanche"), uint8Ptr(18), stringPtr("https://token-logo.png"),
+					stringPtr("mainnet"), boolPtr(true),
+					uint32Ptr(5), uint64Ptr(1000000),
+					uint32Ptr(3), uint64Ptr(500000),
 				},
-				[][]interface{}{
-					{
-						"chain123", "My Chain", "subnetevm", uint64(12345678), time.Now(),
-						"subnet123", "l1", uint64(12345700), time.Now(),
-						stringPtr("My L1"), stringPtr("Description"), stringPtr("https://logo.png"), stringPtr("https://website.com"),
-						uint32Ptr(5), uint64Ptr(1000000),
-						uint32Ptr(3), uint64Ptr(500000),
-					},
-				},
-			), nil
+			}), nil
 		},
 	}
 
@@ -105,6 +113,21 @@ func TestHandleListChains_Success(t *testing.T) {
 	resp := ParseResponse[Response](t, w)
 	require.NotNil(t, resp.Data)
 	require.NotNil(t, resp.Meta)
+
+	dataList, ok := resp.Data.([]interface{})
+	require.True(t, ok)
+	require.Len(t, dataList, 1)
+
+	chain, ok := dataList[0].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "My L1", chain["name"])
+	assert.Equal(t, float64(43114), chain["evm_chain_id"])
+	assert.Equal(t, "https://rpc.example.com", chain["rpc_url"])
+	assert.Equal(t, "https://explorer.example.com", chain["explorer_url"])
+	assert.Equal(t, true, chain["is_l1"])
+	assert.NotNil(t, chain["network_token"])
+	assert.NotNil(t, chain["socials"])
+	assert.NotNil(t, chain["categories"])
 }
 
 func TestHandleListChains_FilterBySubnetType(t *testing.T) {
@@ -112,16 +135,7 @@ func TestHandleListChains_FilterBySubnetType(t *testing.T) {
 		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
 			require.Contains(t, query, "s.subnet_type = ?")
 			assert.Equal(t, "l1", args[0])
-			return NewMockRows(
-				[]string{
-					"chain_id", "chain_name", "vm_id", "created_block", "created_time",
-					"subnet_id", "subnet_type", "converted_block", "converted_time",
-					"name", "description", "logo_url", "website_url",
-					"validator_count", "total_fees_paid",
-					"active_validators", "total_staked",
-				},
-				[][]interface{}{},
-			), nil
+			return NewMockRows(chainColumns, [][]interface{}{}), nil
 		},
 	}
 
@@ -136,16 +150,7 @@ func TestHandleListChains_FilterBySubnetTypeLegacy(t *testing.T) {
 		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
 			require.Contains(t, query, "s.subnet_type = ?")
 			assert.Equal(t, "legacy", args[0])
-			return NewMockRows(
-				[]string{
-					"chain_id", "chain_name", "vm_id", "created_block", "created_time",
-					"subnet_id", "subnet_type", "converted_block", "converted_time",
-					"name", "description", "logo_url", "website_url",
-					"validator_count", "total_fees_paid",
-					"active_validators", "total_staked",
-				},
-				[][]interface{}{},
-			), nil
+			return NewMockRows(chainColumns, [][]interface{}{}), nil
 		},
 	}
 
@@ -160,16 +165,7 @@ func TestHandleListChains_FilterBySubnetID(t *testing.T) {
 		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
 			require.Contains(t, query, "c.subnet_id = ?")
 			assert.Equal(t, "subnet123", args[0])
-			return NewMockRows(
-				[]string{
-					"chain_id", "chain_name", "vm_id", "created_block", "created_time",
-					"subnet_id", "subnet_type", "converted_block", "converted_time",
-					"name", "description", "logo_url", "website_url",
-					"validator_count", "total_fees_paid",
-					"active_validators", "total_staked",
-				},
-				[][]interface{}{},
-			), nil
+			return NewMockRows(chainColumns, [][]interface{}{}), nil
 		},
 	}
 
@@ -182,24 +178,19 @@ func TestHandleListChains_FilterBySubnetID(t *testing.T) {
 func TestHandleListChains_LegacyChainOmitsL1Fields(t *testing.T) {
 	mock := &MockConn{
 		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
-			return NewMockRows(
-				[]string{
-					"chain_id", "chain_name", "vm_id", "created_block", "created_time",
-					"subnet_id", "subnet_type", "converted_block", "converted_time",
-					"name", "description", "logo_url", "website_url",
-					"validator_count", "total_fees_paid",
-					"active_validators", "total_staked",
+			return NewMockRows(chainColumns, [][]interface{}{
+				{
+					"chain456", "Legacy Chain", "subnetevm", uint64(11111111), time.Now(),
+					"subnet456", "legacy", uint64(0), time.Time{},
+					(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
+					(*uint64)(nil), []string(nil), (*string)(nil),
+					(*string)(nil), (*string)(nil), (*string)(nil),
+					(*string)(nil), (*string)(nil), (*uint8)(nil), (*string)(nil),
+					(*string)(nil), (*bool)(nil),
+					(*uint32)(nil), (*uint64)(nil),
+					(*uint32)(nil), (*uint64)(nil),
 				},
-				[][]interface{}{
-					{
-						"chain456", "Legacy Chain", "subnetevm", uint64(11111111), time.Now(),
-						"subnet456", "legacy", uint64(0), time.Time{},
-						(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
-						(*uint32)(nil), (*uint64)(nil),
-						(*uint32)(nil), (*uint64)(nil),
-					},
-				},
-			), nil
+			}), nil
 		},
 	}
 
@@ -211,7 +202,6 @@ func TestHandleListChains_LegacyChainOmitsL1Fields(t *testing.T) {
 	resp := ParseResponse[Response](t, w)
 	require.NotNil(t, resp.Data)
 
-	// Verify the response doesn't contain L1-specific fields for legacy chains
 	dataList, ok := resp.Data.([]interface{})
 	require.True(t, ok)
 	require.Len(t, dataList, 1)
@@ -221,10 +211,14 @@ func TestHandleListChains_LegacyChainOmitsL1Fields(t *testing.T) {
 	assert.Equal(t, "legacy", chain["subnet_type"])
 	assert.Empty(t, chain["name"])
 	assert.Empty(t, chain["logo_url"])
+	assert.Nil(t, chain["evm_chain_id"])
 	assert.Nil(t, chain["validator_count"])
 	assert.Nil(t, chain["active_validators"])
 	assert.Nil(t, chain["total_staked"])
 	assert.Nil(t, chain["total_fees_paid"])
+	assert.Nil(t, chain["network_token"])
+	assert.Nil(t, chain["socials"])
+	assert.Nil(t, chain["categories"])
 }
 
 func TestHandleListChains_DatabaseError(t *testing.T) {
@@ -243,19 +237,9 @@ func TestHandleListChains_DatabaseError(t *testing.T) {
 func TestHandleListChains_Pagination(t *testing.T) {
 	mock := &MockConn{
 		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
-			// Last two args should be fetchLimit and offset
 			assert.Equal(t, 26, args[len(args)-2]) // fetchLimit = limit+1
 			assert.Equal(t, 50, args[len(args)-1]) // offset
-			return NewMockRows(
-				[]string{
-					"chain_id", "chain_name", "vm_id", "created_block", "created_time",
-					"subnet_id", "subnet_type", "converted_block", "converted_time",
-					"name", "description", "logo_url", "website_url",
-					"validator_count", "total_fees_paid",
-					"active_validators", "total_staked",
-				},
-				[][]interface{}{},
-			), nil
+			return NewMockRows(chainColumns, [][]interface{}{}), nil
 		},
 	}
 
@@ -274,5 +258,13 @@ func stringPtr(s string) *string {
 }
 
 func uint64Ptr(v uint64) *uint64 {
+	return &v
+}
+
+func uint8Ptr(v uint8) *uint8 {
+	return &v
+}
+
+func boolPtr(v bool) *bool {
 	return &v
 }

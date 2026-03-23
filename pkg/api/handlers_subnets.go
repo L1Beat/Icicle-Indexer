@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -44,6 +45,20 @@ type SubnetDetail struct {
 	Registry *L1Registry   `json:"registry,omitempty"`
 }
 
+// SocialLink represents a social media link in the API response
+type SocialLink struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
+}
+
+// NetworkToken represents the native token of a chain
+type NetworkToken struct {
+	Name     string `json:"name"`
+	Symbol   string `json:"symbol"`
+	Decimals uint8  `json:"decimals"`
+	LogoURI  string `json:"logo_uri,omitempty"`
+}
+
 // ChainInfo is the enriched response type for the unified /chains endpoint
 type ChainInfo struct {
 	// Chain identity
@@ -56,14 +71,25 @@ type ChainInfo struct {
 	// Parent subnet
 	SubnetID       string     `json:"subnet_id"`
 	SubnetType     string     `json:"subnet_type"`
+	IsL1           bool       `json:"is_l1"`
 	ConvertedBlock uint64     `json:"converted_block,omitempty"`
 	ConvertedTime  *time.Time `json:"converted_time,omitempty"`
 
-	// L1 registry metadata (only for L1s)
+	// Registry metadata
 	Name        string `json:"name,omitempty"`
 	Description string `json:"description,omitempty"`
 	LogoURL     string `json:"logo_url,omitempty"`
 	WebsiteURL  string `json:"website_url,omitempty"`
+
+	// Extended registry fields
+	EvmChainID          *uint64      `json:"evm_chain_id,omitempty"`
+	Categories          []string     `json:"categories,omitempty"`
+	Socials             []SocialLink `json:"socials,omitempty"`
+	RpcURL              string       `json:"rpc_url,omitempty"`
+	ExplorerURL         string       `json:"explorer_url,omitempty"`
+	SybilResistanceType string       `json:"sybil_resistance_type,omitempty"`
+	NetworkToken        *NetworkToken `json:"network_token,omitempty"`
+	Network             string       `json:"network,omitempty"`
 
 	// L1 stats (only for L1s)
 	ValidatorCount   *uint32 `json:"validator_count,omitempty"`
@@ -208,6 +234,10 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 			c.chain_id, c.chain_name, c.vm_id, c.created_block, c.created_time,
 			s.subnet_id, s.subnet_type, s.converted_block, s.converted_time,
 			r.name, r.description, r.logo_url, r.website_url,
+			r.evm_chain_id, r.categories, r.socials,
+			r.rpc_url, r.explorer_url, r.sybil_resistance_type,
+			r.network_token_name, r.network_token_symbol, r.network_token_decimals, r.network_token_logo_uri,
+			r.network, r.is_l1,
 			f.validator_count, f.total_fees_paid,
 			v.active_validators, v.total_staked
 		FROM (SELECT * FROM subnet_chains FINAL) c
@@ -246,6 +276,15 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 		var ci ChainInfo
 		var convertedTime time.Time
 		var name, description, logoURL, websiteURL *string
+		var evmChainID *uint64
+		var categories []string
+		var socialsJSON *string
+		var rpcURL, explorerURL, sybilType *string
+		var tokenName, tokenSymbol *string
+		var tokenDecimals *uint8
+		var tokenLogoURI *string
+		var network *string
+		var isL1 *bool
 		var validatorCount, activeValidators *uint32
 		var totalFeesPaid, totalStaked *uint64
 
@@ -253,6 +292,10 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 			&ci.ChainID, &ci.ChainName, &ci.VMID, &ci.CreatedBlock, &ci.CreatedTime,
 			&ci.SubnetID, &ci.SubnetType, &ci.ConvertedBlock, &convertedTime,
 			&name, &description, &logoURL, &websiteURL,
+			&evmChainID, &categories, &socialsJSON,
+			&rpcURL, &explorerURL, &sybilType,
+			&tokenName, &tokenSymbol, &tokenDecimals, &tokenLogoURI,
+			&network, &isL1,
 			&validatorCount, &totalFeesPaid,
 			&activeValidators, &totalStaked,
 		); err != nil {
@@ -263,6 +306,8 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 		if !convertedTime.IsZero() && convertedTime.Unix() > 0 {
 			ci.ConvertedTime = &convertedTime
 		}
+
+		// Registry metadata
 		if name != nil && *name != "" {
 			ci.Name = *name
 		}
@@ -275,6 +320,54 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 		if websiteURL != nil && *websiteURL != "" {
 			ci.WebsiteURL = *websiteURL
 		}
+
+		// Extended registry fields
+		if evmChainID != nil && *evmChainID > 0 {
+			ci.EvmChainID = evmChainID
+		}
+		if len(categories) > 0 {
+			ci.Categories = categories
+		}
+		if socialsJSON != nil && *socialsJSON != "" && *socialsJSON != "[]" {
+			var socials []SocialLink
+			if err := json.Unmarshal([]byte(*socialsJSON), &socials); err == nil && len(socials) > 0 {
+				ci.Socials = socials
+			}
+		}
+		if rpcURL != nil && *rpcURL != "" {
+			ci.RpcURL = *rpcURL
+		}
+		if explorerURL != nil && *explorerURL != "" {
+			ci.ExplorerURL = *explorerURL
+		}
+		if sybilType != nil && *sybilType != "" {
+			ci.SybilResistanceType = *sybilType
+		}
+		if tokenName != nil && *tokenName != "" {
+			ci.NetworkToken = &NetworkToken{
+				Name:    *tokenName,
+				Decimals: 18,
+			}
+			if tokenSymbol != nil {
+				ci.NetworkToken.Symbol = *tokenSymbol
+			}
+			if tokenDecimals != nil && *tokenDecimals > 0 {
+				ci.NetworkToken.Decimals = *tokenDecimals
+			}
+			if tokenLogoURI != nil {
+				ci.NetworkToken.LogoURI = *tokenLogoURI
+			}
+		}
+		if network != nil && *network != "" {
+			ci.Network = *network
+		}
+		if isL1 != nil {
+			ci.IsL1 = *isL1
+		} else {
+			ci.IsL1 = ci.SubnetType == "l1"
+		}
+
+		// Validator stats
 		if validatorCount != nil && *validatorCount > 0 {
 			ci.ValidatorCount = validatorCount
 		}
