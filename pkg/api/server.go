@@ -153,13 +153,9 @@ func (s *Server) registerRoutes() {
 	s.router.HandleFunc("GET /api/v1/data/pchain/tx-types", s.handlePChainTxTypes)
 
 	// Subnets
-	s.router.HandleFunc("GET /api/v1/data/subnets", s.handleListSubnets)
 	s.router.HandleFunc("GET /api/v1/data/subnets/{subnetId}", s.handleGetSubnet)
 
-	// L1s (subset of subnets)
-	s.router.HandleFunc("GET /api/v1/data/l1s", s.handleListL1s)
-
-	// Chains (blockchains within subnets)
+	// Chains (unified endpoint: chains + subnets + L1 registry + validator stats)
 	s.router.HandleFunc("GET /api/v1/data/chains", s.handleListChains)
 
 	// Validators

@@ -11,76 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestHandleListSubnets_Success(t *testing.T) {
-	mock := &MockConn{
-		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
-			return NewMockRows(
-				[]string{"subnet_id", "subnet_type", "created_block", "created_time", "chain_id", "converted_block", "converted_time"},
-				[][]interface{}{
-					{"2XDnKyAEr123", "l1", uint64(12345678), time.Now(), "chain123", uint64(12345700), time.Now()},
-					{"2XDnKyAEr456", "regular", uint64(12345670), time.Now(), "", uint64(0), time.Time{}},
-				},
-			), nil
-		},
-	}
-
-	server := NewTestServer(mock)
-	w := MakeRequest(t, server, "GET", "/api/v1/data/subnets")
-
-	AssertJSONResponse(t, w, http.StatusOK)
-	AssertCORSHeaders(t, w)
-
-	resp := ParseResponse[Response](t, w)
-	require.NotNil(t, resp.Data)
-	require.NotNil(t, resp.Meta)
-}
-
-func TestHandleListSubnets_FilterByType(t *testing.T) {
-	mock := &MockConn{
-		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
-			require.Contains(t, query, "subnet_type = ?")
-			assert.Equal(t, "l1", args[0])
-			return NewMockRows([]string{"subnet_id", "subnet_type", "created_block", "created_time", "chain_id", "converted_block", "converted_time"}, [][]interface{}{}), nil
-		},
-	}
-
-	server := NewTestServer(mock)
-	w := MakeRequest(t, server, "GET", "/api/v1/data/subnets?type=l1")
-
-	AssertJSONResponse(t, w, http.StatusOK)
-}
-
-func TestHandleListSubnets_DatabaseError(t *testing.T) {
-	mock := &MockConn{
-		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
-			return nil, ErrMockDB
-		},
-	}
-
-	server := NewTestServer(mock)
-	w := MakeRequest(t, server, "GET", "/api/v1/data/subnets")
-
-	AssertErrorResponse(t, w, http.StatusInternalServerError, ErrInternalError)
-}
-
-func TestHandleListSubnets_Pagination(t *testing.T) {
-	mock := &MockConn{
-		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
-			assert.Equal(t, 26, args[len(args)-2]) // fetchLimit = limit+1
-			assert.Equal(t, 50, args[len(args)-1])
-			return NewMockRows([]string{"subnet_id", "subnet_type", "created_block", "created_time", "chain_id", "converted_block", "converted_time"}, [][]interface{}{}), nil
-		},
-	}
-
-	server := NewTestServer(mock)
-	w := MakeRequest(t, server, "GET", "/api/v1/data/subnets?limit=25&offset=50")
-
-	AssertJSONResponse(t, w, http.StatusOK)
-	resp := ParseResponse[Response](t, w)
-	assert.Equal(t, 25, resp.Meta.Limit)
-	assert.Equal(t, 50, resp.Meta.Offset)
-}
-
 func TestHandleGetSubnet_Success(t *testing.T) {
 	queryCount := 0
 	mock := &MockConn{
@@ -142,46 +72,25 @@ func TestHandleGetSubnet_NotFound(t *testing.T) {
 	AssertErrorResponse(t, w, http.StatusNotFound, ErrNotFound)
 }
 
-func TestHandleListL1s_Success(t *testing.T) {
-	mock := &MockConn{
-		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
-			require.Contains(t, query, "subnet_type = 'l1'")
-			return NewMockRows(
-				[]string{"subnet_id", "created_block", "created_time", "chain_id", "converted_block", "converted_time", "name", "description", "logo_url", "website_url"},
-				[][]interface{}{
-					{"subnet123", uint64(12345678), time.Now(), "chain123", uint64(12345700), time.Now(), stringPtr("My L1"), stringPtr("Description"), stringPtr("https://logo.png"), stringPtr("https://website.com")},
-				},
-			), nil
-		},
-	}
-
-	server := NewTestServer(mock)
-	w := MakeRequest(t, server, "GET", "/api/v1/data/l1s")
-
-	AssertJSONResponse(t, w, http.StatusOK)
-	AssertCORSHeaders(t, w)
-}
-
-func TestHandleListL1s_DatabaseError(t *testing.T) {
-	mock := &MockConn{
-		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
-			return nil, ErrMockDB
-		},
-	}
-
-	server := NewTestServer(mock)
-	w := MakeRequest(t, server, "GET", "/api/v1/data/l1s")
-
-	AssertErrorResponse(t, w, http.StatusInternalServerError, ErrInternalError)
-}
-
 func TestHandleListChains_Success(t *testing.T) {
 	mock := &MockConn{
 		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
 			return NewMockRows(
-				[]string{"chain_id", "subnet_id", "chain_name", "vm_id", "created_block", "created_time"},
+				[]string{
+					"chain_id", "chain_name", "vm_id", "created_block", "created_time",
+					"subnet_id", "subnet_type", "converted_block", "converted_time",
+					"name", "description", "logo_url", "website_url",
+					"validator_count", "total_fees_paid",
+					"active_validators", "total_staked",
+				},
 				[][]interface{}{
-					{"chain123", "subnet123", "My Chain", "subnetevm", uint64(12345678), time.Now()},
+					{
+						"chain123", "My Chain", "subnetevm", uint64(12345678), time.Now(),
+						"subnet123", "l1", uint64(12345700), time.Now(),
+						stringPtr("My L1"), stringPtr("Description"), stringPtr("https://logo.png"), stringPtr("https://website.com"),
+						uint32Ptr(5), uint64Ptr(1000000),
+						uint32Ptr(3), uint64Ptr(500000),
+					},
 				},
 			), nil
 		},
@@ -192,14 +101,75 @@ func TestHandleListChains_Success(t *testing.T) {
 
 	AssertJSONResponse(t, w, http.StatusOK)
 	AssertCORSHeaders(t, w)
+
+	resp := ParseResponse[Response](t, w)
+	require.NotNil(t, resp.Data)
+	require.NotNil(t, resp.Meta)
+}
+
+func TestHandleListChains_FilterBySubnetType(t *testing.T) {
+	mock := &MockConn{
+		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
+			require.Contains(t, query, "s.subnet_type = ?")
+			assert.Equal(t, "l1", args[0])
+			return NewMockRows(
+				[]string{
+					"chain_id", "chain_name", "vm_id", "created_block", "created_time",
+					"subnet_id", "subnet_type", "converted_block", "converted_time",
+					"name", "description", "logo_url", "website_url",
+					"validator_count", "total_fees_paid",
+					"active_validators", "total_staked",
+				},
+				[][]interface{}{},
+			), nil
+		},
+	}
+
+	server := NewTestServer(mock)
+	w := MakeRequest(t, server, "GET", "/api/v1/data/chains?subnet_type=l1")
+
+	AssertJSONResponse(t, w, http.StatusOK)
+}
+
+func TestHandleListChains_FilterBySubnetTypeLegacy(t *testing.T) {
+	mock := &MockConn{
+		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
+			require.Contains(t, query, "s.subnet_type = ?")
+			assert.Equal(t, "legacy", args[0])
+			return NewMockRows(
+				[]string{
+					"chain_id", "chain_name", "vm_id", "created_block", "created_time",
+					"subnet_id", "subnet_type", "converted_block", "converted_time",
+					"name", "description", "logo_url", "website_url",
+					"validator_count", "total_fees_paid",
+					"active_validators", "total_staked",
+				},
+				[][]interface{}{},
+			), nil
+		},
+	}
+
+	server := NewTestServer(mock)
+	w := MakeRequest(t, server, "GET", "/api/v1/data/chains?subnet_type=legacy")
+
+	AssertJSONResponse(t, w, http.StatusOK)
 }
 
 func TestHandleListChains_FilterBySubnetID(t *testing.T) {
 	mock := &MockConn{
 		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
-			require.Contains(t, query, "subnet_id = ?")
+			require.Contains(t, query, "c.subnet_id = ?")
 			assert.Equal(t, "subnet123", args[0])
-			return NewMockRows([]string{"chain_id", "subnet_id", "chain_name", "vm_id", "created_block", "created_time"}, [][]interface{}{}), nil
+			return NewMockRows(
+				[]string{
+					"chain_id", "chain_name", "vm_id", "created_block", "created_time",
+					"subnet_id", "subnet_type", "converted_block", "converted_time",
+					"name", "description", "logo_url", "website_url",
+					"validator_count", "total_fees_paid",
+					"active_validators", "total_staked",
+				},
+				[][]interface{}{},
+			), nil
 		},
 	}
 
@@ -207,6 +177,54 @@ func TestHandleListChains_FilterBySubnetID(t *testing.T) {
 	w := MakeRequest(t, server, "GET", "/api/v1/data/chains?subnet_id=subnet123")
 
 	AssertJSONResponse(t, w, http.StatusOK)
+}
+
+func TestHandleListChains_LegacyChainOmitsL1Fields(t *testing.T) {
+	mock := &MockConn{
+		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
+			return NewMockRows(
+				[]string{
+					"chain_id", "chain_name", "vm_id", "created_block", "created_time",
+					"subnet_id", "subnet_type", "converted_block", "converted_time",
+					"name", "description", "logo_url", "website_url",
+					"validator_count", "total_fees_paid",
+					"active_validators", "total_staked",
+				},
+				[][]interface{}{
+					{
+						"chain456", "Legacy Chain", "subnetevm", uint64(11111111), time.Now(),
+						"subnet456", "legacy", uint64(0), time.Time{},
+						(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
+						(*uint32)(nil), (*uint64)(nil),
+						(*uint32)(nil), (*uint64)(nil),
+					},
+				},
+			), nil
+		},
+	}
+
+	server := NewTestServer(mock)
+	w := MakeRequest(t, server, "GET", "/api/v1/data/chains")
+
+	AssertJSONResponse(t, w, http.StatusOK)
+
+	resp := ParseResponse[Response](t, w)
+	require.NotNil(t, resp.Data)
+
+	// Verify the response doesn't contain L1-specific fields for legacy chains
+	dataList, ok := resp.Data.([]interface{})
+	require.True(t, ok)
+	require.Len(t, dataList, 1)
+
+	chain, ok := dataList[0].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "legacy", chain["subnet_type"])
+	assert.Empty(t, chain["name"])
+	assert.Empty(t, chain["logo_url"])
+	assert.Nil(t, chain["validator_count"])
+	assert.Nil(t, chain["active_validators"])
+	assert.Nil(t, chain["total_staked"])
+	assert.Nil(t, chain["total_fees_paid"])
 }
 
 func TestHandleListChains_DatabaseError(t *testing.T) {
@@ -222,15 +240,39 @@ func TestHandleListChains_DatabaseError(t *testing.T) {
 	AssertErrorResponse(t, w, http.StatusInternalServerError, ErrInternalError)
 }
 
-func TestHandleListSubnets_MethodNotAllowed(t *testing.T) {
-	mock := &MockConn{}
-	server := NewTestServer(mock)
+func TestHandleListChains_Pagination(t *testing.T) {
+	mock := &MockConn{
+		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
+			// Last two args should be fetchLimit and offset
+			assert.Equal(t, 26, args[len(args)-2]) // fetchLimit = limit+1
+			assert.Equal(t, 50, args[len(args)-1]) // offset
+			return NewMockRows(
+				[]string{
+					"chain_id", "chain_name", "vm_id", "created_block", "created_time",
+					"subnet_id", "subnet_type", "converted_block", "converted_time",
+					"name", "description", "logo_url", "website_url",
+					"validator_count", "total_fees_paid",
+					"active_validators", "total_staked",
+				},
+				[][]interface{}{},
+			), nil
+		},
+	}
 
-	w := MakeRequest(t, server, "POST", "/api/v1/data/subnets")
-	require.Equal(t, http.StatusMethodNotAllowed, w.Code)
+	server := NewTestServer(mock)
+	w := MakeRequest(t, server, "GET", "/api/v1/data/chains?limit=25&offset=50")
+
+	AssertJSONResponse(t, w, http.StatusOK)
+	resp := ParseResponse[Response](t, w)
+	assert.Equal(t, 25, resp.Meta.Limit)
+	assert.Equal(t, 50, resp.Meta.Offset)
 }
 
-// Helper function for nullable strings in mock rows
+// Helper functions for nullable types in mock rows
 func stringPtr(s string) *string {
 	return &s
+}
+
+func uint64Ptr(v uint64) *uint64 {
+	return &v
 }

@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -43,121 +44,32 @@ type SubnetDetail struct {
 	Registry *L1Registry   `json:"registry,omitempty"`
 }
 
-// handleListSubnets returns a paginated list of subnets
-// @Summary List subnets
-// @Description Get a paginated list of subnets with optional type filtering
-// @Tags Data - Subnets
-// @Produce json
-// @Param type query string false "Filter by subnet type (legacy, l1)"
-// @Param limit query int false "Number of results (max 100)" default(20)
-// @Param offset query int false "Pagination offset" default(0)
-// @Success 200 {object} Response{data=[]Subnet,meta=Meta}
-// @Failure 500 {object} ErrorResponse
-// @Router /api/v1/data/subnets [get]
-func (s *Server) handleListSubnets(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	limit, offset := getPagination(r)
-	cursor := getCursor(r)
-	wantCount := getCountParam(r)
+// ChainInfo is the enriched response type for the unified /chains endpoint
+type ChainInfo struct {
+	// Chain identity
+	ChainID      string    `json:"chain_id"`
+	ChainName    string    `json:"chain_name"`
+	VMID         string    `json:"vm_id"`
+	CreatedBlock uint64    `json:"created_block"`
+	CreatedTime  time.Time `json:"created_time"`
 
-	subnetType := r.URL.Query().Get("type")
-	fetchLimit := limit + 1
+	// Parent subnet
+	SubnetID       string     `json:"subnet_id"`
+	SubnetType     string     `json:"subnet_type"`
+	ConvertedBlock uint64     `json:"converted_block,omitempty"`
+	ConvertedTime  *time.Time `json:"converted_time,omitempty"`
 
-	var query string
-	var args []interface{}
+	// L1 registry metadata (only for L1s)
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
+	LogoURL     string `json:"logo_url,omitempty"`
+	WebsiteURL  string `json:"website_url,omitempty"`
 
-	if cursor != nil {
-		if subnetType != "" {
-			query = `
-				SELECT subnet_id, subnet_type, created_block, created_time,
-					chain_id, converted_block, converted_time
-				FROM subnets FINAL
-				WHERE subnet_type = ? AND created_block < ?
-				ORDER BY created_block DESC
-				LIMIT ?
-			`
-			args = []interface{}{subnetType, cursor.BlockNumber, fetchLimit}
-		} else {
-			query = `
-				SELECT subnet_id, subnet_type, created_block, created_time,
-					chain_id, converted_block, converted_time
-				FROM subnets FINAL
-				WHERE created_block < ?
-				ORDER BY created_block DESC
-				LIMIT ?
-			`
-			args = []interface{}{cursor.BlockNumber, fetchLimit}
-		}
-	} else {
-		if subnetType != "" {
-			query = `
-				SELECT subnet_id, subnet_type, created_block, created_time,
-					chain_id, converted_block, converted_time
-				FROM subnets FINAL
-				WHERE subnet_type = ?
-				ORDER BY created_block DESC
-				LIMIT ? OFFSET ?
-			`
-			args = []interface{}{subnetType, fetchLimit, offset}
-		} else {
-			query = `
-				SELECT subnet_id, subnet_type, created_block, created_time,
-					chain_id, converted_block, converted_time
-				FROM subnets FINAL
-				ORDER BY created_block DESC
-				LIMIT ? OFFSET ?
-			`
-			args = []interface{}{fetchLimit, offset}
-		}
-	}
-
-	rows, err := s.conn.Query(ctx, query, args...)
-	if err != nil {
-		writeInternalError(w, err.Error())
-		return
-	}
-	defer rows.Close()
-
-	subnets := []Subnet{}
-	for rows.Next() {
-		var sub Subnet
-		var convertedTime time.Time
-		if err := rows.Scan(
-			&sub.SubnetID, &sub.SubnetType, &sub.CreatedBlock, &sub.CreatedTime,
-			&sub.ChainID, &sub.ConvertedBlock, &convertedTime,
-		); err != nil {
-			writeInternalError(w, err.Error())
-			return
-		}
-		if !convertedTime.IsZero() && convertedTime.Unix() > 0 {
-			sub.ConvertedTime = &convertedTime
-		}
-		subnets = append(subnets, sub)
-	}
-
-	subnets, hasMore := trimResults(subnets, limit)
-
-	meta := &Meta{Limit: limit, Offset: offset, HasMore: hasMore}
-	if hasMore && len(subnets) > 0 {
-		meta.NextCursor = cursorBlock(subnets[len(subnets)-1].CreatedBlock)
-	}
-
-	if wantCount {
-		countQuery := `SELECT toInt64(count()) FROM subnets FINAL`
-		var countArgs []interface{}
-		if subnetType != "" {
-			countQuery += ` WHERE subnet_type = ?`
-			countArgs = []interface{}{subnetType}
-		}
-		var total int64
-		_ = s.conn.QueryRow(ctx, countQuery, countArgs...).Scan(&total)
-		meta.Total = total
-	}
-
-	writeJSON(w, http.StatusOK, Response{
-		Data: subnets,
-		Meta: meta,
-	})
+	// L1 stats (only for L1s)
+	ValidatorCount   *uint32 `json:"validator_count,omitempty"`
+	ActiveValidators *uint32 `json:"active_validators,omitempty"`
+	TotalStaked      *uint64 `json:"total_staked,omitempty"`
+	TotalFeesPaid    *uint64 `json:"total_fees_paid,omitempty"`
 }
 
 // handleGetSubnet returns details for a specific subnet
@@ -245,133 +157,18 @@ func (s *Server) handleGetSubnet(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleListL1s returns a list of L1s with registry metadata
-// @Summary List L1s
-// @Description Get a paginated list of L1 subnets with registry metadata
-// @Tags Data - Subnets
-// @Produce json
-// @Param limit query int false "Number of results (max 100)" default(20)
-// @Param offset query int false "Pagination offset" default(0)
-// @Success 200 {object} Response{data=[]object,meta=Meta}
-// @Failure 500 {object} ErrorResponse
-// @Router /api/v1/data/l1s [get]
-func (s *Server) handleListL1s(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	limit, offset := getPagination(r)
-	cursor := getCursor(r)
-	wantCount := getCountParam(r)
-
-	fetchLimit := limit + 1
-
-	var query string
-	var args []interface{}
-
-	if cursor != nil {
-		query = `
-			SELECT
-				s.subnet_id, s.created_block, s.created_time,
-				s.chain_id, s.converted_block, s.converted_time,
-				r.name, r.description, r.logo_url, r.website_url
-			FROM (SELECT * FROM subnets FINAL WHERE subnet_type = 'l1') s
-			LEFT JOIN (SELECT * FROM l1_registry FINAL) r ON s.subnet_id = r.subnet_id
-			WHERE s.converted_block < ?
-			ORDER BY s.converted_block DESC
-			LIMIT ?
-		`
-		args = []interface{}{cursor.BlockNumber, fetchLimit}
-	} else {
-		query = `
-			SELECT
-				s.subnet_id, s.created_block, s.created_time,
-				s.chain_id, s.converted_block, s.converted_time,
-				r.name, r.description, r.logo_url, r.website_url
-			FROM (SELECT * FROM subnets FINAL WHERE subnet_type = 'l1') s
-			LEFT JOIN (SELECT * FROM l1_registry FINAL) r ON s.subnet_id = r.subnet_id
-			ORDER BY s.converted_block DESC
-			LIMIT ? OFFSET ?
-		`
-		args = []interface{}{fetchLimit, offset}
-	}
-
-	rows, err := s.conn.Query(ctx, query, args...)
-	if err != nil {
-		writeInternalError(w, err.Error())
-		return
-	}
-	defer rows.Close()
-
-	type L1Info struct {
-		SubnetID       string    `json:"subnet_id"`
-		CreatedBlock   uint64    `json:"created_block"`
-		CreatedTime    time.Time `json:"created_time"`
-		ChainID        string    `json:"chain_id"`
-		ConvertedBlock uint64     `json:"converted_block"`
-		ConvertedTime  *time.Time `json:"converted_time,omitempty"`
-		Name           string    `json:"name,omitempty"`
-		Description    string    `json:"description,omitempty"`
-		LogoURL        string    `json:"logo_url,omitempty"`
-		WebsiteURL     string    `json:"website_url,omitempty"`
-	}
-
-	l1s := []L1Info{}
-	for rows.Next() {
-		var l1 L1Info
-		var name, description, logoURL, websiteURL *string
-		var convertedTime time.Time
-		if err := rows.Scan(
-			&l1.SubnetID, &l1.CreatedBlock, &l1.CreatedTime,
-			&l1.ChainID, &l1.ConvertedBlock, &convertedTime,
-			&name, &description, &logoURL, &websiteURL,
-		); err != nil {
-			writeInternalError(w, err.Error())
-			return
-		}
-		if !convertedTime.IsZero() {
-			l1.ConvertedTime = &convertedTime
-		}
-		if name != nil {
-			l1.Name = *name
-		}
-		if description != nil {
-			l1.Description = *description
-		}
-		if logoURL != nil {
-			l1.LogoURL = *logoURL
-		}
-		if websiteURL != nil {
-			l1.WebsiteURL = *websiteURL
-		}
-		l1s = append(l1s, l1)
-	}
-
-	l1s, hasMore := trimResults(l1s, limit)
-
-	meta := &Meta{Limit: limit, Offset: offset, HasMore: hasMore}
-	if hasMore && len(l1s) > 0 {
-		meta.NextCursor = fmt.Sprintf("%d", l1s[len(l1s)-1].ConvertedBlock)
-	}
-
-	if wantCount {
-		var total int64
-		_ = s.conn.QueryRow(ctx, `SELECT toInt64(count()) FROM subnets FINAL WHERE subnet_type = 'l1'`).Scan(&total)
-		meta.Total = total
-	}
-
-	writeJSON(w, http.StatusOK, Response{
-		Data: l1s,
-		Meta: meta,
-	})
-}
-
-// handleListChains returns a list of blockchains
+// handleListChains returns a unified list of chains with enriched subnet, registry, and validator data
 // @Summary List chains
-// @Description Get a paginated list of blockchains across all subnets
+// @Description Get a paginated list of chains with subnet info, L1 registry metadata, and validator stats
 // @Tags Data - Subnets
 // @Produce json
+// @Param subnet_type query string false "Filter by subnet type (l1, legacy)"
 // @Param subnet_id query string false "Filter by subnet ID"
 // @Param limit query int false "Number of results (max 100)" default(20)
 // @Param offset query int false "Pagination offset" default(0)
-// @Success 200 {object} Response{data=[]SubnetChain,meta=Meta}
+// @Param cursor query string false "Cursor for keyset pagination"
+// @Param count query string false "Include total count (true/false)"
+// @Success 200 {object} Response{data=[]ChainInfo,meta=Meta}
 // @Failure 500 {object} ErrorResponse
 // @Router /api/v1/data/chains [get]
 func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
@@ -380,51 +177,61 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 	cursor := getCursor(r)
 	wantCount := getCountParam(r)
 
+	subnetType := r.URL.Query().Get("subnet_type")
 	subnetID := r.URL.Query().Get("subnet_id")
 	fetchLimit := limit + 1
 
-	var query string
+	// Build WHERE clauses
+	var conditions []string
 	var args []interface{}
 
+	if subnetType != "" {
+		conditions = append(conditions, "s.subnet_type = ?")
+		args = append(args, subnetType)
+	}
+	if subnetID != "" {
+		conditions = append(conditions, "c.subnet_id = ?")
+		args = append(args, subnetID)
+	}
 	if cursor != nil {
-		if subnetID != "" {
-			query = `
-				SELECT chain_id, subnet_id, chain_name, vm_id, created_block, created_time
-				FROM subnet_chains FINAL
-				WHERE subnet_id = ? AND created_block < ?
-				ORDER BY created_block DESC
-				LIMIT ?
-			`
-			args = []interface{}{subnetID, cursor.BlockNumber, fetchLimit}
-		} else {
-			query = `
-				SELECT chain_id, subnet_id, chain_name, vm_id, created_block, created_time
-				FROM subnet_chains FINAL
-				WHERE created_block < ?
-				ORDER BY created_block DESC
-				LIMIT ?
-			`
-			args = []interface{}{cursor.BlockNumber, fetchLimit}
-		}
+		conditions = append(conditions, "c.created_block < ?")
+		args = append(args, cursor.BlockNumber)
+	}
+
+	whereClause := ""
+	if len(conditions) > 0 {
+		whereClause = "WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	query := fmt.Sprintf(`
+		SELECT
+			c.chain_id, c.chain_name, c.vm_id, c.created_block, c.created_time,
+			s.subnet_id, s.subnet_type, s.converted_block, s.converted_time,
+			r.name, r.description, r.logo_url, r.website_url,
+			f.validator_count, f.total_fees_paid,
+			v.active_validators, v.total_staked
+		FROM (SELECT * FROM subnet_chains FINAL) c
+		INNER JOIN (SELECT * FROM subnets FINAL) s ON c.subnet_id = s.subnet_id
+		LEFT JOIN (SELECT * FROM l1_registry FINAL) r ON c.subnet_id = r.subnet_id
+		LEFT JOIN (SELECT * FROM l1_fee_stats FINAL) f ON c.subnet_id = f.subnet_id
+		LEFT JOIN (
+			SELECT subnet_id,
+				toUInt32(countIf(active = true)) AS active_validators,
+				sum(weight) AS total_staked
+			FROM l1_validator_state FINAL
+			GROUP BY subnet_id
+		) v ON c.subnet_id = v.subnet_id
+		%s
+		ORDER BY c.created_block DESC
+		LIMIT ?
+	`, whereClause)
+
+	if cursor != nil {
+		args = append(args, fetchLimit)
 	} else {
-		if subnetID != "" {
-			query = `
-				SELECT chain_id, subnet_id, chain_name, vm_id, created_block, created_time
-				FROM subnet_chains FINAL
-				WHERE subnet_id = ?
-				ORDER BY created_block DESC
-				LIMIT ? OFFSET ?
-			`
-			args = []interface{}{subnetID, fetchLimit, offset}
-		} else {
-			query = `
-				SELECT chain_id, subnet_id, chain_name, vm_id, created_block, created_time
-				FROM subnet_chains FINAL
-				ORDER BY created_block DESC
-				LIMIT ? OFFSET ?
-			`
-			args = []interface{}{fetchLimit, offset}
-		}
+		args = append(args, fetchLimit)
+		query += " OFFSET ?"
+		args = append(args, offset)
 	}
 
 	rows, err := s.conn.Query(ctx, query, args...)
@@ -434,17 +241,54 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	chains := []SubnetChain{}
+	chains := []ChainInfo{}
 	for rows.Next() {
-		var chain SubnetChain
+		var ci ChainInfo
+		var convertedTime time.Time
+		var name, description, logoURL, websiteURL *string
+		var validatorCount, activeValidators *uint32
+		var totalFeesPaid, totalStaked *uint64
+
 		if err := rows.Scan(
-			&chain.ChainID, &chain.SubnetID, &chain.ChainName,
-			&chain.VMID, &chain.CreatedBlock, &chain.CreatedTime,
+			&ci.ChainID, &ci.ChainName, &ci.VMID, &ci.CreatedBlock, &ci.CreatedTime,
+			&ci.SubnetID, &ci.SubnetType, &ci.ConvertedBlock, &convertedTime,
+			&name, &description, &logoURL, &websiteURL,
+			&validatorCount, &totalFeesPaid,
+			&activeValidators, &totalStaked,
 		); err != nil {
 			writeInternalError(w, err.Error())
 			return
 		}
-		chains = append(chains, chain)
+
+		if !convertedTime.IsZero() && convertedTime.Unix() > 0 {
+			ci.ConvertedTime = &convertedTime
+		}
+		if name != nil && *name != "" {
+			ci.Name = *name
+		}
+		if description != nil && *description != "" {
+			ci.Description = *description
+		}
+		if logoURL != nil && *logoURL != "" {
+			ci.LogoURL = *logoURL
+		}
+		if websiteURL != nil && *websiteURL != "" {
+			ci.WebsiteURL = *websiteURL
+		}
+		if validatorCount != nil && *validatorCount > 0 {
+			ci.ValidatorCount = validatorCount
+		}
+		if activeValidators != nil && *activeValidators > 0 {
+			ci.ActiveValidators = activeValidators
+		}
+		if totalStaked != nil && *totalStaked > 0 {
+			ci.TotalStaked = totalStaked
+		}
+		if totalFeesPaid != nil && *totalFeesPaid > 0 {
+			ci.TotalFeesPaid = totalFeesPaid
+		}
+
+		chains = append(chains, ci)
 	}
 
 	chains, hasMore := trimResults(chains, limit)
@@ -455,11 +299,19 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if wantCount {
-		countQuery := `SELECT toInt64(count()) FROM subnet_chains FINAL`
+		countQuery := `SELECT toInt64(count()) FROM (SELECT * FROM subnet_chains FINAL) c INNER JOIN (SELECT * FROM subnets FINAL) s ON c.subnet_id = s.subnet_id`
+		var countConditions []string
 		var countArgs []interface{}
+		if subnetType != "" {
+			countConditions = append(countConditions, "s.subnet_type = ?")
+			countArgs = append(countArgs, subnetType)
+		}
 		if subnetID != "" {
-			countQuery += ` WHERE subnet_id = ?`
-			countArgs = []interface{}{subnetID}
+			countConditions = append(countConditions, "c.subnet_id = ?")
+			countArgs = append(countArgs, subnetID)
+		}
+		if len(countConditions) > 0 {
+			countQuery += " WHERE " + strings.Join(countConditions, " AND ")
 		}
 		var total int64
 		_ = s.conn.QueryRow(ctx, countQuery, countArgs...).Scan(&total)
