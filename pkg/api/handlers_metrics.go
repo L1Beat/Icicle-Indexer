@@ -42,6 +42,16 @@ type FeeStats struct {
 	ValidatorCount  uint32 `json:"validator_count" example:"5"`
 }
 
+// FeeSummary represents aggregated totals across all L1 subnets
+type FeeSummary struct {
+	TotalDeposited uint64 `json:"total_deposited"`
+	TotalRefunded  uint64 `json:"total_refunded"`
+	TotalFeesPaid  uint64 `json:"total_fees_paid"`
+	CurrentBalance uint64 `json:"current_balance"`
+	SubnetCount    uint32 `json:"subnet_count"`
+	ValidatorCount uint32 `json:"validator_count"`
+}
+
 // ChainMetrics represents aggregate statistics for a chain
 type ChainMetrics struct {
 	ChainID       uint32    `json:"chain_id" example:"43114"`
@@ -132,9 +142,31 @@ func (s *Server) handleFeeMetrics(w http.ResponseWriter, r *http.Request) {
 		meta.Total = total
 	}
 
-	writeJSON(w, http.StatusOK, Response{
-		Data: stats,
-		Meta: meta,
+	// Always include summary totals across all subnets
+	var summary FeeSummary
+	_ = s.conn.QueryRow(ctx, `
+		SELECT
+			sum(total_deposited),
+			sum(total_refunded),
+			sum(total_fees_paid),
+			sum(current_balance),
+			toUInt32(count()),
+			toUInt32(sum(validator_count))
+		FROM l1_fee_stats FINAL
+	`).Scan(
+		&summary.TotalDeposited, &summary.TotalRefunded,
+		&summary.TotalFeesPaid, &summary.CurrentBalance,
+		&summary.SubnetCount, &summary.ValidatorCount,
+	)
+
+	writeJSON(w, http.StatusOK, struct {
+		Data    interface{} `json:"data,omitempty"`
+		Meta    *Meta       `json:"meta,omitempty"`
+		Summary *FeeSummary `json:"summary,omitempty"`
+	}{
+		Data:    stats,
+		Meta:    meta,
+		Summary: &summary,
 	})
 }
 
