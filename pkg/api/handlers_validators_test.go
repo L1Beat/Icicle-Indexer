@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var validatorColumns = []string{"subnet_id", "validation_id", "node_id", "balance", "weight", "start_time", "end_time", "uptime_percentage", "active", "initial_deposit", "total_topups", "refund_amount", "fees_paid", "primary_stake", "primary_uptime"}
+var validatorColumns = []string{"subnet_id", "validation_id", "node_id", "balance", "weight", "start_time", "end_time", "uptime_percentage", "active", "initial_deposit", "total_topups", "refund_amount", "fees_paid", "created_tx_id", "created_tx_type", "created_block", "created_time", "bls_public_key", "remaining_balance_owner", "primary_stake", "primary_uptime"}
 
 func TestHandleListValidators_Success(t *testing.T) {
 	mock := &MockConn{
@@ -24,7 +24,7 @@ func TestHandleListValidators_Success(t *testing.T) {
 			return NewMockRows(
 				validatorColumns,
 				[][]interface{}{
-					{"2XDnKyAEr123", "2ZW6HUePB456", "NodeID-P7oB2McjBGgW", uint64(100000000000), uint64(2000), time.Now(), time.Now().Add(24 * time.Hour), float64(99.5), true, uint64(100000000000), uint64(50000000000), uint64(0), uint64(5000000000), uint64(0), float64(0)},
+					{"2XDnKyAEr123", "2ZW6HUePB456", "NodeID-P7oB2McjBGgW", uint64(100000000000), uint64(2000), time.Now(), time.Now().Add(24 * time.Hour), float64(99.5), true, uint64(100000000000), uint64(50000000000), uint64(0), uint64(5000000000), "tx123", "RegisterL1ValidatorTx", uint64(12345678), time.Now(), "0x8ea73dd040", "avax1abc123", uint64(0), float64(0)},
 				},
 			), nil
 		},
@@ -138,7 +138,7 @@ func TestHandleListValidators_Pagination(t *testing.T) {
 func TestHandleGetValidator_Success(t *testing.T) {
 	mock := &MockConn{
 		QueryRowFunc: func(ctx context.Context, query string, args ...interface{}) driver.Row {
-			if strings.Contains(query, "validation_id") {
+			if strings.Contains(query, "v.validation_id") {
 				return &MockRow{
 					scanFunc: func(dest ...interface{}) error {
 						*dest[0].(*string) = "2XDnKyAEr123"
@@ -154,6 +154,12 @@ func TestHandleGetValidator_Success(t *testing.T) {
 						*dest[10].(*uint64) = 50000000000
 						*dest[11].(*uint64) = 0
 						*dest[12].(*uint64) = 5000000000
+						*dest[13].(*string) = "tx123"
+						*dest[14].(*string) = "RegisterL1ValidatorTx"
+						*dest[15].(*uint64) = 12345678
+						*dest[16].(*time.Time) = time.Now()
+						*dest[17].(*string) = "0x8ea73dd040"
+						*dest[18].(*string) = "avax1abc123"
 						return nil
 					},
 				}
@@ -193,7 +199,7 @@ func TestHandleGetValidator_NotFound(t *testing.T) {
 func TestHandleGetValidator_CanSearchByNodeID(t *testing.T) {
 	mock := &MockConn{
 		QueryRowFunc: func(ctx context.Context, query string, args ...interface{}) driver.Row {
-			if strings.Contains(query, "validation_id = ? OR node_id = ?") {
+			if strings.Contains(query, "v.validation_id = ? OR v.node_id = ?") {
 				assert.Equal(t, "NodeID-P7oB2McjBGgW", args[0])
 				assert.Equal(t, "NodeID-P7oB2McjBGgW", args[1])
 				return &MockRow{
@@ -211,6 +217,12 @@ func TestHandleGetValidator_CanSearchByNodeID(t *testing.T) {
 						*dest[10].(*uint64) = 50000000000
 						*dest[11].(*uint64) = 0
 						*dest[12].(*uint64) = 5000000000
+						*dest[13].(*string) = "tx123"
+						*dest[14].(*string) = "RegisterL1ValidatorTx"
+						*dest[15].(*uint64) = 12345678
+						*dest[16].(*time.Time) = time.Now()
+						*dest[17].(*string) = "0x8ea73dd040"
+						*dest[18].(*string) = "avax1abc123"
 						return nil
 					},
 				}
@@ -238,7 +250,7 @@ func TestHandleGetValidator_LegacySubnetEnriched(t *testing.T) {
 	mock := &MockConn{
 		QueryRowFunc: func(ctx context.Context, query string, args ...interface{}) driver.Row {
 			callCount++
-			if strings.Contains(query, "validation_id = ? OR node_id = ?") {
+			if strings.Contains(query, "v.validation_id = ? OR v.node_id = ?") {
 				// Return a legacy subnet validator
 				return &MockRow{
 					scanFunc: func(dest ...interface{}) error {
@@ -255,6 +267,12 @@ func TestHandleGetValidator_LegacySubnetEnriched(t *testing.T) {
 						*dest[10].(*uint64) = 0
 						*dest[11].(*uint64) = 0
 						*dest[12].(*uint64) = 0
+						*dest[13].(*string) = ""
+						*dest[14].(*string) = ""
+						*dest[15].(*uint64) = 0
+						*dest[16].(*time.Time) = time.Time{}
+						*dest[17].(*string) = ""
+						*dest[18].(*string) = ""
 						return nil
 					},
 				}

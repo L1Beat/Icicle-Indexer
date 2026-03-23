@@ -23,10 +23,37 @@ type Validator struct {
 	RefundAmount     uint64    `json:"refund_amount" example:"0"`
 	FeesPaid         uint64    `json:"fees_paid" example:"5000000000"`
 
+	// Registration info (from l1_validator_history)
+	TxHash                string     `json:"tx_hash,omitempty" example:"2aCDtYusy..."`
+	TxType                string     `json:"tx_type,omitempty" example:"RegisterL1ValidatorTx"`
+	CreatedBlock          *uint64    `json:"created_block,omitempty" example:"12345678"`
+	CreatedTime           *time.Time `json:"created_time,omitempty"`
+	BLSPublicKey          string     `json:"bls_public_key,omitempty" example:"0x8ea73dd040..."`
+	RemainingBalanceOwner string     `json:"remaining_balance_owner,omitempty" example:"avax1pjht9ute9..."`
+
+	// Computed fields (detail endpoint only)
+	TotalDeposited       *uint64  `json:"total_deposited,omitempty" example:"150000000000"`
+	DaysRemaining        *float64 `json:"days_remaining,omitempty" example:"45.5"`
+	EstimatedDaysLeft    *float64 `json:"estimated_days_left,omitempty" example:"30.2"`
+	DailyFeeBurn         *uint64  `json:"daily_fee_burn,omitempty" example:"44236800"`
+	NetworkSharePercent  *float64 `json:"network_share_percent,omitempty" example:"0.0027"`
+
+	// Delegation data (Primary Network validators, detail endpoint only)
+	DelegationFeePercent *float64 `json:"delegation_fee_percent,omitempty" example:"2.0"`
+	DelegatorCount       *uint64  `json:"delegator_count,omitempty" example:"6"`
+	TotalDelegated       *uint64  `json:"total_delegated,omitempty" example:"3897926468660"`
+	TotalStake           *uint64  `json:"total_stake,omitempty" example:"6347926468660"`
+
 	// Primary Network data (for legacy subnet validators)
 	PrimaryStake  *uint64  `json:"primary_stake,omitempty" example:"2000000000000"`
 	PrimaryUptime *float64 `json:"primary_uptime,omitempty" example:"99.99"`
 }
+
+const (
+	// L1 validators burn 512 nAVAX per second
+	burnRatePerSecond = 512
+	burnRatePerDay    = burnRatePerSecond * 86400 // 44,236,800 nAVAX/day
+)
 
 // ValidatorDeposit represents a balance transaction for a validator
 type ValidatorDeposit struct {
@@ -95,9 +122,13 @@ func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 				v.subnet_id, v.validation_id, v.node_id, v.balance, v.weight,
 				v.start_time, v.end_time, v.uptime_percentage, v.active,
 				v.initial_deposit, v.total_topups, v.refund_amount, v.fees_paid,
+				h.created_tx_id, h.created_tx_type, h.created_block, h.created_time,
+				h.bls_public_key, h.remaining_balance_owner,
 				p.weight AS primary_stake,
 				p.uptime_percentage AS primary_uptime
 			FROM (SELECT * FROM l1_validator_state FINAL) v
+			LEFT JOIN (SELECT * FROM l1_validator_history FINAL) h
+				ON v.validation_id = h.validation_id AND v.subnet_id = h.subnet_id
 			LEFT JOIN (
 				SELECT node_id, weight, uptime_percentage
 				FROM l1_validator_state FINAL
@@ -113,9 +144,13 @@ func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 				v.subnet_id, v.validation_id, v.node_id, v.balance, v.weight,
 				v.start_time, v.end_time, v.uptime_percentage, v.active,
 				v.initial_deposit, v.total_topups, v.refund_amount, v.fees_paid,
+				h.created_tx_id, h.created_tx_type, h.created_block, h.created_time,
+				h.bls_public_key, h.remaining_balance_owner,
 				toUInt64(0) AS primary_stake,
 				toFloat64(0) AS primary_uptime
 			FROM (SELECT * FROM l1_validator_state FINAL) v
+			LEFT JOIN (SELECT * FROM l1_validator_history FINAL) h
+				ON v.validation_id = h.validation_id AND v.subnet_id = h.subnet_id
 			%s
 			ORDER BY v.weight DESC
 			LIMIT ? OFFSET ?
@@ -133,16 +168,24 @@ func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 	validators := []Validator{}
 	for rows.Next() {
 		var v Validator
+		var createdBlock uint64
+		var createdTime time.Time
 		var primaryStake uint64
 		var primaryUptime float64
 		if err := rows.Scan(
 			&v.SubnetID, &v.ValidationID, &v.NodeID, &v.Balance, &v.Weight,
 			&v.StartTime, &v.EndTime, &v.UptimePercentage, &v.Active,
 			&v.InitialDeposit, &v.TotalTopups, &v.RefundAmount, &v.FeesPaid,
+			&v.TxHash, &v.TxType, &createdBlock, &createdTime,
+			&v.BLSPublicKey, &v.RemainingBalanceOwner,
 			&primaryStake, &primaryUptime,
 		); err != nil {
 			writeInternalError(w, err.Error())
 			return
+		}
+		if createdBlock > 0 {
+			v.CreatedBlock = &createdBlock
+			v.CreatedTime = &createdTime
 		}
 		if isLegacySubnet && primaryStake > 0 {
 			v.PrimaryStake = &primaryStake
@@ -195,39 +238,66 @@ func (s *Server) handleGetValidator(w http.ResponseWriter, r *http.Request) {
 	if subnetID != "" {
 		query = `
 			SELECT
-				subnet_id, validation_id, node_id, balance, weight,
-				start_time, end_time, uptime_percentage, active,
-				initial_deposit, total_topups, refund_amount, fees_paid
-			FROM l1_validator_state FINAL
-			WHERE (validation_id = ? OR node_id = ?) AND subnet_id = ?
+				v.subnet_id, v.validation_id, v.node_id, v.balance, v.weight,
+				v.start_time, v.end_time, v.uptime_percentage, v.active,
+				v.initial_deposit, v.total_topups, v.refund_amount, v.fees_paid,
+				h.created_tx_id, h.created_tx_type, h.created_block, h.created_time,
+				h.bls_public_key, h.remaining_balance_owner
+			FROM (SELECT * FROM l1_validator_state FINAL) v
+			LEFT JOIN (SELECT * FROM l1_validator_history FINAL) h
+				ON v.validation_id = h.validation_id AND v.subnet_id = h.subnet_id
+			WHERE (v.validation_id = ? OR v.node_id = ?) AND v.subnet_id = ?
 			LIMIT 1
 		`
 		args = []interface{}{id, id, subnetID}
 	} else {
 		query = `
 			SELECT
-				subnet_id, validation_id, node_id, balance, weight,
-				start_time, end_time, uptime_percentage, active,
-				initial_deposit, total_topups, refund_amount, fees_paid
-			FROM l1_validator_state FINAL
-			WHERE validation_id = ? OR node_id = ?
+				v.subnet_id, v.validation_id, v.node_id, v.balance, v.weight,
+				v.start_time, v.end_time, v.uptime_percentage, v.active,
+				v.initial_deposit, v.total_topups, v.refund_amount, v.fees_paid,
+				h.created_tx_id, h.created_tx_type, h.created_block, h.created_time,
+				h.bls_public_key, h.remaining_balance_owner
+			FROM (SELECT * FROM l1_validator_state FINAL) v
+			LEFT JOIN (SELECT * FROM l1_validator_history FINAL) h
+				ON v.validation_id = h.validation_id AND v.subnet_id = h.subnet_id
+			WHERE v.validation_id = ? OR v.node_id = ?
 			LIMIT 1
 		`
 		args = []interface{}{id, id}
 	}
 
+	var createdBlock uint64
+	var createdTime time.Time
 	err := s.conn.QueryRow(ctx, query, args...).Scan(
 		&v.SubnetID, &v.ValidationID, &v.NodeID, &v.Balance, &v.Weight,
 		&v.StartTime, &v.EndTime, &v.UptimePercentage, &v.Active,
 		&v.InitialDeposit, &v.TotalTopups, &v.RefundAmount, &v.FeesPaid,
+		&v.TxHash, &v.TxType, &createdBlock, &createdTime,
+		&v.BLSPublicKey, &v.RemainingBalanceOwner,
 	)
 
 	if err != nil {
 		writeNotFoundError(w, "Validator")
 		return
 	}
+	if createdBlock > 0 {
+		v.CreatedBlock = &createdBlock
+		v.CreatedTime = &createdTime
+	}
 
-	// If this is a legacy subnet validator, enrich with Primary Network data
+	// Computed fields
+	totalDeposited := v.InitialDeposit + v.TotalTopups
+	v.TotalDeposited = &totalDeposited
+
+	now := time.Now()
+	if v.Active && v.EndTime.After(now) {
+		daysRemaining := v.EndTime.Sub(now).Hours() / 24
+		v.DaysRemaining = &daysRemaining
+	}
+
+	// L1 validators have fee burn; Primary Network and legacy don't
+	isL1Validator := false
 	if v.SubnetID != primaryNetworkSubnetID {
 		var subnetType string
 		_ = s.conn.QueryRow(ctx, `
@@ -235,6 +305,7 @@ func (s *Server) handleGetValidator(w http.ResponseWriter, r *http.Request) {
 		`, v.SubnetID).Scan(&subnetType)
 
 		if subnetType == "legacy" {
+			// Legacy subnet validator — enrich with Primary Network data
 			var primaryStake uint64
 			var primaryUptime float64
 			err := s.conn.QueryRow(ctx, `
@@ -247,6 +318,66 @@ func (s *Server) handleGetValidator(w http.ResponseWriter, r *http.Request) {
 				v.PrimaryStake = &primaryStake
 				v.PrimaryUptime = &primaryUptime
 			}
+		} else {
+			isL1Validator = true
+		}
+	}
+
+	if isL1Validator {
+		// L1 fee burn stats
+		dailyBurn := uint64(burnRatePerDay)
+		v.DailyFeeBurn = &dailyBurn
+		if v.Active && v.Balance > 0 {
+			daysLeft := float64(v.Balance) / float64(burnRatePerDay)
+			v.EstimatedDaysLeft = &daysLeft
+		}
+	}
+
+	// Delegation data — query from p_chain_txs for Primary Network validators
+	if v.SubnetID == primaryNetworkSubnetID {
+		// Get delegation fee % from the validator's registration tx
+		var shares uint32
+		err := s.conn.QueryRow(ctx, `
+			SELECT toUInt32OrZero(toString(tx_data.shares))
+			FROM p_chain_txs
+			WHERE tx_type IN ('AddValidator', 'AddPermissionlessValidator')
+			AND toString(tx_data.validator.nodeID) = ?
+			ORDER BY block_number DESC
+			LIMIT 1
+		`, v.NodeID).Scan(&shares)
+		if err == nil && shares > 0 {
+			feePercent := float64(shares) / 10000.0 // shares is in basis points (10000 = 1%)
+			v.DelegationFeePercent = &feePercent
+		}
+
+		// Get delegator count and total delegated stake
+		var delegatorCount uint64
+		var totalDelegated uint64
+		err = s.conn.QueryRow(ctx, `
+			SELECT
+				toUInt64(count()) as cnt,
+				toUInt64(sum(toUInt64OrZero(toString(tx_data.validator.wght)))) as total
+			FROM p_chain_txs
+			WHERE tx_type IN ('AddDelegator', 'AddPermissionlessDelegator')
+			AND toString(tx_data.validator.nodeID) = ?
+		`, v.NodeID).Scan(&delegatorCount, &totalDelegated)
+		if err == nil && delegatorCount > 0 {
+			v.DelegatorCount = &delegatorCount
+			v.TotalDelegated = &totalDelegated
+			totalStake := v.Weight + totalDelegated
+			v.TotalStake = &totalStake
+		}
+
+		// Network share
+		var totalNetworkStake uint64
+		_ = s.conn.QueryRow(ctx, `
+			SELECT toUInt64(sum(weight))
+			FROM (SELECT * FROM l1_validator_state FINAL)
+			WHERE subnet_id = ?
+		`, primaryNetworkSubnetID).Scan(&totalNetworkStake)
+		if totalNetworkStake > 0 {
+			share := (float64(v.Weight) / float64(totalNetworkStake)) * 100
+			v.NetworkSharePercent = &share
 		}
 	}
 
