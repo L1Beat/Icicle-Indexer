@@ -1,8 +1,10 @@
 package api
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -362,6 +364,155 @@ func (s *Server) handleGetMetric(w http.ResponseWriter, r *http.Request) {
 		MetricName:  metricName,
 		Granularity: granularity,
 		Data:        data,
+	}
+
+	writeJSON(w, http.StatusOK, Response{Data: result})
+}
+
+// DailyFeeBurn represents the total fee burn for a single day
+type DailyFeeBurn struct {
+	Date             string                  `json:"date" example:"2025-01-15"`
+	TotalFeesBurned  uint64                  `json:"total_fees_burned" example:"44236800"`
+	ActiveValidators uint32                  `json:"active_validators" example:"5"`
+	Validators       []ValidatorDailyFeeBurn `json:"validators,omitempty"`
+}
+
+// ValidatorDailyFeeBurn represents a single validator's fee burn for a day
+type ValidatorDailyFeeBurn struct {
+	ValidationID string `json:"validation_id" example:"2ZW6HUePB..."`
+	NodeID       string `json:"node_id" example:"NodeID-P7oB2McjBGgW..."`
+	FeesBurned   uint64 `json:"fees_burned" example:"44236800"`
+	ActiveSecs   uint64 `json:"active_seconds" example:"86400"`
+}
+
+// handleDailyFeeBurn returns daily fee burn data for an L1 subnet
+// @Summary Get daily fee burn
+// @Description Get daily L1 validation fee burn computed from validator active periods (512 nAVAX/sec per validator)
+// @Tags Metrics - Fees
+// @Produce json
+// @Param subnet_id query string true "Subnet ID"
+// @Param days query int false "Number of days (max 365)" default(90)
+// @Param validators query string false "Include per-validator breakdown (true/false)"
+// @Success 200 {object} Response{data=[]DailyFeeBurn}
+// @Failure 400 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/metrics/fees/daily [get]
+func (s *Server) handleDailyFeeBurn(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	subnetID := r.URL.Query().Get("subnet_id")
+	if subnetID == "" {
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "subnet_id is required")
+		return
+	}
+
+	days := 90
+	if d := r.URL.Query().Get("days"); d != "" {
+		if parsed, err := strconv.Atoi(d); err == nil && parsed > 0 {
+			days = parsed
+		}
+	}
+	if days > 365 {
+		days = 365
+	}
+
+	includeValidators := r.URL.Query().Get("validators") == "true"
+
+	// Query: for each day, for each validator, compute active seconds on that day.
+	// A validator is active from start_time until it gets disabled (refund block_time) or until now if still active.
+	// Fee burn = active_seconds * 512 nAVAX/sec
+	query := fmt.Sprintf(`
+		WITH
+		-- Generate date series
+		dates AS (
+			SELECT toDate(now()) - number AS day
+			FROM numbers(%d)
+		),
+		-- All validators for this subnet with their active periods
+		validators AS (
+			SELECT
+				v.validation_id,
+				v.node_id,
+				v.start_time,
+				CASE
+					WHEN v.active = true THEN now()
+					ELSE coalesce(
+						(SELECT max(block_time) FROM l1_validator_refunds FINAL
+						 WHERE validation_id = v.validation_id AND subnet_id = v.subnet_id),
+						v.start_time
+					)
+				END AS end_time
+			FROM l1_validator_state FINAL v
+			WHERE v.subnet_id = ?
+		)
+		SELECT
+			d.day,
+			v.validation_id,
+			v.node_id,
+			-- Seconds active on this day: overlap of [start_time, end_time) with [day_start, day_end)
+			toUInt64(greatest(0,
+				dateDiff('second',
+					greatest(v.start_time, toDateTime64(d.day, 3, 'UTC')),
+					least(v.end_time, toDateTime64(d.day + 1, 3, 'UTC'))
+				)
+			)) AS active_seconds
+		FROM dates d
+		CROSS JOIN validators v
+		WHERE v.start_time < toDateTime64(d.day + 1, 3, 'UTC')
+		  AND v.end_time > toDateTime64(d.day, 3, 'UTC')
+		ORDER BY d.day ASC, active_seconds DESC
+	`, days)
+
+	rows, err := s.conn.Query(ctx, query, subnetID)
+	if err != nil {
+		slog.Error("Daily fee burn query failed", "subnet_id", subnetID, "error", err)
+		writeInternalError(w, err.Error())
+		return
+	}
+	defer rows.Close()
+
+	// Aggregate results by day
+	type dayKey = string
+	dayMap := make(map[dayKey]*DailyFeeBurn)
+	dayOrder := []dayKey{}
+
+	for rows.Next() {
+		var day time.Time
+		var validationID, nodeID string
+		var activeSecs uint64
+
+		if err := rows.Scan(&day, &validationID, &nodeID, &activeSecs); err != nil {
+			writeInternalError(w, err.Error())
+			return
+		}
+
+		dateStr := day.Format("2006-01-02")
+		feesBurned := activeSecs * 512 // 512 nAVAX/sec
+
+		entry, ok := dayMap[dateStr]
+		if !ok {
+			entry = &DailyFeeBurn{Date: dateStr}
+			dayMap[dateStr] = entry
+			dayOrder = append(dayOrder, dateStr)
+		}
+
+		entry.TotalFeesBurned += feesBurned
+		entry.ActiveValidators++
+
+		if includeValidators {
+			entry.Validators = append(entry.Validators, ValidatorDailyFeeBurn{
+				ValidationID: validationID,
+				NodeID:       nodeID,
+				FeesBurned:   feesBurned,
+				ActiveSecs:   activeSecs,
+			})
+		}
+	}
+
+	// Build ordered result
+	result := make([]DailyFeeBurn, 0, len(dayOrder))
+	for _, d := range dayOrder {
+		result = append(result, *dayMap[d])
 	}
 
 	writeJSON(w, http.StatusOK, Response{Data: result})

@@ -169,6 +169,7 @@ func (s *Server) registerRoutes() {
 
 	// L1 Fee Metrics
 	s.router.HandleFunc("GET /api/v1/metrics/fees", s.handleFeeMetrics)
+	s.router.HandleFunc("GET /api/v1/metrics/fees/daily", s.handleDailyFeeBurn)
 
 	// EVM Chain Stats & Time Series
 	s.router.HandleFunc("GET /api/v1/metrics/evm/{chainId}/stats", s.handleChainMetrics)
