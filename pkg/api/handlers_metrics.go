@@ -422,33 +422,31 @@ func (s *Server) handleDailyFeeBurn(w http.ResponseWriter, r *http.Request) {
 	// Fee burn = active_seconds * 512 nAVAX/sec
 	query := `
 		WITH
-		-- Generate date series
 		dates AS (
 			SELECT toDate(now()) - number AS day
 			FROM numbers(?)
 		),
-		-- All validators for this subnet with their active periods
 		validators AS (
 			SELECT
 				v.validation_id,
 				v.node_id,
 				v.start_time,
-				CASE
-					WHEN v.active = true THEN now()
-					ELSE coalesce(
-						(SELECT max(block_time) FROM l1_validator_refunds FINAL
-						 WHERE validation_id = v.validation_id AND subnet_id = v.subnet_id),
-						v.start_time
-					)
-				END AS end_time
+				if(v.active = true,
+					now(),
+					coalesce(r.disable_time, v.start_time)
+				) AS end_time
 			FROM l1_validator_state FINAL v
+			LEFT JOIN (
+				SELECT validation_id, subnet_id, max(block_time) AS disable_time
+				FROM l1_validator_refunds FINAL
+				GROUP BY validation_id, subnet_id
+			) r ON r.validation_id = v.validation_id AND r.subnet_id = v.subnet_id
 			WHERE v.subnet_id = ?
 		)
 		SELECT
 			d.day,
 			v.validation_id,
 			v.node_id,
-			-- Seconds active on this day: overlap of [start_time, end_time) with [day_start, day_end)
 			toUInt64(greatest(0,
 				dateDiff('second',
 					greatest(v.start_time, toDateTime64(d.day, 3, 'UTC')),
