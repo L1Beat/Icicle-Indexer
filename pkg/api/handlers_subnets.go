@@ -252,7 +252,7 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 			v.active_validators, v.total_staked
 		FROM (SELECT * FROM subnet_chains FINAL) c
 		INNER JOIN (SELECT * FROM subnets FINAL) s ON c.subnet_id = s.subnet_id
-		LEFT JOIN (SELECT * FROM l1_registry FINAL) r ON c.subnet_id = r.subnet_id
+		LEFT JOIN (SELECT * FROM l1_registry FINAL) r ON c.chain_id = r.blockchain_id
 		LEFT JOIN (SELECT * FROM l1_fee_stats FINAL) f ON c.subnet_id = f.subnet_id
 		LEFT JOIN (
 			SELECT subnet_id,
@@ -408,7 +408,7 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 			countArgs = append(countArgs, subnetID)
 		}
 		if category != "" {
-			countQuery += ` LEFT JOIN (SELECT * FROM l1_registry FINAL) r ON c.subnet_id = r.subnet_id`
+			countQuery += ` LEFT JOIN (SELECT * FROM l1_registry FINAL) r ON c.chain_id = r.blockchain_id`
 			countConditions = append(countConditions, "hasAny(arrayMap(x -> upper(x), r.categories), [upper(?)])")
 			countArgs = append(countArgs, category)
 		}

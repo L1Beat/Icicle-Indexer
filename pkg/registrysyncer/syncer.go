@@ -142,9 +142,9 @@ func SyncRegistry(ctx context.Context, conn clickhouse.Conn) error {
 	return nil
 }
 
-func insertRegistryData(ctx context.Context, conn clickhouse.Conn, chains []ChainRegistry) error {
+func insertRegistryData(ctx context.Context, conn clickhouse.Conn, registries []ChainRegistry) error {
 	batch, err := conn.PrepareBatch(ctx, `INSERT INTO l1_registry (
-		subnet_id, name, description, logo_url, website_url,
+		blockchain_id, subnet_id, name, description, logo_url, website_url,
 		network, is_l1, categories, socials,
 		evm_chain_id, rpc_url, explorer_url, sybil_resistance_type,
 		network_token_name, network_token_symbol, network_token_decimals, network_token_logo_uri,
@@ -155,56 +155,49 @@ func insertRegistryData(ctx context.Context, conn clickhouse.Conn, chains []Chai
 	}
 
 	now := time.Now()
-	for _, chain := range chains {
-		// Serialize socials to JSON
-		socialsJSON, _ := json.Marshal(chain.Socials)
+	for _, reg := range registries {
+		socialsJSON, _ := json.Marshal(reg.Socials)
 
-		// Use the first chain entry for per-chain fields
-		var evmChainID uint64
-		var rpcURL, explorerURL, sybilType string
-		var tokenName, tokenSymbol, tokenLogoURI string
-		var tokenDecimals uint8 = 18
+		// Insert one row per chain in the registry entry
+		for _, c := range reg.Chains {
+			if c.BlockchainID == "" {
+				continue
+			}
 
-		if len(chain.Chains) > 0 {
-			c := chain.Chains[0]
-			evmChainID = c.EvmChainID
+			var rpcURL string
 			if len(c.RpcURLs) > 0 {
 				rpcURL = c.RpcURLs[0]
 			}
-			explorerURL = c.ExplorerURL
-			sybilType = c.SybilResistanceType
-			tokenName = c.NativeToken.Name
-			tokenSymbol = c.NativeToken.Symbol
-			tokenDecimals = c.NativeToken.Decimals
-			tokenLogoURI = c.NativeToken.LogoURI
-		}
 
-		if tokenDecimals == 0 {
-			tokenDecimals = 18
-		}
+			tokenDecimals := c.NativeToken.Decimals
+			if tokenDecimals == 0 {
+				tokenDecimals = 18
+			}
 
-		err = batch.Append(
-			chain.SubnetID,
-			chain.Name,
-			chain.Description,
-			chain.Logo,
-			chain.Website,
-			chain.Network,
-			chain.IsL1,
-			chain.Categories,
-			string(socialsJSON),
-			evmChainID,
-			rpcURL,
-			explorerURL,
-			sybilType,
-			tokenName,
-			tokenSymbol,
-			tokenDecimals,
-			tokenLogoURI,
-			now,
-		)
-		if err != nil {
-			return fmt.Errorf("failed to append chain %s: %w", chain.Name, err)
+			err = batch.Append(
+				c.BlockchainID,
+				reg.SubnetID,
+				reg.Name,
+				reg.Description,
+				reg.Logo,
+				reg.Website,
+				reg.Network,
+				reg.IsL1,
+				reg.Categories,
+				string(socialsJSON),
+				c.EvmChainID,
+				rpcURL,
+				c.ExplorerURL,
+				c.SybilResistanceType,
+				c.NativeToken.Name,
+				c.NativeToken.Symbol,
+				tokenDecimals,
+				c.NativeToken.LogoURI,
+				now,
+			)
+			if err != nil {
+				return fmt.Errorf("failed to append chain %s/%s: %w", reg.Name, c.BlockchainID, err)
+			}
 		}
 	}
 

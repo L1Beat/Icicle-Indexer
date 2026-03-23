@@ -219,7 +219,9 @@ CREATE TABLE IF NOT EXISTS l1_subnets (
 PRIMARY KEY (p_chain_id, subnet_id);
 
 -- L1 Registry table - metadata from external registry (l1beat-l1-registry npm package)
+-- Keyed by chain_id (blockchainId from registry) so each chain gets its own metadata
 CREATE TABLE IF NOT EXISTS l1_registry (
+    blockchain_id String,                    -- blockchain ID (CB58) from registry chains[].blockchainId
     subnet_id String,
     name String,
     description String,
@@ -232,7 +234,7 @@ CREATE TABLE IF NOT EXISTS l1_registry (
     categories Array(String),               -- e.g. ["DeFi", "Gaming"]
     socials String DEFAULT '[]',            -- JSON array of {name, url}
 
-    -- Per-chain fields (first/primary chain)
+    -- Per-chain fields
     evm_chain_id UInt64 DEFAULT 0,          -- EVM chain ID (e.g. 43114)
     rpc_url String DEFAULT '',              -- Primary RPC URL
     explorer_url String DEFAULT '',         -- Block explorer URL
@@ -246,7 +248,7 @@ CREATE TABLE IF NOT EXISTS l1_registry (
 
     last_updated DateTime64(3, 'UTC')
 ) ENGINE = ReplacingMergeTree(last_updated)
-PRIMARY KEY subnet_id;
+PRIMARY KEY blockchain_id;
 
 -- Unified Subnets table - tracks all subnets with their lifecycle status
 CREATE TABLE IF NOT EXISTS subnets (
