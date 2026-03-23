@@ -1,7 +1,6 @@
 package api
 
 import (
-	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -421,12 +420,12 @@ func (s *Server) handleDailyFeeBurn(w http.ResponseWriter, r *http.Request) {
 	// Query: for each day, for each validator, compute active seconds on that day.
 	// A validator is active from start_time until it gets disabled (refund block_time) or until now if still active.
 	// Fee burn = active_seconds * 512 nAVAX/sec
-	query := fmt.Sprintf(`
+	query := `
 		WITH
 		-- Generate date series
 		dates AS (
 			SELECT toDate(now()) - number AS day
-			FROM numbers(%d)
+			FROM numbers(?)
 		),
 		-- All validators for this subnet with their active periods
 		validators AS (
@@ -461,9 +460,9 @@ func (s *Server) handleDailyFeeBurn(w http.ResponseWriter, r *http.Request) {
 		WHERE v.start_time < toDateTime64(d.day + 1, 3, 'UTC')
 		  AND v.end_time > toDateTime64(d.day, 3, 'UTC')
 		ORDER BY d.day ASC, active_seconds DESC
-	`, days)
+	`
 
-	rows, err := s.conn.Query(ctx, query, subnetID)
+	rows, err := s.conn.Query(ctx, query, days, subnetID)
 	if err != nil {
 		slog.Error("Daily fee burn query failed", "subnet_id", subnetID, "error", err)
 		writeInternalError(w, err.Error())
