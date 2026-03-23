@@ -437,14 +437,24 @@ func (s *Server) handleDailyFeeBurn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	days := 90
+	days := 0 // 0 means "all" — computed from earliest validator
 	if d := r.URL.Query().Get("days"); d != "" {
 		if parsed, err := strconv.Atoi(d); err == nil && parsed > 0 {
 			days = parsed
 		}
 	}
-	if days > 365 {
-		days = 365
+
+	// If no days specified (or 0), compute from earliest validator start
+	if days == 0 {
+		var earliest time.Time
+		_ = s.conn.QueryRow(ctx, `
+			SELECT min(start_time) FROM l1_validator_state FINAL WHERE subnet_id = ?
+		`, subnetID).Scan(&earliest)
+		if earliest.IsZero() {
+			writeJSON(w, http.StatusOK, Response{Data: []DailyFeeBurn{}})
+			return
+		}
+		days = int(time.Since(earliest).Hours()/24) + 1
 	}
 
 	includeValidators := r.URL.Query().Get("validators") == "true"
