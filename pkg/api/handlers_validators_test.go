@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,13 +12,19 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+var validatorColumns = []string{"subnet_id", "validation_id", "node_id", "balance", "weight", "start_time", "end_time", "uptime_percentage", "active", "initial_deposit", "total_topups", "refund_amount", "fees_paid", "primary_stake", "primary_uptime"}
+
 func TestHandleListValidators_Success(t *testing.T) {
 	mock := &MockConn{
+		QueryRowFunc: func(ctx context.Context, query string, args ...interface{}) driver.Row {
+			// Subnet type check returns empty (not legacy)
+			return &MockRow{err: ErrMockDB}
+		},
 		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
 			return NewMockRows(
-				[]string{"subnet_id", "validation_id", "node_id", "balance", "weight", "start_time", "end_time", "uptime_percentage", "active", "initial_deposit", "total_topups", "refund_amount", "fees_paid"},
+				validatorColumns,
 				[][]interface{}{
-					{"2XDnKyAEr123", "2ZW6HUePB456", "NodeID-P7oB2McjBGgW", uint64(100000000000), uint64(2000), time.Now(), time.Now().Add(24 * time.Hour), float64(99.5), true, uint64(100000000000), uint64(50000000000), uint64(0), uint64(5000000000)},
+					{"2XDnKyAEr123", "2ZW6HUePB456", "NodeID-P7oB2McjBGgW", uint64(100000000000), uint64(2000), time.Now(), time.Now().Add(24 * time.Hour), float64(99.5), true, uint64(100000000000), uint64(50000000000), uint64(0), uint64(5000000000), uint64(0), float64(0)},
 				},
 			), nil
 		},
@@ -36,10 +43,22 @@ func TestHandleListValidators_Success(t *testing.T) {
 
 func TestHandleListValidators_FilterBySubnetID(t *testing.T) {
 	mock := &MockConn{
+		QueryRowFunc: func(ctx context.Context, query string, args ...interface{}) driver.Row {
+			// Subnet type check
+			if strings.Contains(query, "subnet_type") {
+				return &MockRow{
+					scanFunc: func(dest ...interface{}) error {
+						*dest[0].(*string) = "l1"
+						return nil
+					},
+				}
+			}
+			return &MockRow{err: ErrMockDB}
+		},
 		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
 			require.Contains(t, query, "subnet_id = ?")
 			assert.Equal(t, "subnet123", args[0])
-			return NewMockRows([]string{"subnet_id", "validation_id", "node_id", "balance", "weight", "start_time", "end_time", "uptime_percentage", "active", "initial_deposit", "total_topups", "refund_amount", "fees_paid"}, [][]interface{}{}), nil
+			return NewMockRows(validatorColumns, [][]interface{}{}), nil
 		},
 	}
 
@@ -53,7 +72,7 @@ func TestHandleListValidators_FilterByActive(t *testing.T) {
 	mock := &MockConn{
 		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
 			require.Contains(t, query, "active = true")
-			return NewMockRows([]string{"subnet_id", "validation_id", "node_id", "balance", "weight", "start_time", "end_time", "uptime_percentage", "active", "initial_deposit", "total_topups", "refund_amount", "fees_paid"}, [][]interface{}{}), nil
+			return NewMockRows(validatorColumns, [][]interface{}{}), nil
 		},
 	}
 
@@ -65,10 +84,13 @@ func TestHandleListValidators_FilterByActive(t *testing.T) {
 
 func TestHandleListValidators_FilterBoth(t *testing.T) {
 	mock := &MockConn{
+		QueryRowFunc: func(ctx context.Context, query string, args ...interface{}) driver.Row {
+			return &MockRow{err: ErrMockDB}
+		},
 		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
 			require.Contains(t, query, "subnet_id = ?")
 			require.Contains(t, query, "active = true")
-			return NewMockRows([]string{"subnet_id", "validation_id", "node_id", "balance", "weight", "start_time", "end_time", "uptime_percentage", "active", "initial_deposit", "total_topups", "refund_amount", "fees_paid"}, [][]interface{}{}), nil
+			return NewMockRows(validatorColumns, [][]interface{}{}), nil
 		},
 	}
 
@@ -80,6 +102,9 @@ func TestHandleListValidators_FilterBoth(t *testing.T) {
 
 func TestHandleListValidators_DatabaseError(t *testing.T) {
 	mock := &MockConn{
+		QueryRowFunc: func(ctx context.Context, query string, args ...interface{}) driver.Row {
+			return &MockRow{err: ErrMockDB}
+		},
 		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
 			return nil, ErrMockDB
 		},
@@ -97,7 +122,7 @@ func TestHandleListValidators_Pagination(t *testing.T) {
 			// Last two args should be fetchLimit and offset
 			assert.Equal(t, 31, args[len(args)-2]) // fetchLimit = limit+1
 			assert.Equal(t, 60, args[len(args)-1])
-			return NewMockRows([]string{"subnet_id", "validation_id", "node_id", "balance", "weight", "start_time", "end_time", "uptime_percentage", "active", "initial_deposit", "total_topups", "refund_amount", "fees_paid"}, [][]interface{}{}), nil
+			return NewMockRows(validatorColumns, [][]interface{}{}), nil
 		},
 	}
 
@@ -113,24 +138,35 @@ func TestHandleListValidators_Pagination(t *testing.T) {
 func TestHandleGetValidator_Success(t *testing.T) {
 	mock := &MockConn{
 		QueryRowFunc: func(ctx context.Context, query string, args ...interface{}) driver.Row {
-			return &MockRow{
-				scanFunc: func(dest ...interface{}) error {
-					*dest[0].(*string) = "2XDnKyAEr123"
-					*dest[1].(*string) = "2ZW6HUePB456"
-					*dest[2].(*string) = "NodeID-P7oB2McjBGgW"
-					*dest[3].(*uint64) = 100000000000
-					*dest[4].(*uint64) = 2000
-					*dest[5].(*time.Time) = time.Now()
-					*dest[6].(*time.Time) = time.Now().Add(24 * time.Hour)
-					*dest[7].(*float64) = 99.5
-					*dest[8].(*bool) = true
-					*dest[9].(*uint64) = 100000000000
-					*dest[10].(*uint64) = 50000000000
-					*dest[11].(*uint64) = 0
-					*dest[12].(*uint64) = 5000000000
-					return nil
-				},
+			if strings.Contains(query, "validation_id") {
+				return &MockRow{
+					scanFunc: func(dest ...interface{}) error {
+						*dest[0].(*string) = "2XDnKyAEr123"
+						*dest[1].(*string) = "2ZW6HUePB456"
+						*dest[2].(*string) = "NodeID-P7oB2McjBGgW"
+						*dest[3].(*uint64) = 100000000000
+						*dest[4].(*uint64) = 2000
+						*dest[5].(*time.Time) = time.Now()
+						*dest[6].(*time.Time) = time.Now().Add(24 * time.Hour)
+						*dest[7].(*float64) = 99.5
+						*dest[8].(*bool) = true
+						*dest[9].(*uint64) = 100000000000
+						*dest[10].(*uint64) = 50000000000
+						*dest[11].(*uint64) = 0
+						*dest[12].(*uint64) = 5000000000
+						return nil
+					},
+				}
 			}
+			if strings.Contains(query, "subnet_type") {
+				return &MockRow{
+					scanFunc: func(dest ...interface{}) error {
+						*dest[0].(*string) = "l1"
+						return nil
+					},
+				}
+			}
+			return &MockRow{err: ErrMockDB}
 		},
 	}
 
@@ -157,33 +193,96 @@ func TestHandleGetValidator_NotFound(t *testing.T) {
 func TestHandleGetValidator_CanSearchByNodeID(t *testing.T) {
 	mock := &MockConn{
 		QueryRowFunc: func(ctx context.Context, query string, args ...interface{}) driver.Row {
-			// Verify both validation_id and node_id are passed
-			require.Contains(t, query, "validation_id = ? OR node_id = ?")
-			assert.Equal(t, "NodeID-P7oB2McjBGgW", args[0])
-			assert.Equal(t, "NodeID-P7oB2McjBGgW", args[1])
-			return &MockRow{
-				scanFunc: func(dest ...interface{}) error {
-					*dest[0].(*string) = "2XDnKyAEr123"
-					*dest[1].(*string) = "2ZW6HUePB456"
-					*dest[2].(*string) = "NodeID-P7oB2McjBGgW"
-					*dest[3].(*uint64) = 100000000000
-					*dest[4].(*uint64) = 2000
-					*dest[5].(*time.Time) = time.Now()
-					*dest[6].(*time.Time) = time.Now().Add(24 * time.Hour)
-					*dest[7].(*float64) = 99.5
-					*dest[8].(*bool) = true
-					*dest[9].(*uint64) = 100000000000
-					*dest[10].(*uint64) = 50000000000
-					*dest[11].(*uint64) = 0
-					*dest[12].(*uint64) = 5000000000
-					return nil
-				},
+			if strings.Contains(query, "validation_id = ? OR node_id = ?") {
+				assert.Equal(t, "NodeID-P7oB2McjBGgW", args[0])
+				assert.Equal(t, "NodeID-P7oB2McjBGgW", args[1])
+				return &MockRow{
+					scanFunc: func(dest ...interface{}) error {
+						*dest[0].(*string) = "2XDnKyAEr123"
+						*dest[1].(*string) = "2ZW6HUePB456"
+						*dest[2].(*string) = "NodeID-P7oB2McjBGgW"
+						*dest[3].(*uint64) = 100000000000
+						*dest[4].(*uint64) = 2000
+						*dest[5].(*time.Time) = time.Now()
+						*dest[6].(*time.Time) = time.Now().Add(24 * time.Hour)
+						*dest[7].(*float64) = 99.5
+						*dest[8].(*bool) = true
+						*dest[9].(*uint64) = 100000000000
+						*dest[10].(*uint64) = 50000000000
+						*dest[11].(*uint64) = 0
+						*dest[12].(*uint64) = 5000000000
+						return nil
+					},
+				}
 			}
+			if strings.Contains(query, "subnet_type") {
+				return &MockRow{
+					scanFunc: func(dest ...interface{}) error {
+						*dest[0].(*string) = "l1"
+						return nil
+					},
+				}
+			}
+			return &MockRow{err: ErrMockDB}
 		},
 	}
 
 	server := NewTestServer(mock)
 	w := MakeRequest(t, server, "GET", "/api/v1/data/validators/NodeID-P7oB2McjBGgW")
+
+	AssertJSONResponse(t, w, http.StatusOK)
+}
+
+func TestHandleGetValidator_LegacySubnetEnriched(t *testing.T) {
+	callCount := 0
+	mock := &MockConn{
+		QueryRowFunc: func(ctx context.Context, query string, args ...interface{}) driver.Row {
+			callCount++
+			if strings.Contains(query, "validation_id = ? OR node_id = ?") {
+				// Return a legacy subnet validator
+				return &MockRow{
+					scanFunc: func(dest ...interface{}) error {
+						*dest[0].(*string) = "2MbQjnTg3yxE"
+						*dest[1].(*string) = "val123"
+						*dest[2].(*string) = "NodeID-Test"
+						*dest[3].(*uint64) = 0
+						*dest[4].(*uint64) = 20
+						*dest[5].(*time.Time) = time.Now()
+						*dest[6].(*time.Time) = time.Now().Add(24 * time.Hour)
+						*dest[7].(*float64) = 0
+						*dest[8].(*bool) = true
+						*dest[9].(*uint64) = 0
+						*dest[10].(*uint64) = 0
+						*dest[11].(*uint64) = 0
+						*dest[12].(*uint64) = 0
+						return nil
+					},
+				}
+			}
+			if strings.Contains(query, "subnet_type") {
+				return &MockRow{
+					scanFunc: func(dest ...interface{}) error {
+						*dest[0].(*string) = "legacy"
+						return nil
+					},
+				}
+			}
+			if strings.Contains(query, "weight, uptime_percentage") {
+				// Primary Network data
+				return &MockRow{
+					scanFunc: func(dest ...interface{}) error {
+						*dest[0].(*uint64) = 2000000000000
+						*dest[1].(*float64) = 99.99
+						return nil
+					},
+				}
+			}
+			return &MockRow{err: ErrMockDB}
+		},
+	}
+
+	server := NewTestServer(mock)
+	w := MakeRequest(t, server, "GET", "/api/v1/data/validators/NodeID-Test")
 
 	AssertJSONResponse(t, w, http.StatusOK)
 }
