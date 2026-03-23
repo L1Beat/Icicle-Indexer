@@ -108,6 +108,10 @@ func SyncRegistry(ctx context.Context, conn clickhouse.Conn) error {
 		if filepath.Base(name) != "chain.json" || !strings.Contains(name, "/data/") {
 			continue
 		}
+		// Skip template directory
+		if strings.Contains(name, "/_template/") {
+			continue
+		}
 
 		content, err := io.ReadAll(tr)
 		if err != nil {

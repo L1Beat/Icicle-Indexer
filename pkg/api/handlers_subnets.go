@@ -221,7 +221,7 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 		args = append(args, subnetID)
 	}
 	if category != "" {
-		conditions = append(conditions, "has(r.categories, ?)")
+		conditions = append(conditions, "hasAny(arrayMap(x -> upper(x), r.categories), [upper(?)])")
 		args = append(args, category)
 	}
 	if cursor != nil {
@@ -404,7 +404,7 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 		}
 		if category != "" {
 			countQuery = `SELECT toInt64(count()) FROM (SELECT * FROM subnet_chains FINAL) c INNER JOIN (SELECT * FROM subnets FINAL) s ON c.subnet_id = s.subnet_id LEFT JOIN (SELECT * FROM l1_registry FINAL) r ON c.subnet_id = r.subnet_id`
-			countConditions = append(countConditions, "has(r.categories, ?)")
+			countConditions = append(countConditions, "hasAny(arrayMap(x -> upper(x), r.categories), [upper(?)])")
 			countArgs = append(countArgs, category)
 		}
 		if len(countConditions) > 0 {
