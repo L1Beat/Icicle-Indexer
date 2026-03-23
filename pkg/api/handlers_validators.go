@@ -396,7 +396,8 @@ func (s *Server) handleGetValidator(w http.ResponseWriter, r *http.Request) {
 			v.DelegationFeePercent = &feePercent
 		}
 
-		// Get delegator count and total delegated stake
+		// Get active delegator count and total delegated stake
+		// Only count delegations whose end time is in the future
 		var delegatorCount uint64
 		var totalDelegated uint64
 		err = s.conn.QueryRow(ctx, `
@@ -406,6 +407,7 @@ func (s *Server) handleGetValidator(w http.ResponseWriter, r *http.Request) {
 			FROM p_chain_txs
 			WHERE tx_type IN ('AddDelegator', 'AddPermissionlessDelegator')
 			AND toString(tx_data.validator.nodeID) = ?
+			AND toUInt64OrZero(toString(tx_data.validator.end)) > toUInt64(now())
 		`, v.NodeID).Scan(&delegatorCount, &totalDelegated)
 		if err == nil && delegatorCount > 0 {
 			v.DelegatorCount = &delegatorCount
