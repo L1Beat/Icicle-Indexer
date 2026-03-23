@@ -426,6 +426,11 @@ func (s *Server) handleDailyFeeBurn(w http.ResponseWriter, r *http.Request) {
 			SELECT toDate(now()) - number AS day
 			FROM numbers(?)
 		),
+		refunds AS (
+			SELECT validation_id, subnet_id, max(block_time) AS disable_time
+			FROM l1_validator_refunds FINAL
+			GROUP BY validation_id, subnet_id
+		),
 		validators AS (
 			SELECT
 				v.validation_id,
@@ -435,13 +440,8 @@ func (s *Server) handleDailyFeeBurn(w http.ResponseWriter, r *http.Request) {
 					now(),
 					coalesce(r.disable_time, v.start_time)
 				) AS end_time
-			FROM l1_validator_state FINAL v
-			LEFT JOIN (
-				SELECT validation_id, subnet_id, max(block_time) AS disable_time
-				FROM l1_validator_refunds FINAL
-				GROUP BY validation_id, subnet_id
-			) r ON r.validation_id = v.validation_id AND r.subnet_id = v.subnet_id
-			WHERE v.subnet_id = ?
+			FROM (SELECT * FROM l1_validator_state FINAL WHERE subnet_id = ?) v
+			LEFT JOIN refunds r ON r.validation_id = v.validation_id AND r.subnet_id = v.subnet_id
 		)
 		SELECT
 			d.day,
