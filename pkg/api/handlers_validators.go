@@ -9,44 +9,51 @@ import (
 
 // Validator represents a validator (L1 or legacy subnet)
 type Validator struct {
-	SubnetID         string    `json:"subnet_id" example:"2XDnKyAEr..."`
-	ValidationID     string    `json:"validation_id" example:"2ZW6HUePB..."`
-	NodeID           string    `json:"node_id" example:"NodeID-P7oB2McjBGgW..."`
-	Balance          uint64    `json:"balance" example:"100000000000"`
-	Weight           uint64    `json:"weight" example:"2000"`
+	// Common fields
+	SubnetID         string    `json:"subnet_id"`
+	ValidationID     string    `json:"validation_id"`
+	NodeID           string    `json:"node_id"`
+	Weight           uint64    `json:"weight"`
 	StartTime        time.Time `json:"start_time"`
-	EndTime          time.Time `json:"end_time"`
-	UptimePercentage float64   `json:"uptime_percentage" example:"99.5"`
-	Active           bool      `json:"active" example:"true"`
-	InitialDeposit   uint64    `json:"initial_deposit" example:"100000000000"`
-	TotalTopups      uint64    `json:"total_topups" example:"50000000000"`
-	RefundAmount     uint64    `json:"refund_amount" example:"0"`
-	FeesPaid         uint64    `json:"fees_paid" example:"5000000000"`
+	Active           bool      `json:"active"`
+
+	// End time (omit if zero/epoch for L1 validators with no expiry)
+	EndTime *time.Time `json:"end_time,omitempty"`
+
+	// Uptime (omit if 0 — L1 validators don't have meaningful uptime)
+	UptimePercentage *float64 `json:"uptime_percentage,omitempty"`
+
+	// L1 validator fields (omit for Primary Network / legacy)
+	Balance        *uint64 `json:"balance,omitempty"`
+	InitialDeposit *uint64 `json:"initial_deposit,omitempty"`
+	TotalTopups    *uint64 `json:"total_topups,omitempty"`
+	RefundAmount   *uint64 `json:"refund_amount,omitempty"`
+	FeesPaid       *uint64 `json:"fees_paid,omitempty"`
 
 	// Registration info (from l1_validator_history)
-	TxHash                string     `json:"tx_hash,omitempty" example:"2aCDtYusy..."`
-	TxType                string     `json:"tx_type,omitempty" example:"RegisterL1ValidatorTx"`
-	CreatedBlock          *uint64    `json:"created_block,omitempty" example:"12345678"`
+	TxHash                string     `json:"tx_hash,omitempty"`
+	TxType                string     `json:"tx_type,omitempty"`
+	CreatedBlock          *uint64    `json:"created_block,omitempty"`
 	CreatedTime           *time.Time `json:"created_time,omitempty"`
-	BLSPublicKey          string     `json:"bls_public_key,omitempty" example:"0x8ea73dd040..."`
-	RemainingBalanceOwner string     `json:"remaining_balance_owner,omitempty" example:"avax1pjht9ute9..."`
+	BLSPublicKey          string     `json:"bls_public_key,omitempty"`
+	RemainingBalanceOwner string     `json:"remaining_balance_owner,omitempty"`
 
 	// Computed fields (detail endpoint only)
-	TotalDeposited       *uint64  `json:"total_deposited,omitempty" example:"150000000000"`
-	DaysRemaining        *float64 `json:"days_remaining,omitempty" example:"45.5"`
-	EstimatedDaysLeft    *float64 `json:"estimated_days_left,omitempty" example:"30.2"`
-	DailyFeeBurn         *uint64  `json:"daily_fee_burn,omitempty" example:"44236800"`
-	NetworkSharePercent  *float64 `json:"network_share_percent,omitempty" example:"0.0027"`
+	TotalDeposited      *uint64  `json:"total_deposited,omitempty"`
+	DaysRemaining       *float64 `json:"days_remaining,omitempty"`
+	EstimatedDaysLeft   *float64 `json:"estimated_days_left,omitempty"`
+	DailyFeeBurn        *uint64  `json:"daily_fee_burn,omitempty"`
+	NetworkSharePercent *float64 `json:"network_share_percent,omitempty"`
 
 	// Delegation data (Primary Network validators, detail endpoint only)
-	DelegationFeePercent *float64 `json:"delegation_fee_percent,omitempty" example:"2.0"`
-	DelegatorCount       *uint64  `json:"delegator_count,omitempty" example:"6"`
-	TotalDelegated       *uint64  `json:"total_delegated,omitempty" example:"3897926468660"`
-	TotalStake           *uint64  `json:"total_stake,omitempty" example:"6347926468660"`
+	DelegationFeePercent *float64 `json:"delegation_fee_percent,omitempty"`
+	DelegatorCount       *uint64  `json:"delegator_count,omitempty"`
+	TotalDelegated       *uint64  `json:"total_delegated,omitempty"`
+	TotalStake           *uint64  `json:"total_stake,omitempty"`
 
 	// Primary Network data (for legacy subnet validators)
-	PrimaryStake  *uint64  `json:"primary_stake,omitempty" example:"2000000000000"`
-	PrimaryUptime *float64 `json:"primary_uptime,omitempty" example:"99.99"`
+	PrimaryStake  *uint64  `json:"primary_stake,omitempty"`
+	PrimaryUptime *float64 `json:"primary_uptime,omitempty"`
 }
 
 const (
@@ -168,14 +175,17 @@ func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 	validators := []Validator{}
 	for rows.Next() {
 		var v Validator
+		var endTime time.Time
+		var uptimePercentage float64
+		var balance, initialDeposit, totalTopups, refundAmount, feesPaid uint64
 		var createdBlock uint64
 		var createdTime time.Time
 		var primaryStake uint64
 		var primaryUptime float64
 		if err := rows.Scan(
-			&v.SubnetID, &v.ValidationID, &v.NodeID, &v.Balance, &v.Weight,
-			&v.StartTime, &v.EndTime, &v.UptimePercentage, &v.Active,
-			&v.InitialDeposit, &v.TotalTopups, &v.RefundAmount, &v.FeesPaid,
+			&v.SubnetID, &v.ValidationID, &v.NodeID, &balance, &v.Weight,
+			&v.StartTime, &endTime, &uptimePercentage, &v.Active,
+			&initialDeposit, &totalTopups, &refundAmount, &feesPaid,
 			&v.TxHash, &v.TxType, &createdBlock, &createdTime,
 			&v.BLSPublicKey, &v.RemainingBalanceOwner,
 			&primaryStake, &primaryUptime,
@@ -190,6 +200,21 @@ func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 		if isLegacySubnet && primaryStake > 0 {
 			v.PrimaryStake = &primaryStake
 			v.PrimaryUptime = &primaryUptime
+		}
+		// Set conditional fields based on validator type
+		isPrimaryNetwork := v.SubnetID == primaryNetworkSubnetID
+		if !endTime.IsZero() && endTime.Year() > 1970 {
+			v.EndTime = &endTime
+		}
+		if uptimePercentage > 0 {
+			v.UptimePercentage = &uptimePercentage
+		}
+		if !isPrimaryNetwork {
+			v.Balance = &balance
+			v.InitialDeposit = &initialDeposit
+			v.TotalTopups = &totalTopups
+			v.RefundAmount = &refundAmount
+			v.FeesPaid = &feesPaid
 		}
 		validators = append(validators, v)
 	}
@@ -267,12 +292,15 @@ func (s *Server) handleGetValidator(w http.ResponseWriter, r *http.Request) {
 		args = []interface{}{id, id}
 	}
 
+	var endTime time.Time
+	var uptimePercentage float64
+	var balance, initialDeposit, totalTopups, refundAmount, feesPaid uint64
 	var createdBlock uint64
 	var createdTime time.Time
 	err := s.conn.QueryRow(ctx, query, args...).Scan(
-		&v.SubnetID, &v.ValidationID, &v.NodeID, &v.Balance, &v.Weight,
-		&v.StartTime, &v.EndTime, &v.UptimePercentage, &v.Active,
-		&v.InitialDeposit, &v.TotalTopups, &v.RefundAmount, &v.FeesPaid,
+		&v.SubnetID, &v.ValidationID, &v.NodeID, &balance, &v.Weight,
+		&v.StartTime, &endTime, &uptimePercentage, &v.Active,
+		&initialDeposit, &totalTopups, &refundAmount, &feesPaid,
 		&v.TxHash, &v.TxType, &createdBlock, &createdTime,
 		&v.BLSPublicKey, &v.RemainingBalanceOwner,
 	)
@@ -286,19 +314,35 @@ func (s *Server) handleGetValidator(w http.ResponseWriter, r *http.Request) {
 		v.CreatedTime = &createdTime
 	}
 
-	// Computed fields
-	totalDeposited := v.InitialDeposit + v.TotalTopups
-	v.TotalDeposited = &totalDeposited
+	isPrimaryNetwork := v.SubnetID == primaryNetworkSubnetID
 
+	// Set conditional fields
+	if !endTime.IsZero() && endTime.Year() > 1970 {
+		v.EndTime = &endTime
+	}
+	if uptimePercentage > 0 {
+		v.UptimePercentage = &uptimePercentage
+	}
+
+	// L1/legacy validators get balance & fee fields; Primary Network doesn't
+	if !isPrimaryNetwork {
+		v.Balance = &balance
+		v.InitialDeposit = &initialDeposit
+		v.TotalTopups = &totalTopups
+		v.RefundAmount = &refundAmount
+		v.FeesPaid = &feesPaid
+	}
+
+	// Computed fields
 	now := time.Now()
-	if v.Active && v.EndTime.After(now) {
+	if v.EndTime != nil && v.Active && v.EndTime.After(now) {
 		daysRemaining := v.EndTime.Sub(now).Hours() / 24
 		v.DaysRemaining = &daysRemaining
 	}
 
 	// L1 validators have fee burn; Primary Network and legacy don't
 	isL1Validator := false
-	if v.SubnetID != primaryNetworkSubnetID {
+	if !isPrimaryNetwork {
 		var subnetType string
 		_ = s.conn.QueryRow(ctx, `
 			SELECT subnet_type FROM subnets FINAL WHERE subnet_id = ? LIMIT 1
@@ -325,10 +369,12 @@ func (s *Server) handleGetValidator(w http.ResponseWriter, r *http.Request) {
 
 	if isL1Validator {
 		// L1 fee burn stats
+		totalDeposited := initialDeposit + totalTopups
+		v.TotalDeposited = &totalDeposited
 		dailyBurn := uint64(burnRatePerDay)
 		v.DailyFeeBurn = &dailyBurn
-		if v.Active && v.Balance > 0 {
-			daysLeft := float64(v.Balance) / float64(burnRatePerDay)
+		if v.Active && balance > 0 {
+			daysLeft := float64(balance) / float64(burnRatePerDay)
 			v.EstimatedDaysLeft = &daysLeft
 		}
 	}
