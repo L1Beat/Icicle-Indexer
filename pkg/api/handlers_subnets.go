@@ -190,6 +190,7 @@ func (s *Server) handleGetSubnet(w http.ResponseWriter, r *http.Request) {
 // @Param chain_type query string false "Filter by chain type (l1, legacy)"
 // @Param subnet_id query string false "Filter by subnet ID"
 // @Param category query string false "Filter by category (e.g. DeFi, Gaming)"
+// @Param active query string false "Filter by active validators (true)"
 // @Param limit query int false "Number of results (max 100)" default(20)
 // @Param offset query int false "Pagination offset" default(0)
 // @Param cursor query string false "Cursor for keyset pagination"
@@ -206,6 +207,7 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 	chainType := r.URL.Query().Get("chain_type")
 	subnetID := r.URL.Query().Get("subnet_id")
 	category := r.URL.Query().Get("category")
+	active := r.URL.Query().Get("active")
 	fetchLimit := limit + 1
 
 	// Build WHERE clauses
@@ -223,6 +225,9 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 	if category != "" {
 		conditions = append(conditions, "hasAny(arrayMap(x -> upper(x), r.categories), [upper(?)])")
 		args = append(args, category)
+	}
+	if active == "true" {
+		conditions = append(conditions, "v.active_validators > 0")
 	}
 	if cursor != nil {
 		conditions = append(conditions, "c.created_block < ?")
@@ -403,9 +408,13 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 			countArgs = append(countArgs, subnetID)
 		}
 		if category != "" {
-			countQuery = `SELECT toInt64(count()) FROM (SELECT * FROM subnet_chains FINAL) c INNER JOIN (SELECT * FROM subnets FINAL) s ON c.subnet_id = s.subnet_id LEFT JOIN (SELECT * FROM l1_registry FINAL) r ON c.subnet_id = r.subnet_id`
+			countQuery += ` LEFT JOIN (SELECT * FROM l1_registry FINAL) r ON c.subnet_id = r.subnet_id`
 			countConditions = append(countConditions, "hasAny(arrayMap(x -> upper(x), r.categories), [upper(?)])")
 			countArgs = append(countArgs, category)
+		}
+		if active == "true" {
+			countQuery += ` LEFT JOIN (SELECT subnet_id, toUInt32(countIf(active = true)) AS active_validators FROM l1_validator_state FINAL GROUP BY subnet_id) v ON c.subnet_id = v.subnet_id`
+			countConditions = append(countConditions, "v.active_validators > 0")
 		}
 		if len(countConditions) > 0 {
 			countQuery += " WHERE " + strings.Join(countConditions, " AND ")
