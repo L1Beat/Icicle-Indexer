@@ -1086,6 +1086,49 @@ func (f *Fetcher) GetCurrentValidators(ctx context.Context, subnetID string) (*G
 	return nil, fmt.Errorf("failed to get current validators for subnet %s after %d retries: %w", subnetID, f.maxRetries, lastErr)
 }
 
+// BlockchainInfo represents a blockchain returned by platform.getBlockchains
+type BlockchainInfo struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	SubnetID string `json:"subnetID"`
+	VMID     string `json:"vmID"`
+}
+
+// GetBlockchainsResponse is the response from platform.getBlockchains
+type GetBlockchainsResponse struct {
+	Blockchains []BlockchainInfo `json:"blockchains"`
+}
+
+// GetBlockchains fetches all blockchains from the P-Chain RPC
+func (f *Fetcher) GetBlockchains(ctx context.Context) (*GetBlockchainsResponse, error) {
+	var lastErr error
+	for attempt := 0; attempt <= f.maxRetries; attempt++ {
+		if attempt > 0 {
+			delay := f.retryDelay * time.Duration(1<<uint(attempt-1))
+			if delay > 10*time.Second {
+				delay = 10 * time.Second
+			}
+			slog.Warn("GetBlockchains failed, retrying", "error", lastErr, "attempt", attempt, "max_retries", f.maxRetries, "delay", delay)
+			time.Sleep(delay)
+		}
+
+		var response GetBlockchainsResponse
+		err := f.client.Requester.SendRequest(
+			ctx,
+			"platform.getBlockchains",
+			struct{}{},
+			&response,
+		)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		return &response, nil
+	}
+
+	return nil, fmt.Errorf("failed to get blockchains after %d retries: %w", f.maxRetries, lastErr)
+}
+
 // ParseValidatorInfo converts RPC ValidatorInfo to normalized ValidatorState
 func ParseValidatorInfo(info ValidatorInfo, subnetID ids.ID) (*ValidatorState, error) {
 	// Parse NodeID - handle both CB58 and hex formats

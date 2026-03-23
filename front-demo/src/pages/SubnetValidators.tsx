@@ -114,7 +114,7 @@ function SubnetValidators() {
       try {
         console.log('[Validators Query] Starting query for subnet:', subnetId, 'type:', subnetDetails?.subnet_type);
         // For Primary Network and legacy subnets, show stake (weight) instead of balance
-        if (subnetDetails?.subnet_type === 'primary' || subnetDetails?.subnet_type === 'regular') {
+        if (subnetDetails?.subnet_type === 'primary' || subnetDetails?.subnet_type === 'legacy') {
         const result = await clickhouse.query({
           query: `
             SELECT
@@ -295,7 +295,7 @@ function SubnetValidators() {
   const formatSubnetType = (type: string) => {
     switch (type) {
       case 'l1': return 'L1';
-      case 'regular': return 'Legacy Subnet';
+      case 'legacy': return 'Legacy Subnet';
       case 'elastic': return 'Elastic';
       case 'primary': return 'Primary';
       default: return type;
@@ -480,7 +480,7 @@ function SubnetValidators() {
                       onClick={handleSortToggle}
                     >
                       <div className="flex items-center justify-end gap-1">
-                        {subnetDetails?.subnet_type === 'primary' || subnetDetails?.subnet_type === 'regular' ? 'Stake' : 'Balance'}
+                        {subnetDetails?.subnet_type === 'primary' || subnetDetails?.subnet_type === 'legacy' ? 'Stake' : 'Balance'}
                         {sortOrder === 'desc' && <ArrowDown size={14} />}
                         {sortOrder === 'asc' && <ArrowUp size={14} />}
                         {!sortOrder && <ArrowUpDown size={14} className="text-gray-400" />}

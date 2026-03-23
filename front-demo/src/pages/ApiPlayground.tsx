@@ -108,7 +108,7 @@ const endpoints: Endpoint[] = [
     method: 'GET',
     path: '/api/v1/data/subnets',
     params: [
-      { name: 'type', type: 'query', default: '', options: ['', 'regular', 'elastic', 'l1'] },
+      { name: 'type', type: 'query', default: '', options: ['', 'legacy', 'elastic', 'l1'] },
       { name: 'limit', type: 'query', default: '20' },
     ],
   },

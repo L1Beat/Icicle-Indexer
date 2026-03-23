@@ -79,9 +79,9 @@ function PChainOverview() {
             -- Active L1 subnets: L1 subnets with at least 1 active validator
             (SELECT count(DISTINCT v.subnet_id) FROM l1_validator_state v FINAL JOIN subnets s FINAL ON v.subnet_id = s.subnet_id WHERE v.active = true AND s.subnet_type = 'l1') as active_l1_subnets,
             -- Active legacy subnets: regular subnets with at least 1 active validator
-            (SELECT count(DISTINCT v.subnet_id) FROM l1_validator_state v FINAL JOIN subnets s FINAL ON v.subnet_id = s.subnet_id WHERE v.active = true AND s.subnet_type = 'regular') as active_legacy_subnets,
+            (SELECT count(DISTINCT v.subnet_id) FROM l1_validator_state v FINAL JOIN subnets s FINAL ON v.subnet_id = s.subnet_id WHERE v.active = true AND s.subnet_type = 'legacy') as active_legacy_subnets,
             -- Total active chains: sum of active L1s, active legacy subnets, and Primary Network
-            (SELECT count(DISTINCT v.subnet_id) FROM l1_validator_state v FINAL JOIN subnets s FINAL ON v.subnet_id = s.subnet_id WHERE v.active = true AND s.subnet_type IN ('l1', 'regular', 'primary')) as active_chains,
+            (SELECT count(DISTINCT v.subnet_id) FROM l1_validator_state v FINAL JOIN subnets s FINAL ON v.subnet_id = s.subnet_id WHERE v.active = true AND s.subnet_type IN ('l1', 'legacy', 'primary')) as active_chains,
             -- Count unique validators: Primary Network + L1 subnets only (legacy subnet validators are already Primary Network validators)
             (SELECT count(DISTINCT node_id) FROM l1_validator_state v FINAL JOIN subnets s FINAL ON v.subnet_id = s.subnet_id WHERE v.active = true AND s.subnet_type IN ('primary', 'l1')) as active_validators,
             (SELECT count(*) FROM p_chain_txs WHERE p_chain_id = 0 AND block_time >= now() - INTERVAL 7 DAY) as recent_transactions,
@@ -186,7 +186,7 @@ function PChainOverview() {
               WHEN 'primary' THEN 0
               WHEN 'l1' THEN 1
               WHEN 'elastic' THEN 2
-              WHEN 'regular' THEN 3
+              WHEN 'legacy' THEN 3
               ELSE 4
             END,
             validator_count DESC,
@@ -285,7 +285,7 @@ function PChainOverview() {
   const formatSubnetType = (type: string) => {
     switch (type) {
       case 'l1': return 'L1';
-      case 'regular': return 'Legacy Subnet';
+      case 'legacy': return 'Legacy Subnet';
       case 'elastic': return 'Elastic';
       case 'primary': return 'Primary';
       default: return type;
@@ -325,7 +325,7 @@ function PChainOverview() {
     ?.filter(subnet => {
       // Type filter
       if (typeFilter === 'l1' && subnet.subnet_type !== 'l1') return false;
-      if (typeFilter === 'legacy' && subnet.subnet_type !== 'regular') return false;
+      if (typeFilter === 'legacy' && subnet.subnet_type !== 'legacy') return false;
 
       // Search filter
       return (

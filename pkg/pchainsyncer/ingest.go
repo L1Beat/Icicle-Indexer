@@ -925,6 +925,77 @@ func InsertSubnetChains(ctx context.Context, conn clickhouse.Conn, chains []Subn
 	return chwrapper.RetryableBatchSend(batch)
 }
 
+// BackfillSubnetChainsFromRPC fetches all blockchains from platform.getBlockchains
+// and inserts any that are missing from subnet_chains. This catches chains that were
+// created before the indexer started or whose CreateChainTx was missed.
+func BackfillSubnetChainsFromRPC(ctx context.Context, conn clickhouse.Conn, fetcher *pchainrpc.Fetcher, pchainID uint32) (int, error) {
+	// Get all blockchains from RPC
+	resp, err := fetcher.GetBlockchains(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get blockchains from RPC: %w", err)
+	}
+
+	// Get existing chain IDs from DB
+	rows, err := conn.Query(ctx, `SELECT chain_id FROM subnet_chains FINAL WHERE p_chain_id = ?`, pchainID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to query existing chains: %w", err)
+	}
+	defer rows.Close()
+
+	existing := make(map[string]bool)
+	for rows.Next() {
+		var chainID string
+		if err := rows.Scan(&chainID); err != nil {
+			return 0, fmt.Errorf("failed to scan chain ID: %w", err)
+		}
+		existing[chainID] = true
+	}
+
+	// Find missing chains
+	var missing []pchainrpc.BlockchainInfo
+	for _, bc := range resp.Blockchains {
+		if !existing[bc.ID] {
+			missing = append(missing, bc)
+		}
+	}
+
+	if len(missing) == 0 {
+		return 0, nil
+	}
+
+	// Insert missing chains
+	batch, err := conn.PrepareBatch(ctx, `INSERT INTO subnet_chains (
+		chain_id, subnet_id, chain_name, vm_id,
+		created_block, created_time, p_chain_id, last_updated
+	)`)
+	if err != nil {
+		return 0, fmt.Errorf("failed to prepare batch: %w", err)
+	}
+
+	now := time.Now()
+	for _, bc := range missing {
+		err = batch.Append(
+			bc.ID,
+			bc.SubnetID,
+			bc.Name,
+			bc.VMID,
+			uint64(0), // created_block unknown from RPC
+			time.Time{}, // created_time unknown from RPC
+			pchainID,
+			now,
+		)
+		if err != nil {
+			return 0, fmt.Errorf("failed to append chain %s: %w", bc.ID, err)
+		}
+	}
+
+	if err := chwrapper.RetryableBatchSend(batch); err != nil {
+		return 0, fmt.Errorf("failed to send batch: %w", err)
+	}
+
+	return len(missing), nil
+}
+
 // L1FeeStats represents fee statistics for an L1 subnet
 type L1FeeStats struct {
 	SubnetID        string

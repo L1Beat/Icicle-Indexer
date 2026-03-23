@@ -257,7 +257,7 @@ CREATE TABLE IF NOT EXISTS subnets (
     created_time DateTime64(3, 'UTC'),  -- When subnet was created
 
     -- Subnet type/status
-    subnet_type LowCardinality(String),  -- 'regular', 'elastic', 'l1'
+    subnet_type LowCardinality(String),  -- 'legacy', 'primary', 'l1'
 
     -- L1/Elastic conversion info (nullable, populated when converted)
     chain_id String,  -- Associated chain ID (empty for non-L1 subnets)
