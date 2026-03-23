@@ -19,7 +19,7 @@ var chainColumns = []string{
 	"evm_chain_id", "categories", "socials",
 	"rpc_url", "explorer_url", "sybil_resistance_type",
 	"network_token_name", "network_token_symbol", "network_token_decimals", "network_token_logo_uri",
-	"network", "is_l1",
+	"network",
 	"validator_count", "total_fees_paid",
 	"active_validators", "total_staked",
 }
@@ -96,7 +96,7 @@ func TestHandleListChains_Success(t *testing.T) {
 					uint64Ptr(43114), []string{"DeFi", "Gaming"}, stringPtr(`[{"name":"twitter","url":"https://x.com/test"}]`),
 					stringPtr("https://rpc.example.com"), stringPtr("https://explorer.example.com"), stringPtr("Proof of Stake"),
 					stringPtr("AVAX"), stringPtr("Avalanche"), uint8Ptr(18), stringPtr("https://token-logo.png"),
-					stringPtr("mainnet"), boolPtr(true),
+					stringPtr("mainnet"),
 					uint32Ptr(5), uint64Ptr(1000000),
 					uint32Ptr(3), uint64Ptr(500000),
 				},
@@ -121,10 +121,10 @@ func TestHandleListChains_Success(t *testing.T) {
 	chain, ok := dataList[0].(map[string]interface{})
 	require.True(t, ok)
 	assert.Equal(t, "My L1", chain["name"])
+	assert.Equal(t, "l1", chain["chain_type"])
 	assert.Equal(t, float64(43114), chain["evm_chain_id"])
 	assert.Equal(t, "https://rpc.example.com", chain["rpc_url"])
 	assert.Equal(t, "https://explorer.example.com", chain["explorer_url"])
-	assert.Equal(t, true, chain["is_l1"])
 	assert.NotNil(t, chain["network_token"])
 	assert.NotNil(t, chain["socials"])
 	assert.NotNil(t, chain["categories"])
@@ -140,7 +140,7 @@ func TestHandleListChains_FilterBySubnetType(t *testing.T) {
 	}
 
 	server := NewTestServer(mock)
-	w := MakeRequest(t, server, "GET", "/api/v1/data/chains?subnet_type=l1")
+	w := MakeRequest(t, server, "GET", "/api/v1/data/chains?chain_type=l1")
 
 	AssertJSONResponse(t, w, http.StatusOK)
 }
@@ -155,7 +155,7 @@ func TestHandleListChains_FilterBySubnetTypeLegacy(t *testing.T) {
 	}
 
 	server := NewTestServer(mock)
-	w := MakeRequest(t, server, "GET", "/api/v1/data/chains?subnet_type=legacy")
+	w := MakeRequest(t, server, "GET", "/api/v1/data/chains?chain_type=legacy")
 
 	AssertJSONResponse(t, w, http.StatusOK)
 }
@@ -186,7 +186,7 @@ func TestHandleListChains_LegacyChainOmitsL1Fields(t *testing.T) {
 					(*uint64)(nil), []string(nil), (*string)(nil),
 					(*string)(nil), (*string)(nil), (*string)(nil),
 					(*string)(nil), (*string)(nil), (*uint8)(nil), (*string)(nil),
-					(*string)(nil), (*bool)(nil),
+					(*string)(nil),
 					(*uint32)(nil), (*uint64)(nil),
 					(*uint32)(nil), (*uint64)(nil),
 				},
@@ -208,7 +208,7 @@ func TestHandleListChains_LegacyChainOmitsL1Fields(t *testing.T) {
 
 	chain, ok := dataList[0].(map[string]interface{})
 	require.True(t, ok)
-	assert.Equal(t, "legacy", chain["subnet_type"])
+	assert.Equal(t, "legacy", chain["chain_type"])
 	assert.Empty(t, chain["name"])
 	assert.Empty(t, chain["logo_url"])
 	assert.Nil(t, chain["evm_chain_id"])
@@ -262,9 +262,5 @@ func uint64Ptr(v uint64) *uint64 {
 }
 
 func uint8Ptr(v uint8) *uint8 {
-	return &v
-}
-
-func boolPtr(v bool) *bool {
 	return &v
 }

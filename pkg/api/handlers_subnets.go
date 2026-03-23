@@ -70,8 +70,7 @@ type ChainInfo struct {
 
 	// Parent subnet
 	SubnetID       string     `json:"subnet_id"`
-	SubnetType     string     `json:"subnet_type"`
-	IsL1           bool       `json:"is_l1"`
+	ChainType      string     `json:"chain_type"`
 	ConvertedBlock uint64     `json:"converted_block,omitempty"`
 	ConvertedTime  *time.Time `json:"converted_time,omitempty"`
 
@@ -188,8 +187,9 @@ func (s *Server) handleGetSubnet(w http.ResponseWriter, r *http.Request) {
 // @Description Get a paginated list of chains with subnet info, L1 registry metadata, and validator stats
 // @Tags Data - Subnets
 // @Produce json
-// @Param subnet_type query string false "Filter by subnet type (l1, legacy)"
+// @Param chain_type query string false "Filter by chain type (l1, legacy)"
 // @Param subnet_id query string false "Filter by subnet ID"
+// @Param category query string false "Filter by category (e.g. DeFi, Gaming)"
 // @Param limit query int false "Number of results (max 100)" default(20)
 // @Param offset query int false "Pagination offset" default(0)
 // @Param cursor query string false "Cursor for keyset pagination"
@@ -203,21 +203,26 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 	cursor := getCursor(r)
 	wantCount := getCountParam(r)
 
-	subnetType := r.URL.Query().Get("subnet_type")
+	chainType := r.URL.Query().Get("chain_type")
 	subnetID := r.URL.Query().Get("subnet_id")
+	category := r.URL.Query().Get("category")
 	fetchLimit := limit + 1
 
 	// Build WHERE clauses
 	var conditions []string
 	var args []interface{}
 
-	if subnetType != "" {
+	if chainType != "" {
 		conditions = append(conditions, "s.subnet_type = ?")
-		args = append(args, subnetType)
+		args = append(args, chainType)
 	}
 	if subnetID != "" {
 		conditions = append(conditions, "c.subnet_id = ?")
 		args = append(args, subnetID)
+	}
+	if category != "" {
+		conditions = append(conditions, "has(r.categories, ?)")
+		args = append(args, category)
 	}
 	if cursor != nil {
 		conditions = append(conditions, "c.created_block < ?")
@@ -237,7 +242,7 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 			r.evm_chain_id, r.categories, r.socials,
 			r.rpc_url, r.explorer_url, r.sybil_resistance_type,
 			r.network_token_name, r.network_token_symbol, r.network_token_decimals, r.network_token_logo_uri,
-			r.network, r.is_l1,
+			r.network,
 			f.validator_count, f.total_fees_paid,
 			v.active_validators, v.total_staked
 		FROM (SELECT * FROM subnet_chains FINAL) c
@@ -284,18 +289,17 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 		var tokenDecimals *uint8
 		var tokenLogoURI *string
 		var network *string
-		var isL1 *bool
 		var validatorCount, activeValidators *uint32
 		var totalFeesPaid, totalStaked *uint64
 
 		if err := rows.Scan(
 			&ci.ChainID, &ci.ChainName, &ci.VMID, &ci.CreatedBlock, &ci.CreatedTime,
-			&ci.SubnetID, &ci.SubnetType, &ci.ConvertedBlock, &convertedTime,
+			&ci.SubnetID, &ci.ChainType, &ci.ConvertedBlock, &convertedTime,
 			&name, &description, &logoURL, &websiteURL,
 			&evmChainID, &categories, &socialsJSON,
 			&rpcURL, &explorerURL, &sybilType,
 			&tokenName, &tokenSymbol, &tokenDecimals, &tokenLogoURI,
-			&network, &isL1,
+			&network,
 			&validatorCount, &totalFeesPaid,
 			&activeValidators, &totalStaked,
 		); err != nil {
@@ -361,11 +365,6 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 		if network != nil && *network != "" {
 			ci.Network = *network
 		}
-		if isL1 != nil {
-			ci.IsL1 = *isL1
-		} else {
-			ci.IsL1 = ci.SubnetType == "l1"
-		}
 
 		// Validator stats
 		if validatorCount != nil && *validatorCount > 0 {
@@ -395,13 +394,18 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 		countQuery := `SELECT toInt64(count()) FROM (SELECT * FROM subnet_chains FINAL) c INNER JOIN (SELECT * FROM subnets FINAL) s ON c.subnet_id = s.subnet_id`
 		var countConditions []string
 		var countArgs []interface{}
-		if subnetType != "" {
+		if chainType != "" {
 			countConditions = append(countConditions, "s.subnet_type = ?")
-			countArgs = append(countArgs, subnetType)
+			countArgs = append(countArgs, chainType)
 		}
 		if subnetID != "" {
 			countConditions = append(countConditions, "c.subnet_id = ?")
 			countArgs = append(countArgs, subnetID)
+		}
+		if category != "" {
+			countQuery = `SELECT toInt64(count()) FROM (SELECT * FROM subnet_chains FINAL) c INNER JOIN (SELECT * FROM subnets FINAL) s ON c.subnet_id = s.subnet_id LEFT JOIN (SELECT * FROM l1_registry FINAL) r ON c.subnet_id = r.subnet_id`
+			countConditions = append(countConditions, "has(r.categories, ?)")
+			countArgs = append(countArgs, category)
 		}
 		if len(countConditions) > 0 {
 			countQuery += " WHERE " + strings.Join(countConditions, " AND ")
