@@ -109,7 +109,7 @@ func (vs *ValidatorSyncer) syncOnce(ctx context.Context) error {
 		slog.Info("Discovered and updated subnets", "count", len(allSubnets))
 	}
 
-	// Step 2: Discover and populate subnet chains
+	// Step 2: Discover subnet chains from CreateChainTx (has created_block/time)
 	chains, err := DiscoverSubnetChains(ctx, vs.conn, vs.config.PChainID)
 	if err != nil {
 		return fmt.Errorf("failed to discover subnet chains: %w", err)
@@ -122,12 +122,12 @@ func (vs *ValidatorSyncer) syncOnce(ctx context.Context) error {
 		slog.Info("Discovered and updated subnet chains", "count", len(chains))
 	}
 
-	// Step 2b: Backfill missing chains from RPC (platform.getBlockchains)
+	// Step 2b: Backfill any missing chains from RPC (catches chains without CreateChainTx in our DB)
 	backfilled, err := BackfillSubnetChainsFromRPC(ctx, vs.conn, vs.fetcher, vs.config.PChainID)
 	if err != nil {
 		slog.Warn("Failed to backfill subnet chains from RPC", "error", err)
 	} else if backfilled > 0 {
-		slog.Info("Backfilled missing subnet chains from RPC", "count", backfilled)
+		slog.Info("Backfilled subnet chains from RPC", "count", backfilled)
 	}
 
 	// Step 2.5: Discover and populate historical L1 validators from transactions

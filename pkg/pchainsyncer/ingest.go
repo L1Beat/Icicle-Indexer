@@ -654,47 +654,25 @@ func DiscoverAllSubnets(ctx context.Context, conn clickhouse.Conn, pchainID uint
 	return subnets, nil
 }
 
-// DiscoverSubnetChains scans p_chain_txs for CreateChain transactions
-// and matches them with ConvertSubnetToL1 chain IDs
+// DiscoverSubnetChains scans p_chain_txs for CreateChain transactions.
+// The tx_id of a CreateChainTx IS the blockchain ID on Avalanche.
 func DiscoverSubnetChains(ctx context.Context, conn clickhouse.Conn, pchainID uint32) ([]SubnetChain, error) {
-	// Get chain IDs from ConvertSubnetToL1 transactions (which have proper CB58-encoded chainID)
-	// Then find the corresponding CreateChain transaction to get name and VM ID
 	query := `
-		WITH l1_chains AS (
-			SELECT DISTINCT
-				CAST(tx_data.chainID AS String) as chain_id,
-				CAST(tx_data.subnetID AS String) as subnet_id
-			FROM p_chain_txs
-			WHERE p_chain_id = ?
-			  AND tx_type = 'ConvertSubnetToL1'
-			  AND tx_data.chainID != ''
-			  AND tx_data.subnetID != ''
-		),
-		create_chain_info AS (
-			SELECT
-				CAST(tx_data.subnetID AS String) as subnet_id,
-				CAST(coalesce(tx_data.chainName, '') AS String) as chain_name,
-				CAST(coalesce(tx_data.vmID, '') AS String) as vm_id,
-				block_number,
-				block_time,
-				ROW_NUMBER() OVER (PARTITION BY tx_data.subnetID ORDER BY block_number ASC) as rn
-			FROM p_chain_txs
-			WHERE p_chain_id = ?
-			  AND tx_type = 'CreateChain'
-			  AND tx_data.subnetID != ''
-		)
 		SELECT
-			l.chain_id,
-			l.subnet_id,
-			COALESCE(c.chain_name, '') as chain_name,
-			COALESCE(c.vm_id, '') as vm_id,
-			COALESCE(c.block_number, 0) as created_block,
-			COALESCE(c.block_time, toDateTime('1970-01-01 00:00:00')) as created_time
-		FROM l1_chains l
-		LEFT JOIN create_chain_info c ON l.subnet_id = c.subnet_id AND c.rn = 1
+			tx_id as chain_id,
+			CAST(tx_data.subnetID AS String) as subnet_id,
+			CAST(coalesce(tx_data.chainName, '') AS String) as chain_name,
+			CAST(coalesce(tx_data.vmID, '') AS String) as vm_id,
+			block_number,
+			block_time
+		FROM p_chain_txs
+		WHERE p_chain_id = ?
+		  AND tx_type = 'CreateChain'
+		  AND tx_data.subnetID != ''
+		ORDER BY block_number ASC
 	`
 
-	rows, err := conn.Query(ctx, query, pchainID, pchainID)
+	rows, err := conn.Query(ctx, query, pchainID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query chain info: %w", err)
 	}
@@ -926,44 +904,18 @@ func InsertSubnetChains(ctx context.Context, conn clickhouse.Conn, chains []Subn
 }
 
 // BackfillSubnetChainsFromRPC fetches all blockchains from platform.getBlockchains
-// and inserts any that are missing from subnet_chains. This catches chains that were
-// created before the indexer started or whose CreateChainTx was missed.
+// and upserts them into subnet_chains. This is the source of truth for chain data —
+// it corrects any bad chain IDs from DiscoverSubnetChains and fills in missing chains.
 func BackfillSubnetChainsFromRPC(ctx context.Context, conn clickhouse.Conn, fetcher *pchainrpc.Fetcher, pchainID uint32) (int, error) {
-	// Get all blockchains from RPC
 	resp, err := fetcher.GetBlockchains(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get blockchains from RPC: %w", err)
 	}
 
-	// Get existing chain IDs from DB
-	rows, err := conn.Query(ctx, `SELECT chain_id FROM subnet_chains FINAL WHERE p_chain_id = ?`, pchainID)
-	if err != nil {
-		return 0, fmt.Errorf("failed to query existing chains: %w", err)
-	}
-	defer rows.Close()
-
-	existing := make(map[string]bool)
-	for rows.Next() {
-		var chainID string
-		if err := rows.Scan(&chainID); err != nil {
-			return 0, fmt.Errorf("failed to scan chain ID: %w", err)
-		}
-		existing[chainID] = true
-	}
-
-	// Find missing chains
-	var missing []pchainrpc.BlockchainInfo
-	for _, bc := range resp.Blockchains {
-		if !existing[bc.ID] {
-			missing = append(missing, bc)
-		}
-	}
-
-	if len(missing) == 0 {
+	if len(resp.Blockchains) == 0 {
 		return 0, nil
 	}
 
-	// Insert missing chains
 	batch, err := conn.PrepareBatch(ctx, `INSERT INTO subnet_chains (
 		chain_id, subnet_id, chain_name, vm_id,
 		created_block, created_time, p_chain_id, last_updated
@@ -973,14 +925,14 @@ func BackfillSubnetChainsFromRPC(ctx context.Context, conn clickhouse.Conn, fetc
 	}
 
 	now := time.Now()
-	for _, bc := range missing {
+	for _, bc := range resp.Blockchains {
 		err = batch.Append(
 			bc.ID,
 			bc.SubnetID,
 			bc.Name,
 			bc.VMID,
-			uint64(0), // created_block unknown from RPC
-			time.Time{}, // created_time unknown from RPC
+			uint64(0),
+			time.Time{},
 			pchainID,
 			now,
 		)
@@ -993,7 +945,7 @@ func BackfillSubnetChainsFromRPC(ctx context.Context, conn clickhouse.Conn, fetc
 		return 0, fmt.Errorf("failed to send batch: %w", err)
 	}
 
-	return len(missing), nil
+	return len(resp.Blockchains), nil
 }
 
 // L1FeeStats represents fee statistics for an L1 subnet
