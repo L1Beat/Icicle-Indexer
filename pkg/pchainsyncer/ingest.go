@@ -829,16 +829,6 @@ func InsertPrimaryNetworkChains(ctx context.Context, conn clickhouse.Conn, pchai
 			chainName: "C-Chain",
 			vmID:      "mgj786NP7uDwBCcq6YwThhaN8FLyybkCa4zBWTQbNgmK6k9A6", // EVM
 		},
-		{
-			chainID:   "2oYMBNV4eNHyqk2fjjV5nVQLDbtmNJzq5s3qs3Lo6ftnC6FByM", // X-Chain
-			chainName: "X-Chain",
-			vmID:      "avm", // AVM
-		},
-		{
-			chainID:   "11111111111111111111111111111111LpoYY", // P-Chain
-			chainName: "P-Chain",
-			vmID:      "platform", // Platform VM
-		},
 	}
 
 	batch, err := conn.PrepareBatch(ctx, `INSERT INTO subnet_chains (
@@ -925,7 +915,16 @@ func BackfillSubnetChainsFromRPC(ctx context.Context, conn clickhouse.Conn, fetc
 	}
 
 	now := time.Now()
+	// Known non-application chains to skip
+	skipChains := map[string]bool{
+		"11111111111111111111111111111111LpoYY":               true, // P-Chain
+		"2oYMBNV4eNHyqk2fjjV5nVQLDbtmNJzq5s3qs3Lo6ftnC6FByM": true, // X-Chain
+	}
+
 	for _, bc := range resp.Blockchains {
+		if skipChains[bc.ID] {
+			continue
+		}
 		err = batch.Append(
 			bc.ID,
 			bc.SubnetID,
