@@ -115,7 +115,7 @@ func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 				v.initial_deposit, v.total_topups, v.refund_amount, v.fees_paid,
 				toUInt64(0) AS primary_stake,
 				toFloat64(0) AS primary_uptime
-			FROM l1_validator_state FINAL v
+			FROM (SELECT * FROM l1_validator_state FINAL) v
 			%s
 			ORDER BY v.weight DESC
 			LIMIT ? OFFSET ?
@@ -160,7 +160,7 @@ func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 		if len(whereParts) > 0 {
 			countWhereClause = "WHERE " + strings.Join(whereParts, " AND ")
 		}
-		countQuery := fmt.Sprintf(`SELECT toInt64(count()) FROM l1_validator_state FINAL v %s`, countWhereClause)
+		countQuery := fmt.Sprintf(`SELECT toInt64(count()) FROM (SELECT * FROM l1_validator_state FINAL) v %s`, countWhereClause)
 		var total int64
 		_ = s.conn.QueryRow(ctx, countQuery, whereArgs...).Scan(&total)
 		meta.Total = total
