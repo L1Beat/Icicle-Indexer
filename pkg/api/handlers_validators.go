@@ -2,6 +2,7 @@ package api
 
 import (
 	"fmt"
+	"icicle/pkg/pchainrpc"
 	"net/http"
 	"strings"
 	"time"
@@ -61,6 +62,18 @@ const (
 	burnRatePerSecond = 512
 	burnRatePerDay    = burnRatePerSecond * 86400 // 44,236,800 nAVAX/day
 )
+
+// formatBalanceOwner converts CB58 address to P-Chain bech32 format (P-avax1...)
+func formatBalanceOwner(addr string) string {
+	if addr == "" {
+		return ""
+	}
+	converted, err := pchainrpc.ConvertCB58ToPChainAddress(addr)
+	if err != nil {
+		return addr // return original if conversion fails
+	}
+	return converted
+}
 
 // ValidatorDeposit represents a balance transaction for a validator
 type ValidatorDeposit struct {
@@ -201,6 +214,8 @@ func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 			v.PrimaryStake = &primaryStake
 			v.PrimaryUptime = &primaryUptime
 		}
+		// Convert CB58 address to bech32 format
+		v.RemainingBalanceOwner = formatBalanceOwner(v.RemainingBalanceOwner)
 		// Set conditional fields based on validator type
 		isPrimaryNetwork := v.SubnetID == primaryNetworkSubnetID
 		if !endTime.IsZero() && endTime.Year() > 1970 {
@@ -313,6 +328,9 @@ func (s *Server) handleGetValidator(w http.ResponseWriter, r *http.Request) {
 		v.CreatedBlock = &createdBlock
 		v.CreatedTime = &createdTime
 	}
+
+	// Convert CB58 address to bech32 format
+	v.RemainingBalanceOwner = formatBalanceOwner(v.RemainingBalanceOwner)
 
 	isPrimaryNetwork := v.SubnetID == primaryNetworkSubnetID
 
