@@ -356,7 +356,7 @@ func (s *Server) handleGetValidator(w http.ResponseWriter, r *http.Request) {
 		err = s.conn.QueryRow(ctx, `
 			SELECT
 				toUInt64(count()) as cnt,
-				toUInt64(sum(toUInt64OrZero(toString(tx_data.validator.wght)))) as total
+				toUInt64(sum(toUInt64OrZero(toString(tx_data.validator.weight)))) as total
 			FROM p_chain_txs
 			WHERE tx_type IN ('AddDelegator', 'AddPermissionlessDelegator')
 			AND toString(tx_data.validator.nodeID) = ?
