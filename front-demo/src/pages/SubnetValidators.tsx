@@ -88,7 +88,7 @@ function SubnetValidators() {
             s.chain_id,
             s.converted_block as conversion_block,
             formatDateTime(s.converted_time, '%Y-%m-%d %H:%i:%s') as conversion_time,
-            (SELECT count(DISTINCT node_id) FROM l1_validator_history FINAL WHERE subnet_id = {subnetId:String} AND length(node_id) > 30) as validator_count,
+            (SELECT count(DISTINCT node_id) FROM l1_validator_state FINAL WHERE subnet_id = {subnetId:String} AND length(node_id) > 30) as validator_count,
             (SELECT toString(sum(weight)) FROM l1_validator_state FINAL WHERE subnet_id = {subnetId:String} AND length(node_id) > 30 AND active = true) as total_weight,
             NULLIF(r.name, '') as name,
             NULLIF(r.description, '') as description,
@@ -113,8 +113,8 @@ function SubnetValidators() {
     queryFn: async () => {
       try {
         console.log('[Validators Query] Starting query for subnet:', subnetId, 'type:', subnetDetails?.subnet_type);
-        // For Primary Network and legacy subnets, show stake (weight) instead of balance
-        if (subnetDetails?.subnet_type === 'primary' || subnetDetails?.subnet_type === 'legacy') {
+        // For Primary Network, show directly from state
+        if (subnetDetails?.subnet_type === 'primary') {
         const result = await clickhouse.query({
           query: `
             SELECT
@@ -134,9 +134,36 @@ function SubnetValidators() {
           format: 'JSONEachRow',
           query_params: { subnetId },
         });
-        console.log('[Validators Query] Primary/Regular query executed');
         const data = await result.json<Validator[]>();
-        console.log('[Validators Query] Parsed data:', data?.length, 'validators');
+        return data;
+      }
+
+        // For legacy subnets, JOIN with Primary Network to get real stake and uptime
+        if (subnetDetails?.subnet_type === 'legacy') {
+        const result = await clickhouse.query({
+          query: `
+            SELECT
+              v.validation_id,
+              v.node_id,
+              toString(v.weight) as weight,
+              toString(COALESCE(p.weight, 0)) as balance,
+              formatDateTime(v.start_time, '%Y-%m-%d %H:%i:%s') as start_time,
+              formatDateTime(v.end_time, '%Y-%m-%d %H:%i:%s') as end_time,
+              COALESCE(p.uptime_percentage, v.uptime_percentage) as uptime_percentage,
+              if(v.active, true, false) as active,
+              formatDateTime(v.last_updated, '%Y-%m-%d %H:%i:%s') as last_updated
+            FROM (SELECT * FROM l1_validator_state FINAL WHERE subnet_id = {subnetId:String}) v
+            LEFT JOIN (
+              SELECT node_id, weight, uptime_percentage
+              FROM l1_validator_state FINAL
+              WHERE subnet_id = '11111111111111111111111111111111LpoYY'
+            ) p ON v.node_id = p.node_id
+            ORDER BY p.weight DESC, v.weight DESC
+          `,
+          format: 'JSONEachRow',
+          query_params: { subnetId },
+        });
+        const data = await result.json<Validator[]>();
         return data;
       }
 

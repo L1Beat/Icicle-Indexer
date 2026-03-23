@@ -24,6 +24,9 @@ import {
   ArrowUpCircle,
 } from 'lucide-react';
 
+// Constant burn rate for L1 validators: 512 nAVAX/sec = 44,236,800 nAVAX/day
+const DAILY_BURN_NAVAX = 512 * 86400;
+
 interface ValidatorData {
   validation_id: string;
   node_id: string;
@@ -35,7 +38,12 @@ interface ValidatorData {
   uptime_percentage: number;
   active: boolean;
   last_updated: string;
-  // Historical fields
+  // From l1_validator_state (correct computed values)
+  initial_deposit: string;
+  total_topups: string;
+  refund_amount: string;
+  fees_paid: string;
+  // From l1_validator_history
   created_tx_type?: string;
   created_tx_id?: string;
   created_block?: number;
@@ -43,11 +51,10 @@ interface ValidatorData {
   initial_balance?: string;
   initial_weight?: string;
   bls_public_key?: string;
-  // Fee tracking fields
-  initial_deposit?: string;
-  fees_paid?: string;
-  daily_burn_rate?: number;
-  days_until_empty?: number;
+  remaining_balance_owner?: string;
+  // Primary Network data (for legacy subnet validators)
+  primary_stake?: string;
+  primary_uptime?: number;
 }
 
 interface SubnetInfo {
@@ -98,81 +105,47 @@ function ValidatorDetails() {
     },
   });
 
-  // Fetch validator details
+  // Fetch validator details - pull from l1_validator_state (correct data) + l1_validator_history (registration info)
   const { data: validator, isLoading, error } = useQuery<ValidatorData>({
     queryKey: ['validator-details', subnetId, nodeId, url],
     queryFn: async () => {
       const result = await clickhouse.query({
         query: `
           SELECT
-            COALESCE(NULLIF(cs.validation_id, ''), NULLIF(h.validation_id, ''), '') as validation_id,
-            COALESCE(NULLIF(cs.node_id, ''), h.node_id, {nodeId:String}) as node_id,
-            {subnetId:String} as subnet_id,
-            toString(COALESCE(cs.weight, h.initial_weight, 0)) as weight,
-            toString(COALESCE(cs.balance, 0)) as balance,
-            formatDateTime(COALESCE(cs.start_time, h.created_time, toDateTime(0)), '%Y-%m-%d %H:%i:%s') as start_time,
-            formatDateTime(COALESCE(cs.end_time, toDateTime(0)), '%Y-%m-%d %H:%i:%s') as end_time,
-            COALESCE(cs.uptime_percentage, 0) as uptime_percentage,
-            COALESCE(cs.active, false) as active,
-            formatDateTime(COALESCE(cs.last_updated, h.created_time, now()), '%Y-%m-%d %H:%i:%s') as last_updated,
-            h.created_tx_type as created_tx_type,
-            h.created_tx_id as created_tx_id,
-            h.created_block as created_block,
+            v.validation_id,
+            COALESCE(NULLIF(v.node_id, ''), {nodeId:String}) as node_id,
+            v.subnet_id,
+            toString(v.weight) as weight,
+            toString(v.balance) as balance,
+            formatDateTime(v.start_time, '%Y-%m-%d %H:%i:%s') as start_time,
+            formatDateTime(v.end_time, '%Y-%m-%d %H:%i:%s') as end_time,
+            v.uptime_percentage,
+            v.active,
+            formatDateTime(v.last_updated, '%Y-%m-%d %H:%i:%s') as last_updated,
+            toString(v.initial_deposit) as initial_deposit,
+            toString(v.total_topups) as total_topups,
+            toString(v.refund_amount) as refund_amount,
+            toString(v.fees_paid) as fees_paid,
+            h.created_tx_type,
+            h.created_tx_id,
+            h.created_block,
             formatDateTime(h.created_time, '%Y-%m-%d %H:%i:%s') as created_time,
             toString(COALESCE(h.initial_balance, 0)) as initial_balance,
             toString(COALESCE(h.initial_weight, 0)) as initial_weight,
-            h.bls_public_key as bls_public_key,
-            toString(COALESCE(h.initial_balance, 0)) as initial_deposit,
-            toString(
-              CASE
-                WHEN COALESCE(h.initial_balance, 0) > COALESCE(cs.balance, 0)
-                THEN COALESCE(h.initial_balance, 0) - COALESCE(cs.balance, 0)
-                ELSE 0
-              END
-            ) as fees_paid,
-            CASE
-              WHEN cs.node_id IS NOT NULL AND dateDiff('day', cs.start_time, now()) > 0 AND COALESCE(h.initial_balance, 0) > cs.balance
-              THEN toFloat64(COALESCE(h.initial_balance, 0) - cs.balance) / dateDiff('day', cs.start_time, now())
-              ELSE 0
-            END as daily_burn_rate,
-            CASE
-              WHEN cs.node_id IS NOT NULL AND dateDiff('day', cs.start_time, now()) > 0 AND COALESCE(h.initial_balance, 0) > cs.balance
-              THEN cs.balance / (toFloat64(COALESCE(h.initial_balance, 0) - cs.balance) / dateDiff('day', cs.start_time, now()))
-              ELSE 0
-            END as days_until_empty
-          FROM (
-            SELECT
-              node_id,
-              validation_id,
-              subnet_id,
-              weight,
-              balance,
-              start_time,
-              end_time,
-              uptime_percentage,
-              active,
-              last_updated
+            h.bls_public_key,
+            h.remaining_balance_owner,
+            toString(COALESCE(pn.weight, 0)) as primary_stake,
+            COALESCE(pn.uptime_percentage, 0) as primary_uptime
+          FROM (SELECT * FROM l1_validator_state FINAL WHERE subnet_id = {subnetId:String} AND node_id = {nodeId:String} LIMIT 1) v
+          LEFT JOIN (SELECT * FROM l1_validator_history FINAL WHERE subnet_id = {subnetId:String} AND node_id = {nodeId:String} LIMIT 1) h
+            ON v.validation_id = h.validation_id
+          LEFT JOIN (
+            SELECT node_id, weight, uptime_percentage
             FROM l1_validator_state FINAL
-            WHERE subnet_id = {subnetId:String}
+            WHERE subnet_id = '11111111111111111111111111111111LpoYY'
               AND node_id = {nodeId:String}
             LIMIT 1
-          ) cs
-          FULL OUTER JOIN (
-            SELECT
-              node_id,
-              validation_id,
-              created_tx_type,
-              created_tx_id,
-              created_block,
-              created_time,
-              initial_balance,
-              initial_weight,
-              bls_public_key
-            FROM l1_validator_history FINAL
-            WHERE subnet_id = {subnetId:String}
-              AND node_id = {nodeId:String}
-            LIMIT 1
-          ) h ON cs.node_id = h.node_id
+          ) pn ON v.node_id = pn.node_id
           LIMIT 1
         `,
         format: 'JSONEachRow',
@@ -186,8 +159,7 @@ function ValidatorDetails() {
     },
   });
 
-  // Fetch all balance-affecting transactions for this validator from indexed table
-  // Query by validation_id if available, otherwise by node_id + subnet_id
+  // Fetch balance transactions
   const { data: balanceTransactions, error: balanceTxError, isLoading: loadingBalanceTx } = useQuery<BalanceTransaction[]>({
     queryKey: ['validator-balance-txs', validator?.validation_id, validator?.node_id, subnetId, url],
     queryFn: async () => {
@@ -197,79 +169,50 @@ function ValidatorDetails() {
       const nodeIdEscaped = validator.node_id.replace(/'/g, "\\'");
       const subnetIdEscaped = subnetId?.replace(/'/g, "\\'") || '';
 
-      // Fetch deposits and top-ups
-      // For validators with validation_id, query by that; otherwise by node_id + subnet_id
       const depositsQuery = hasValidationId
         ? `
-          SELECT
-            tx_id,
-            tx_type,
-            block_number as block_height,
+          SELECT tx_id, tx_type, block_number as block_height,
             formatDateTime(block_time, '%Y-%m-%d %H:%i:%s') as block_time,
-            toString(amount) as amount,
-            '' as refund_address
+            toString(amount) as amount, '' as refund_address
           FROM l1_validator_balance_txs FINAL
           WHERE validation_id = '${validator.validation_id.replace(/'/g, "\\'")}'
           ORDER BY block_number ASC
         `
         : `
-          SELECT
-            tx_id,
-            tx_type,
-            block_number as block_height,
+          SELECT tx_id, tx_type, block_number as block_height,
             formatDateTime(block_time, '%Y-%m-%d %H:%i:%s') as block_time,
-            toString(amount) as amount,
-            '' as refund_address
+            toString(amount) as amount, '' as refund_address
           FROM l1_validator_balance_txs FINAL
           WHERE node_id = '${nodeIdEscaped}' AND subnet_id = '${subnetIdEscaped}'
           ORDER BY block_number ASC
         `;
 
-      const depositsResult = await clickhouse.query({
-        query: depositsQuery,
-        format: 'JSONEachRow',
-      });
+      const depositsResult = await clickhouse.query({ query: depositsQuery, format: 'JSONEachRow' });
       const depositTxs = await depositsResult.json<{tx_id: string; tx_type: string; block_height: number; block_time: string; amount: string; refund_address: string}[]>();
 
-      // Fetch refund transaction if exists
-      // Query by validation_id - now we have validation_id from history table even for disabled validators
+      // Fetch refund transactions
       const refundQuery = hasValidationId
         ? `
-          SELECT
-            tx_id,
-            'DisableL1Validator' as tx_type,
-            block_number as block_height,
+          SELECT tx_id, 'DisableL1Validator' as tx_type, block_number as block_height,
             formatDateTime(block_time, '%Y-%m-%d %H:%i:%s') as block_time,
-            toString(refund_amount) as amount,
-            refund_address
+            toString(refund_amount) as amount, refund_address
           FROM l1_validator_refunds
           WHERE validation_id = '${validator.validation_id.replace(/'/g, "\\'")}'
-          LIMIT 1
         `
         : `
-          SELECT
-            r.tx_id,
-            'DisableL1Validator' as tx_type,
-            r.block_number as block_height,
+          SELECT r.tx_id, 'DisableL1Validator' as tx_type, r.block_number as block_height,
             formatDateTime(r.block_time, '%Y-%m-%d %H:%i:%s') as block_time,
-            toString(r.refund_amount) as amount,
-            r.refund_address
+            toString(r.refund_amount) as amount, r.refund_address
           FROM l1_validator_refunds r
           JOIN l1_validator_history h FINAL ON r.validation_id = h.validation_id AND h.p_chain_id = r.p_chain_id
           WHERE h.node_id = '${nodeIdEscaped}' AND h.subnet_id = '${subnetIdEscaped}'
-          LIMIT 1
         `;
 
-      const refundResult = await clickhouse.query({
-        query: refundQuery,
-        format: 'JSONEachRow',
-      });
+      const refundResult = await clickhouse.query({ query: refundQuery, format: 'JSONEachRow' });
       const refundTxs = await refundResult.json<{tx_id: string; tx_type: string; block_height: number; block_time: string; amount: string; refund_address: string}[]>();
 
-      // Combine and sort by block height
       const allTxs = [...depositTxs, ...refundTxs].sort((a, b) => a.block_height - b.block_height);
 
-      // Map to BalanceTransaction format
       return allTxs.map(tx => ({
         ...tx,
         effect: tx.tx_type === 'DisableL1Validator' ? 'refund' as const :
@@ -279,37 +222,27 @@ function ValidatorDetails() {
     enabled: !!validator?.node_id,
   });
 
-  // For backward compatibility, extract top-ups from balanceTransactions
   const topUps = balanceTransactions?.filter(tx => tx.effect === 'top-up') || [];
-  const loadingTopUps = loadingBalanceTx;
-  const topUpsError = balanceTxError;
 
-  // Log top-ups error if any
-  if (topUpsError) {
-    console.error('[TopUps Query] Error:', topUpsError);
-  }
-
-  // Debug: log validation_id
-  console.log('[Validator] validation_id:', validator?.validation_id, 'nodeId:', nodeId);
-
-  // Calculate total deposits from balance transactions
-  const deposits = balanceTransactions?.filter(tx => tx.effect === 'deposit') || [];
-  const refundTx = balanceTransactions?.find(tx => tx.effect === 'refund');
-  const totalTopUps = topUps?.reduce((sum, tx) => sum + parseFloat(tx.amount || '0'), 0) || 0;
-  const initialDeposit = deposits.reduce((sum, tx) => sum + parseFloat(tx.amount || '0'), 0) || parseFloat(validator?.initial_deposit || '0');
+  // Use values from l1_validator_state (correct computed values from the indexer)
+  const initialDeposit = parseFloat(validator?.initial_deposit || '0');
+  const totalTopUps = parseFloat(validator?.total_topups || '0');
   const currentBalance = parseFloat(validator?.balance || '0');
-  const refundAmount = refundTx ? parseFloat(refundTx.amount || '0') : 0;
+  const refundAmount = parseFloat(validator?.refund_amount || '0');
+  const feesPaid = parseFloat(validator?.fees_paid || '0');
   const totalFunded = initialDeposit + totalTopUps;
-  // For disabled validators: fees = totalFunded - refund
-  // For active validators: fees = totalFunded - currentBalance
-  const feesPaid = refundTx
-    ? (totalFunded > refundAmount ? totalFunded - refundAmount : 0)
-    : (totalFunded > currentBalance ? totalFunded - currentBalance : 0);
+
+  const isPrimaryNetwork = subnetId === '11111111111111111111111111111111LpoYY';
+  const isLegacy = subnetInfo?.subnet_type === 'legacy';
+  const isL1 = !isPrimaryNetwork && !isLegacy;
+
+  // Daily burn rate: constant for L1 validators, not applicable for Primary Network/legacy
+  const dailyBurnRate = isL1 ? DAILY_BURN_NAVAX : 0;
+  const daysUntilEmpty = dailyBurnRate > 0 && currentBalance > 0 ? currentBalance / dailyBurnRate : 0;
+
   const daysActive = validator?.start_time && validator.start_time !== '1970-01-01 00:00:00'
     ? Math.max(1, Math.floor((Date.now() - new Date(validator.start_time).getTime()) / (1000 * 60 * 60 * 24)))
     : 0;
-  const dailyBurnRate = daysActive > 0 && feesPaid > 0 ? feesPaid / daysActive : 0;
-  const daysUntilEmpty = dailyBurnRate > 0 ? currentBalance / dailyBurnRate : 0;
 
   const formatWeight = (weight: string) => {
     const num = parseFloat(weight);
@@ -348,7 +281,11 @@ function ValidatorDetails() {
     );
   }
 
+  // Fallback node_id to URL param if query returns empty
+  const displayNodeId = validator.node_id || nodeId || '';
+  const hasPrimaryData = validator.primary_stake !== undefined && parseFloat(validator.primary_stake || '0') > 0;
   const hasCurrentState = validator.validation_id && validator.validation_id.length > 0;
+  const hasUptime = validator.uptime_percentage > 0 || (isLegacy && hasPrimaryData);
 
   return (
     <PageTransition>
@@ -385,7 +322,7 @@ function ValidatorDetails() {
                 </div>
                 <div>
                   <h1 className="text-2xl font-bold text-gray-900">Validator Details</h1>
-                  <p className="text-sm text-gray-500 font-mono mt-1">{validator.node_id}</p>
+                  <p className="text-sm text-gray-500 font-mono mt-1">{displayNodeId}</p>
                 </div>
               </div>
               <div className={`px-4 py-2 rounded-full text-sm font-semibold flex items-center gap-2 ${
@@ -400,26 +337,36 @@ function ValidatorDetails() {
           </div>
 
           {/* Quick Stats */}
-          <div className="grid grid-cols-2 md:grid-cols-4 divide-x divide-y md:divide-y-0 divide-gray-100">
+          <div className={`grid grid-cols-2 ${isLegacy && hasPrimaryData ? 'md:grid-cols-5' : hasUptime ? 'md:grid-cols-4' : 'md:grid-cols-3'} divide-x divide-y md:divide-y-0 divide-gray-100`}>
+            {isLegacy && hasPrimaryData && (
+              <div className="p-6 text-center">
+                <p className="text-sm text-gray-500 mb-1">Staked</p>
+                <p className="text-2xl font-bold text-gray-900">{formatBalanceRaw(validator.primary_stake || '0')} AVAX</p>
+              </div>
+            )}
             <div className="p-6 text-center">
               <p className="text-sm text-gray-500 mb-1">Weight</p>
               <p className="text-2xl font-bold text-gray-900">{formatWeight(validator.weight)}</p>
             </div>
-            <div className="p-6 text-center">
-              <p className="text-sm text-gray-500 mb-1">Balance</p>
-              <p className="text-2xl font-bold text-gray-900">{formatBalanceRaw(validator.balance)} AVAX</p>
-            </div>
-            <div className="p-6 text-center">
-              <p className="text-sm text-gray-500 mb-1">Uptime</p>
-              <p className="text-2xl font-bold text-gray-900">{(validator.uptime_percentage * 100).toFixed(2)}%</p>
-            </div>
+            {isL1 && (
+              <div className="p-6 text-center">
+                <p className="text-sm text-gray-500 mb-1">Balance</p>
+                <p className="text-2xl font-bold text-gray-900">{formatBalanceRaw(validator.balance)} AVAX</p>
+              </div>
+            )}
+            {hasUptime && (
+              <div className="p-6 text-center">
+                <p className="text-sm text-gray-500 mb-1">Uptime</p>
+                <p className="text-2xl font-bold text-gray-900">
+                  {isLegacy && hasPrimaryData
+                    ? `${(validator.primary_uptime! * 100).toFixed(2)}%`
+                    : `${(validator.uptime_percentage * 100).toFixed(2)}%`}
+                </p>
+              </div>
+            )}
             <div className="p-6 text-center">
               <p className="text-sm text-gray-500 mb-1">Days Active</p>
-              <p className="text-2xl font-bold text-gray-900">
-                {validator.start_time && validator.start_time !== '1970-01-01 00:00:00'
-                  ? Math.floor((Date.now() - new Date(validator.start_time).getTime()) / (1000 * 60 * 60 * 24))
-                  : '-'}
-              </p>
+              <p className="text-2xl font-bold text-gray-900">{daysActive > 0 ? daysActive : '-'}</p>
             </div>
           </div>
         </div>
@@ -432,16 +379,12 @@ function ValidatorDetails() {
           </h2>
           <div className="space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-4 bg-gray-50 rounded-lg">
-              <span className="text-sm font-medium text-gray-600">Node ID</span>
-              <div className="flex items-center gap-2">
-                <code className="text-sm font-mono text-gray-900 bg-white px-3 py-1.5 rounded border border-gray-200 break-all">
-                  {validator.node_id}
-                </code>
-                <button
-                  onClick={() => copyToClipboard(validator.node_id)}
-                  className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
-                  title="Copy"
-                >
+              <span className="text-sm font-medium text-gray-600 flex-shrink-0">Node ID</span>
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-sm font-mono text-gray-900 bg-white px-3 py-1.5 rounded border border-gray-200 break-all">
+                  {displayNodeId}
+                </span>
+                <button onClick={() => copyToClipboard(displayNodeId)} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors flex-shrink-0" title="Copy">
                   <Copy size={16} />
                 </button>
               </div>
@@ -449,16 +392,12 @@ function ValidatorDetails() {
 
             {validator.validation_id && (
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-4 bg-gray-50 rounded-lg">
-                <span className="text-sm font-medium text-gray-600">Validation ID</span>
-                <div className="flex items-center gap-2">
-                  <code className="text-sm font-mono text-gray-900 bg-white px-3 py-1.5 rounded border border-gray-200 break-all">
+                <span className="text-sm font-medium text-gray-600 flex-shrink-0">Validation ID</span>
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-sm font-mono text-gray-900 bg-white px-3 py-1.5 rounded border border-gray-200 break-all">
                     {validator.validation_id}
-                  </code>
-                  <button
-                    onClick={() => copyToClipboard(validator.validation_id)}
-                    className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
-                    title="Copy"
-                  >
+                  </span>
+                  <button onClick={() => copyToClipboard(validator.validation_id)} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors flex-shrink-0" title="Copy">
                     <Copy size={16} />
                   </button>
                 </div>
@@ -472,11 +411,21 @@ function ValidatorDetails() {
                   <code className="text-xs font-mono text-gray-900 bg-white px-3 py-2 rounded border border-gray-200 break-all flex-1">
                     {validator.bls_public_key}
                   </code>
-                  <button
-                    onClick={() => copyToClipboard(validator.bls_public_key || '')}
-                    className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors flex-shrink-0"
-                    title="Copy"
-                  >
+                  <button onClick={() => copyToClipboard(validator.bls_public_key || '')} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors flex-shrink-0" title="Copy">
+                    <Copy size={16} />
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {validator.remaining_balance_owner && validator.remaining_balance_owner.length > 2 && (
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-4 bg-gray-50 rounded-lg">
+                <span className="text-sm font-medium text-gray-600">Remaining Balance Owner</span>
+                <div className="flex items-center gap-2">
+                  <code className="text-sm font-mono text-gray-900 bg-white px-3 py-1.5 rounded border border-gray-200 break-all">
+                    {validator.remaining_balance_owner}
+                  </code>
+                  <button onClick={() => copyToClipboard(validator.remaining_balance_owner || '')} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors" title="Copy">
                     <Copy size={16} />
                   </button>
                 </div>
@@ -493,29 +442,46 @@ function ValidatorDetails() {
               Current State
             </h2>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {isLegacy && hasPrimaryData && (
+                <div className="p-4 bg-blue-50 rounded-lg">
+                  <div className="flex items-center gap-2 text-sm text-blue-600 mb-1">
+                    <Wallet size={14} />
+                    Primary Network Stake
+                  </div>
+                  <p className="text-xl font-bold text-blue-700">{formatBalanceRaw(validator.primary_stake || '0')} AVAX</p>
+                </div>
+              )}
               <div className="p-4 bg-gray-50 rounded-lg">
                 <div className="flex items-center gap-2 text-sm text-gray-500 mb-1">
                   <Shield size={14} />
-                  Weight
+                  {isLegacy ? 'Subnet Weight' : 'Weight'}
                 </div>
                 <p className="text-xl font-bold text-gray-900">{formatWeight(validator.weight)}</p>
                 <p className="text-xs text-gray-400 mt-1">{parseFloat(validator.weight).toLocaleString()}</p>
               </div>
-              <div className="p-4 bg-gray-50 rounded-lg">
-                <div className="flex items-center gap-2 text-sm text-gray-500 mb-1">
-                  <Wallet size={14} />
-                  Balance
+              {isL1 && (
+                <div className="p-4 bg-gray-50 rounded-lg">
+                  <div className="flex items-center gap-2 text-sm text-gray-500 mb-1">
+                    <Wallet size={14} />
+                    Balance
+                  </div>
+                  <p className="text-xl font-bold text-gray-900">{formatBalanceRaw(validator.balance)} AVAX</p>
+                  <p className="text-xs text-gray-400 mt-1">{parseFloat(validator.balance).toLocaleString()} nAVAX</p>
                 </div>
-                <p className="text-xl font-bold text-gray-900">{formatBalanceRaw(validator.balance)} AVAX</p>
-                <p className="text-xs text-gray-400 mt-1">{parseFloat(validator.balance).toLocaleString()} nAVAX</p>
-              </div>
-              <div className="p-4 bg-gray-50 rounded-lg">
-                <div className="flex items-center gap-2 text-sm text-gray-500 mb-1">
-                  <Activity size={14} />
-                  Uptime
+              )}
+              {hasUptime && (
+                <div className="p-4 bg-gray-50 rounded-lg">
+                  <div className="flex items-center gap-2 text-sm text-gray-500 mb-1">
+                    <Activity size={14} />
+                    Uptime
+                  </div>
+                  <p className="text-xl font-bold text-gray-900">
+                    {isLegacy && hasPrimaryData
+                      ? `${(validator.primary_uptime! * 100).toFixed(2)}%`
+                      : `${(validator.uptime_percentage * 100).toFixed(2)}%`}
+                  </p>
                 </div>
-                <p className="text-xl font-bold text-gray-900">{(validator.uptime_percentage * 100).toFixed(2)}%</p>
-              </div>
+              )}
               <div className="p-4 bg-gray-50 rounded-lg">
                 <div className="flex items-center gap-2 text-sm text-gray-500 mb-1">
                   <Clock size={14} />
@@ -555,8 +521,8 @@ function ValidatorDetails() {
           </div>
         </div>
 
-        {/* Fee Tracking Section - show for validators with current state OR with balance history */}
-        {(hasCurrentState || (balanceTransactions && balanceTransactions.length > 0) || parseFloat(validator.initial_balance || '0') > 0) && (
+        {/* Fee Tracking Section - only for L1 validators */}
+        {isL1 && (totalFunded > 0 || currentBalance > 0 || (balanceTransactions && balanceTransactions.length > 0)) && (
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
             <h2 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
               <TrendingDown size={20} className="text-gray-400" />
@@ -566,7 +532,7 @@ function ValidatorDetails() {
               <div className="p-4 bg-gray-50 rounded-lg">
                 <p className="text-sm text-gray-500 mb-1">Initial Deposit</p>
                 <p className="text-xl font-bold text-gray-900">
-                  {formatBalanceRaw(validator.initial_deposit || '0')} AVAX
+                  {formatBalanceRaw(initialDeposit.toString())} AVAX
                 </p>
               </div>
               <div className="p-4 bg-blue-50 rounded-lg">
@@ -574,12 +540,11 @@ function ValidatorDetails() {
                   <Plus size={14} /> Total Top-ups
                 </p>
                 <p className="text-xl font-bold text-blue-700">
-                  {loadingTopUps ? '...' : formatBalanceRaw(totalTopUps.toString())} AVAX
+                  {formatBalanceRaw(totalTopUps.toString())} AVAX
                 </p>
                 <p className="text-xs text-blue-500 mt-1">
-                  {loadingTopUps ? 'Loading...' : `${topUps?.length || 0} transaction(s)`}
+                  {topUps.length} transaction(s)
                 </p>
-                {topUpsError && <p className="text-xs text-red-500 mt-1">Error loading top-ups</p>}
               </div>
               <div className="p-4 bg-gray-50 rounded-lg">
                 <p className="text-sm text-gray-500 mb-1">Total Funded</p>
@@ -593,6 +558,14 @@ function ValidatorDetails() {
                   {formatBalanceRaw(feesPaid.toString())} AVAX
                 </p>
               </div>
+              {refundAmount > 0 && (
+                <div className="p-4 bg-orange-50 rounded-lg">
+                  <p className="text-sm text-orange-600 mb-1">Refund Amount</p>
+                  <p className="text-xl font-bold text-orange-600">
+                    {formatBalanceRaw(refundAmount.toString())} AVAX
+                  </p>
+                </div>
+              )}
               <div className="p-4 bg-green-50 rounded-lg">
                 <p className="text-sm text-green-600 mb-1">Current Balance</p>
                 <p className="text-xl font-bold text-green-600">
@@ -602,8 +575,9 @@ function ValidatorDetails() {
               <div className="p-4 bg-orange-50 rounded-lg">
                 <p className="text-sm text-orange-600 mb-1">Daily Burn Rate</p>
                 <p className="text-xl font-bold text-orange-600">
-                  {dailyBurnRate > 0 ? (dailyBurnRate / 1e9).toFixed(4) : '0'} AVAX/day
+                  {(DAILY_BURN_NAVAX / 1e9).toFixed(6)} AVAX/day
                 </p>
+                <p className="text-xs text-orange-400 mt-1">512 nAVAX/sec</p>
               </div>
               <div className="p-4 bg-gray-50 rounded-lg">
                 <p className="text-sm text-gray-500 mb-1 flex items-center gap-1">
@@ -618,29 +592,7 @@ function ValidatorDetails() {
               </div>
             </div>
 
-            {/* Note about data source */}
-            <div className="text-xs text-gray-500 mt-2 space-y-1">
-              <p>
-                <strong>Balance sources:</strong> ConvertSubnetToL1 (initial validators),
-                RegisterL1Validator (new validators), IncreaseL1ValidatorBalance (top-ups)
-              </p>
-              <p>
-                <strong>Refunds:</strong> When disabled, remaining balance is sent as a UTXO to the
-                <code className="mx-1 px-1 bg-gray-100 rounded">remainingBalanceOwner</code>
-                address specified at registration.
-              </p>
-              {totalTopUps === 0 && currentBalance > initialDeposit && (
-                <p className="text-orange-600">
-                  Note: Balance is higher than initial deposit but no P-Chain top-ups found.
-                  Balance may have been added via staking contract.
-                </p>
-              )}
-              <p className="font-mono text-[10px] text-gray-400">
-                Validation ID: {validator.validation_id || 'N/A'}
-              </p>
-            </div>
-
-            {/* All Balance-Affecting Transactions */}
+            {/* Balance Transactions */}
             {balanceTransactions && balanceTransactions.length > 0 && (
               <div className="border-t border-gray-200 pt-4">
                 <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3 flex items-center gap-2">
@@ -660,29 +612,22 @@ function ValidatorDetails() {
                     </thead>
                     <tbody className="divide-y divide-gray-100">
                       {balanceTransactions.map((tx) => (
-                        <tr key={tx.tx_id} className={`hover:bg-gray-50 ${tx.effect === 'refund' ? 'bg-red-50' : ''}`}>
+                        <tr key={tx.tx_id + tx.block_height} className={`hover:bg-gray-50 ${tx.effect === 'refund' ? 'bg-red-50' : ''}`}>
                           <td className="py-2 px-3">
-                            <Link
-                              to={`/p-chain/tx/${tx.tx_id}`}
-                              className="font-mono text-blue-600 hover:text-blue-800 flex items-center gap-1"
-                            >
+                            <Link to={`/p-chain/tx/${tx.tx_id}`} className="font-mono text-blue-600 hover:text-blue-800 flex items-center gap-1">
                               {tx.tx_id.substring(0, 16)}...
                               <ExternalLink size={12} />
                             </Link>
                           </td>
                           <td className="py-2 px-3">
                             <span className={`px-2 py-1 rounded-full text-xs font-medium ${
-                              tx.tx_type === 'ConvertSubnetToL1'
-                                ? 'bg-purple-100 text-purple-800'
-                                : tx.tx_type === 'RegisterL1Validator'
-                                ? 'bg-blue-100 text-blue-800'
-                                : tx.tx_type === 'IncreaseL1ValidatorBalance'
-                                ? 'bg-green-100 text-green-800'
-                                : tx.tx_type === 'DisableL1Validator'
-                                ? 'bg-red-100 text-red-800'
-                                : 'bg-gray-100 text-gray-800'
+                              tx.tx_type === 'ConvertSubnetToL1' ? 'bg-purple-100 text-purple-800' :
+                              tx.tx_type === 'RegisterL1Validator' ? 'bg-blue-100 text-blue-800' :
+                              tx.tx_type === 'IncreaseL1ValidatorBalance' ? 'bg-green-100 text-green-800' :
+                              tx.tx_type === 'DisableL1Validator' ? 'bg-red-100 text-red-800' :
+                              'bg-gray-100 text-gray-800'
                             }`}>
-                              {tx.tx_type === 'ConvertSubnetToL1' ? 'Subnet Conversion' :
+                              {tx.tx_type === 'ConvertSubnetToL1' ? 'Initial Deposit' :
                                tx.tx_type === 'RegisterL1Validator' ? 'Registration' :
                                tx.tx_type === 'IncreaseL1ValidatorBalance' ? 'Top-up' :
                                tx.tx_type === 'DisableL1Validator' ? 'Disabled (Refund)' :
@@ -695,10 +640,7 @@ function ValidatorDetails() {
                             )}
                           </td>
                           <td className="py-2 px-3">
-                            <Link
-                              to={`/p-chain/block/${tx.block_height}`}
-                              className="text-blue-600 hover:text-blue-800"
-                            >
+                            <Link to={`/p-chain/block/${tx.block_height}`} className="text-blue-600 hover:text-blue-800">
                               #{tx.block_height.toLocaleString()}
                             </Link>
                           </td>
@@ -709,12 +651,9 @@ function ValidatorDetails() {
                             tx.effect === 'refund' ? 'text-orange-600' : 'text-green-600'
                           }`}>
                             {tx.effect === 'refund'
-                              ? <span title="Remaining balance refunded to remainingBalanceOwner">
-                                  {parseFloat(tx.amount) > 0
-                                    ? `${formatBalanceRaw(tx.amount)} AVAX refunded`
-                                    : <span className="text-gray-500 italic">No refund (balance exhausted)</span>
-                                  }
-                                </span>
+                              ? parseFloat(tx.amount) > 0
+                                ? `${formatBalanceRaw(tx.amount)} AVAX refunded`
+                                : <span className="text-gray-500 italic">No refund (balance exhausted)</span>
                               : `+${formatBalanceRaw(tx.amount)} AVAX`
                             }
                           </td>
@@ -729,84 +668,81 @@ function ValidatorDetails() {
         )}
 
         {/* Registration History Section */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-          <h2 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
-            <Hash size={20} className="text-gray-400" />
-            Registration History
-          </h2>
-          <div className="space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-4 bg-gray-50 rounded-lg">
-              <span className="text-sm font-medium text-gray-600">Registration Type</span>
-              <span className={`px-3 py-1.5 rounded-full text-sm font-medium ${
-                validator.created_tx_type === 'ConvertSubnetToL1'
-                  ? 'bg-purple-100 text-purple-800'
-                  : validator.created_tx_type === 'RegisterL1Validator'
-                  ? 'bg-blue-100 text-blue-800'
-                  : 'bg-gray-100 text-gray-800'
-              }`}>
-                {validator.created_tx_type || 'Unknown'}
-              </span>
-            </div>
-
-            {validator.created_tx_id && (
+        {(validator.created_tx_type || validator.created_tx_id) && (
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+            <h2 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
+              <Hash size={20} className="text-gray-400" />
+              Registration History
+            </h2>
+            <div className="space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-4 bg-gray-50 rounded-lg">
-                <span className="text-sm font-medium text-gray-600">Creation Transaction</span>
-                <div className="flex items-center gap-2">
-                  <Link
-                    to={`/p-chain/tx/${validator.created_tx_id}`}
-                    className="text-sm font-mono text-blue-600 hover:text-blue-800 bg-white px-3 py-1.5 rounded border border-gray-200 flex items-center gap-2"
-                  >
-                    {validator.created_tx_id.substring(0, 20)}...
-                    <ExternalLink size={14} />
-                  </Link>
-                  <button
-                    onClick={() => copyToClipboard(validator.created_tx_id || '')}
-                    className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
-                    title="Copy"
-                  >
-                    <Copy size={16} />
-                  </button>
-                </div>
+                <span className="text-sm font-medium text-gray-600">Registration Type</span>
+                <span className={`px-3 py-1.5 rounded-full text-sm font-medium ${
+                  validator.created_tx_type === 'ConvertSubnetToL1' ? 'bg-purple-100 text-purple-800' :
+                  validator.created_tx_type === 'RegisterL1Validator' ? 'bg-blue-100 text-blue-800' :
+                  'bg-gray-100 text-gray-800'
+                }`}>
+                  {validator.created_tx_type || 'Unknown'}
+                </span>
               </div>
-            )}
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="p-4 bg-gray-50 rounded-lg">
-                <p className="text-sm text-gray-500 mb-1">Created at Block</p>
-                <p className="text-lg font-semibold text-gray-900">
-                  {validator.created_block ? (
+              {validator.created_tx_id && (
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-4 bg-gray-50 rounded-lg">
+                  <span className="text-sm font-medium text-gray-600">Creation Transaction</span>
+                  <div className="flex items-center gap-2">
                     <Link
-                      to={`/p-chain/block/${validator.created_block}`}
-                      className="text-blue-600 hover:text-blue-800"
+                      to={`/p-chain/tx/${validator.created_tx_id}`}
+                      className="text-sm font-mono text-blue-600 hover:text-blue-800 bg-white px-3 py-1.5 rounded border border-gray-200 flex items-center gap-2"
                     >
-                      #{validator.created_block.toLocaleString()}
+                      {validator.created_tx_id.substring(0, 20)}...
+                      <ExternalLink size={14} />
                     </Link>
-                  ) : '-'}
-                </p>
-              </div>
-              <div className="p-4 bg-gray-50 rounded-lg">
-                <p className="text-sm text-gray-500 mb-1">Created Time</p>
-                <p className="text-lg font-semibold text-gray-900">
-                  {validator.created_time && validator.created_time !== '1970-01-01 00:00:00'
-                    ? new Date(validator.created_time).toLocaleString()
-                    : '-'}
-                </p>
-              </div>
-              <div className="p-4 bg-gray-50 rounded-lg">
-                <p className="text-sm text-gray-500 mb-1">Initial Balance</p>
-                <p className="text-lg font-semibold text-gray-900">
-                  {validator.initial_balance ? formatBalanceRaw(validator.initial_balance) + ' AVAX' : '-'}
-                </p>
-              </div>
-              <div className="p-4 bg-gray-50 rounded-lg">
-                <p className="text-sm text-gray-500 mb-1">Initial Weight</p>
-                <p className="text-lg font-semibold text-gray-900">
-                  {validator.initial_weight ? formatWeight(validator.initial_weight) : '-'}
-                </p>
+                    <button onClick={() => copyToClipboard(validator.created_tx_id || '')} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors" title="Copy">
+                      <Copy size={16} />
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="p-4 bg-gray-50 rounded-lg">
+                  <p className="text-sm text-gray-500 mb-1">Created at Block</p>
+                  <p className="text-lg font-semibold text-gray-900">
+                    {validator.created_block ? (
+                      <Link to={`/p-chain/block/${validator.created_block}`} className="text-blue-600 hover:text-blue-800">
+                        #{validator.created_block.toLocaleString()}
+                      </Link>
+                    ) : '-'}
+                  </p>
+                </div>
+                <div className="p-4 bg-gray-50 rounded-lg">
+                  <p className="text-sm text-gray-500 mb-1">Created Time</p>
+                  <p className="text-lg font-semibold text-gray-900">
+                    {validator.created_time && validator.created_time !== '1970-01-01 00:00:00'
+                      ? new Date(validator.created_time).toLocaleString()
+                      : '-'}
+                  </p>
+                </div>
+                {validator.initial_balance && parseFloat(validator.initial_balance) > 0 && (
+                  <div className="p-4 bg-gray-50 rounded-lg">
+                    <p className="text-sm text-gray-500 mb-1">Initial Balance</p>
+                    <p className="text-lg font-semibold text-gray-900">
+                      {formatBalanceRaw(validator.initial_balance)} AVAX
+                    </p>
+                  </div>
+                )}
+                {validator.initial_weight && parseFloat(validator.initial_weight) > 0 && (
+                  <div className="p-4 bg-gray-50 rounded-lg">
+                    <p className="text-sm text-gray-500 mb-1">Initial Weight</p>
+                    <p className="text-lg font-semibold text-gray-900">
+                      {formatWeight(validator.initial_weight)}
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
     </PageTransition>
   );

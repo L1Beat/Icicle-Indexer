@@ -1549,44 +1549,43 @@ func SyncL1ValidatorBalanceTxs(ctx context.Context, conn clickhouse.Conn, pchain
 	}
 	topUpRows.Close()
 
-	// 2. If this is the first sync (lastSyncedBlock == 0), also sync initial deposits
-	if lastSyncedBlock == 0 {
-		// Get initial deposits from l1_validator_history
-		// Now we have validation_id directly in history table, no need to join with state
-		initialQuery := `
-			SELECT
-				vh.validation_id,
-				vh.created_tx_id as tx_id,
-				vh.created_tx_type as tx_type,
-				vh.created_block as block_number,
-				vh.created_time as block_time,
-				vh.initial_balance as amount,
-				vh.subnet_id,
-				vh.node_id
-			FROM l1_validator_history vh FINAL
-			WHERE vh.p_chain_id = ?
-			  AND vh.initial_balance > 0
-		`
+	// 2. Sync initial deposits from l1_validator_history
+	// This covers both ConvertSubnetToL1 and RegisterL1Validator transactions
+	// On first sync (lastSyncedBlock == 0), sync all; otherwise only new blocks
+	initialQuery := `
+		SELECT
+			vh.validation_id,
+			vh.created_tx_id as tx_id,
+			vh.created_tx_type as tx_type,
+			vh.created_block as block_number,
+			vh.created_time as block_time,
+			vh.initial_balance as amount,
+			vh.subnet_id,
+			vh.node_id
+		FROM l1_validator_history vh FINAL
+		WHERE vh.p_chain_id = ?
+		  AND vh.initial_balance > 0
+		  AND vh.created_block > ?
+	`
 
-		initialRows, err := conn.Query(ctx, initialQuery, pchainID)
-		if err != nil {
-			return fmt.Errorf("failed to query initial deposits: %w", err)
-		}
-
-		for initialRows.Next() {
-			var tx L1ValidatorBalanceTx
-			if err := initialRows.Scan(
-				&tx.ValidationID, &tx.TxID, &tx.TxType, &tx.BlockNumber,
-				&tx.BlockTime, &tx.Amount, &tx.SubnetID, &tx.NodeID,
-			); err != nil {
-				slog.Warn("Failed to scan initial deposit", "error", err)
-				continue
-			}
-			tx.PChainID = pchainID
-			txs = append(txs, tx)
-		}
-		initialRows.Close()
+	initialRows, err := conn.Query(ctx, initialQuery, pchainID, lastSyncedBlock)
+	if err != nil {
+		return fmt.Errorf("failed to query initial deposits: %w", err)
 	}
+
+	for initialRows.Next() {
+		var tx L1ValidatorBalanceTx
+		if err := initialRows.Scan(
+			&tx.ValidationID, &tx.TxID, &tx.TxType, &tx.BlockNumber,
+			&tx.BlockTime, &tx.Amount, &tx.SubnetID, &tx.NodeID,
+		); err != nil {
+			slog.Warn("Failed to scan initial deposit", "error", err)
+			continue
+		}
+		tx.PChainID = pchainID
+		txs = append(txs, tx)
+	}
+	initialRows.Close()
 
 	// Insert all transactions
 	if len(txs) > 0 {
