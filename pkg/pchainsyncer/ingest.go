@@ -974,7 +974,7 @@ func CalculateL1FeeStats(ctx context.Context, conn clickhouse.Conn, pchainID uin
 				sumIf(amount, tx_type = 'IncreaseL1ValidatorBalance') as topup_deposits,
 				sumIf(amount, tx_type IN ('ConvertSubnetToL1', 'RegisterL1Validator', 'IncreaseL1ValidatorBalance')) as total_deposits,
 				countIf(tx_type IN ('ConvertSubnetToL1', 'RegisterL1Validator')) as validator_count,
-				count(*) as tx_count
+				countIf(tx_type IN ('ConvertSubnetToL1', 'RegisterL1Validator', 'IncreaseL1ValidatorBalance')) as tx_count
 			FROM l1_validator_balance_txs FINAL
 			WHERE p_chain_id = ?
 			GROUP BY subnet_id
@@ -1813,18 +1813,9 @@ type L1ValidatorRefund struct {
 // SyncL1ValidatorRefunds syncs refund transactions from DisableL1Validator and SetL1ValidatorWeight (weight=0) txs
 // It calculates the refund amount based on deposits minus fees
 func SyncL1ValidatorRefunds(ctx context.Context, conn clickhouse.Conn, fetcher *pchainrpc.Fetcher, pchainID uint32) error {
-	// Use last synced block as a fast filter to avoid rescanning all historical txs.
-	// The NOT IN subquery ensures correctness for any missed txs at the boundary.
-	var lastSyncedBlock uint64
-	err := conn.QueryRow(ctx, `
-		SELECT COALESCE(max(block_number), 0) FROM l1_validator_refunds WHERE p_chain_id = ?
-	`, pchainID).Scan(&lastSyncedBlock)
-	if err != nil {
-		slog.Warn("Could not get last synced block for refunds", "error", err)
-		lastSyncedBlock = 0
-	}
-
-	// Query both DisableL1Validator and SetL1ValidatorWeight transactions that haven't been processed yet
+	// Query both DisableL1Validator and SetL1ValidatorWeight transactions that haven't been processed yet.
+	// We rely on the NOT IN subquery for dedup rather than a block_number filter,
+	// because SetL1ValidatorWeight txs may exist at any block in history.
 	query := `
 		SELECT
 			tx_id,
@@ -1836,12 +1827,11 @@ func SyncL1ValidatorRefunds(ctx context.Context, conn clickhouse.Conn, fetcher *
 		FROM p_chain_txs
 		WHERE p_chain_id = ?
 		  AND tx_type IN ('DisableL1Validator', 'SetL1ValidatorWeight')
-		  AND block_number >= ?
 		  AND tx_id NOT IN (SELECT tx_id FROM l1_validator_refunds WHERE p_chain_id = ?)
 		ORDER BY block_number ASC
 	`
 
-	rows, err := conn.Query(ctx, query, pchainID, lastSyncedBlock, pchainID)
+	rows, err := conn.Query(ctx, query, pchainID, pchainID)
 	if err != nil {
 		return fmt.Errorf("failed to query refund txs: %w", err)
 	}
@@ -2084,6 +2074,7 @@ func calculateRefundFromDeposits(ctx context.Context, conn clickhouse.Conn, vali
 			SELECT COALESCE(SUM(amount), 0)
 			FROM l1_validator_balance_txs FINAL
 			WHERE validation_id = ? AND p_chain_id = ?
+			  AND tx_type IN ('ConvertSubnetToL1', 'RegisterL1Validator', 'IncreaseL1ValidatorBalance')
 			  AND block_time >= ? AND block_time <= ?
 		`, validationID, pchainID, startTime, disableTime).Scan(&totalDeposits)
 	} else {
@@ -2092,6 +2083,7 @@ func calculateRefundFromDeposits(ctx context.Context, conn clickhouse.Conn, vali
 			SELECT COALESCE(SUM(amount), 0)
 			FROM l1_validator_balance_txs FINAL
 			WHERE validation_id = ? AND p_chain_id = ?
+			  AND tx_type IN ('ConvertSubnetToL1', 'RegisterL1Validator', 'IncreaseL1ValidatorBalance')
 			  AND block_time > ? AND block_time <= ?
 		`, validationID, pchainID, startTime, disableTime).Scan(&totalDeposits)
 	}

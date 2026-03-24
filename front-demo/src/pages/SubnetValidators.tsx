@@ -88,8 +88,8 @@ function SubnetValidators() {
             s.chain_id,
             s.converted_block as conversion_block,
             formatDateTime(s.converted_time, '%Y-%m-%d %H:%i:%s') as conversion_time,
-            (SELECT count(DISTINCT node_id) FROM l1_validator_state FINAL WHERE subnet_id = {subnetId:String} AND length(node_id) > 30) as validator_count,
-            (SELECT toString(sum(weight)) FROM l1_validator_state FINAL WHERE subnet_id = {subnetId:String} AND length(node_id) > 30 AND active = true) as total_weight,
+            (SELECT count(*) FROM l1_validator_state FINAL WHERE subnet_id = {subnetId:String} AND active = true) as validator_count,
+            (SELECT toString(sum(weight)) FROM l1_validator_state FINAL WHERE subnet_id = {subnetId:String} AND active = true) as total_weight,
             NULLIF(r.name, '') as name,
             NULLIF(r.description, '') as description,
             NULLIF(r.logo_url, '') as logo_url,
@@ -128,7 +128,7 @@ function SubnetValidators() {
               if(active, true, false) as active,
               formatDateTime(last_updated, '%Y-%m-%d %H:%i:%s') as last_updated
             FROM l1_validator_state FINAL
-            WHERE subnet_id = {subnetId:String}
+            WHERE subnet_id = {subnetId:String} AND active = true
             ORDER BY weight DESC
           `,
           format: 'JSONEachRow',
