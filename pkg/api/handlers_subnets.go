@@ -262,7 +262,7 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 			GROUP BY subnet_id
 		) v ON c.subnet_id = v.subnet_id
 		%s
-		ORDER BY c.created_block DESC
+		ORDER BY c.created_block DESC, c.chain_id ASC
 		LIMIT ?
 	`, whereClause)
 
