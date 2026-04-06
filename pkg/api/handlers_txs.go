@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"strings"
@@ -308,7 +309,7 @@ func (s *Server) handleGetTx(w http.ResponseWriter, r *http.Request) {
 		ORDER BY l.log_index
 	`, chainID, hashHex)
 	if err != nil {
-		fmt.Printf("Error querying token transfers: %v\n", err)
+		slog.Error("error querying token transfers", "error", err)
 	} else {
 		defer transferRows.Close()
 		for transferRows.Next() {
@@ -321,7 +322,7 @@ func (s *Server) handleGetTx(w http.ResponseWriter, r *http.Request) {
 			var valueBig big.Int
 
 			if err := transferRows.Scan(&tokenBytes, &name, &symbol, &decimals, &fromBytes, &toBytes, &valueBig, &tt.LogIndex); err != nil {
-				fmt.Printf("Error scanning token transfer: %v\n", err)
+				slog.Error("error scanning token transfer", "error", err)
 				continue
 			}
 			tt.Token = "0x" + hex.EncodeToString(tokenBytes[:])
@@ -370,7 +371,7 @@ func (s *Server) handleGetTx(w http.ResponseWriter, r *http.Request) {
 		ORDER BY l.log_index
 	`, chainID, hashHex)
 	if err != nil {
-		fmt.Printf("Error querying token approvals: %v\n", err)
+		slog.Error("error querying token approvals", "error", err)
 	} else {
 		defer approvalRows.Close()
 
@@ -387,7 +388,7 @@ func (s *Server) handleGetTx(w http.ResponseWriter, r *http.Request) {
 			var valueBig big.Int
 
 			if err := approvalRows.Scan(&tokenBytes, &name, &symbol, &decimals, &ownerBytes, &spenderBytes, &valueBig, &ta.LogIndex); err != nil {
-				fmt.Printf("Error scanning token approval: %v\n", err)
+				slog.Error("error scanning token approval", "error", err)
 				continue
 			}
 			ta.Token = "0x" + hex.EncodeToString(tokenBytes[:])

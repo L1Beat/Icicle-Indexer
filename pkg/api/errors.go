@@ -1,6 +1,9 @@
 package api
 
-import "net/http"
+import (
+	"log/slog"
+	"net/http"
+)
 
 // ErrorCode represents structured error codes for API responses
 type ErrorCode string
@@ -67,11 +70,11 @@ func writeRateLimitError(w http.ResponseWriter, retryAfter int) {
 
 // writeInternalError writes a 500 error
 func writeInternalError(w http.ResponseWriter, details string) {
+	slog.Error("internal error", "details", details)
 	writeJSON(w, http.StatusInternalServerError, ErrorResponse{
 		Error: APIError{
 			Code:    ErrInternalError,
 			Message: "Internal server error",
-			Details: details,
 		},
 	})
 }
