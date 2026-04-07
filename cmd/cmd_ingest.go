@@ -39,10 +39,13 @@ func RunIngest(ctx context.Context, fast bool) {
 		log.Fatalf("Failed to create tables: %v", err)
 	}
 
-	// Sync L1 Registry at startup (in background)
+	// Sync L1 Registry and validator manager owners at startup (in background)
 	go func() {
 		if err := registrysyncer.SyncRegistry(ctx, conn); err != nil {
 			slog.Error("Failed to sync L1 registry", "error", err)
+		}
+		if err := registrysyncer.SyncValidatorManagerOwners(ctx, conn); err != nil {
+			slog.Error("Failed to sync validator manager owners", "error", err)
 		}
 	}()
 

@@ -770,7 +770,7 @@ func InsertSubnets(ctx context.Context, conn clickhouse.Conn, subnets []Subnet) 
 
 	batch, err := conn.PrepareBatch(ctx, `INSERT INTO subnets (
 		subnet_id, created_block, created_time, subnet_type,
-		chain_id, converted_block, converted_time, validator_manager_address, p_chain_id, last_updated
+		chain_id, converted_block, converted_time, validator_manager_address, validator_manager_owner, p_chain_id, last_updated
 	)`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare batch: %w", err)
@@ -787,6 +787,7 @@ func InsertSubnets(ctx context.Context, conn clickhouse.Conn, subnets []Subnet) 
 			subnet.ConvertedBlock,
 			subnet.ConvertedTime,
 			subnet.ValidatorManagerAddress,
+			"", // validator_manager_owner populated by owner syncer
 			subnet.PChainID,
 			now,
 		)
@@ -816,7 +817,7 @@ func InsertPrimaryNetwork(ctx context.Context, conn clickhouse.Conn, pchainID ui
 
 	batch, err := conn.PrepareBatch(ctx, `INSERT INTO subnets (
 		subnet_id, created_block, created_time, subnet_type,
-		chain_id, converted_block, converted_time, validator_manager_address, p_chain_id, last_updated
+		chain_id, converted_block, converted_time, validator_manager_address, validator_manager_owner, p_chain_id, last_updated
 	)`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare batch: %w", err)
@@ -832,6 +833,7 @@ func InsertPrimaryNetwork(ctx context.Context, conn clickhouse.Conn, pchainID ui
 		uint64(0),
 		AvalancheGenesisTime,
 		"", // no validator manager for primary network
+		"", // no validator manager owner for primary network
 		subnet.PChainID,
 		now,
 	)

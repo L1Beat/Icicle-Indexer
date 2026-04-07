@@ -18,6 +18,7 @@ type Subnet struct {
 	ConvertedBlock          uint64     `json:"converted_block,omitempty" example:"12345700"`
 	ConvertedTime           *time.Time `json:"converted_time,omitempty"`
 	ValidatorManagerAddress string     `json:"validator_manager_address,omitempty" example:"0x1234..."`
+	ValidatorManagerOwner   string     `json:"validator_manager_owner,omitempty" example:"0x5678..."`
 }
 
 // SubnetChain represents a blockchain within a subnet
@@ -75,6 +76,7 @@ type ChainInfo struct {
 	ConvertedBlock          uint64     `json:"converted_block,omitempty"`
 	ConvertedTime           *time.Time `json:"converted_time,omitempty"`
 	ValidatorManagerAddress string     `json:"validator_manager_address,omitempty"`
+	ValidatorManagerOwner   string     `json:"validator_manager_owner,omitempty"`
 
 	// Registry metadata
 	Name        string `json:"name,omitempty"`
@@ -117,13 +119,13 @@ func (s *Server) handleGetSubnet(w http.ResponseWriter, r *http.Request) {
 	var convertedTime time.Time
 	err := s.conn.QueryRow(ctx, `
 		SELECT subnet_id, subnet_type, created_block, created_time,
-			chain_id, converted_block, converted_time, validator_manager_address
+			chain_id, converted_block, converted_time, validator_manager_address, validator_manager_owner
 		FROM subnets FINAL
 		WHERE subnet_id = ?
 		LIMIT 1
 	`, subnetID).Scan(
 		&sub.SubnetID, &sub.SubnetType, &sub.CreatedBlock, &sub.CreatedTime,
-		&sub.ChainID, &sub.ConvertedBlock, &convertedTime, &sub.ValidatorManagerAddress,
+		&sub.ChainID, &sub.ConvertedBlock, &convertedTime, &sub.ValidatorManagerAddress, &sub.ValidatorManagerOwner,
 	)
 	if !convertedTime.IsZero() {
 		sub.ConvertedTime = &convertedTime
@@ -244,7 +246,7 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 	query := fmt.Sprintf(`
 		SELECT
 			c.chain_id, c.chain_name, c.vm_id, c.created_block, c.created_time,
-			s.subnet_id, s.subnet_type, s.converted_block, s.converted_time, s.validator_manager_address,
+			s.subnet_id, s.subnet_type, s.converted_block, s.converted_time, s.validator_manager_address, s.validator_manager_owner,
 			r.name, r.description, r.logo_url, r.website_url,
 			r.evm_chain_id, r.categories, r.socials,
 			r.rpc_url, r.explorer_url, r.sybil_resistance_type,
@@ -301,7 +303,7 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 
 		if err := rows.Scan(
 			&ci.ChainID, &ci.ChainName, &ci.VMID, &ci.CreatedBlock, &ci.CreatedTime,
-			&ci.SubnetID, &ci.ChainType, &ci.ConvertedBlock, &convertedTime, &ci.ValidatorManagerAddress,
+			&ci.SubnetID, &ci.ChainType, &ci.ConvertedBlock, &convertedTime, &ci.ValidatorManagerAddress, &ci.ValidatorManagerOwner,
 			&name, &description, &logoURL, &websiteURL,
 			&evmChainID, &categories, &socialsJSON,
 			&rpcURL, &explorerURL, &sybilType,
