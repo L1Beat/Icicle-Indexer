@@ -14,7 +14,7 @@ import (
 // chainColumns matches the SELECT columns in handleListChains
 var chainColumns = []string{
 	"chain_id", "chain_name", "vm_id", "created_block", "created_time",
-	"subnet_id", "subnet_type", "converted_block", "converted_time",
+	"subnet_id", "subnet_type", "converted_block", "converted_time", "validator_manager_address",
 	"name", "description", "logo_url", "website_url",
 	"evm_chain_id", "categories", "socials",
 	"rpc_url", "explorer_url", "sybil_resistance_type",
@@ -39,6 +39,7 @@ func TestHandleGetSubnet_Success(t *testing.T) {
 						*dest[4].(*string) = "chain123"
 						*dest[5].(*uint64) = 12345700
 						*dest[6].(*time.Time) = time.Now()
+						*dest[7].(*string) = "0x1234567890abcdef1234567890abcdef12345678"
 						return nil
 					},
 				}
@@ -91,7 +92,7 @@ func TestHandleListChains_Success(t *testing.T) {
 			return NewMockRows(chainColumns, [][]interface{}{
 				{
 					"chain123", "My Chain", "subnetevm", uint64(12345678), time.Now(),
-					"subnet123", "l1", uint64(12345700), time.Now(),
+					"subnet123", "l1", uint64(12345700), time.Now(), "0x1234567890abcdef1234567890abcdef12345678",
 					stringPtr("My L1"), stringPtr("Description"), stringPtr("https://logo.png"), stringPtr("https://website.com"),
 					uint64Ptr(43114), []string{"DeFi", "Gaming"}, stringPtr(`[{"name":"twitter","url":"https://x.com/test"}]`),
 					stringPtr("https://rpc.example.com"), stringPtr("https://explorer.example.com"), stringPtr("Proof of Stake"),
@@ -181,7 +182,7 @@ func TestHandleListChains_LegacyChainOmitsL1Fields(t *testing.T) {
 			return NewMockRows(chainColumns, [][]interface{}{
 				{
 					"chain456", "Legacy Chain", "subnetevm", uint64(11111111), time.Now(),
-					"subnet456", "legacy", uint64(0), time.Time{},
+					"subnet456", "legacy", uint64(0), time.Time{}, "",
 					(*string)(nil), (*string)(nil), (*string)(nil), (*string)(nil),
 					(*uint64)(nil), []string(nil), (*string)(nil),
 					(*string)(nil), (*string)(nil), (*string)(nil),
