@@ -10,13 +10,14 @@ import (
 
 // Subnet represents an Avalanche subnet
 type Subnet struct {
-	SubnetID       string    `json:"subnet_id" example:"2XDnKyAEr..."`
-	SubnetType     string    `json:"subnet_type" example:"l1"`
-	CreatedBlock   uint64    `json:"created_block" example:"12345678"`
-	CreatedTime    time.Time `json:"created_time"`
-	ChainID        string    `json:"chain_id,omitempty" example:"2q9e4r6Mu..."`
-	ConvertedBlock uint64     `json:"converted_block,omitempty" example:"12345700"`
-	ConvertedTime  *time.Time `json:"converted_time,omitempty"`
+	SubnetID                string     `json:"subnet_id" example:"2XDnKyAEr..."`
+	SubnetType              string     `json:"subnet_type" example:"l1"`
+	CreatedBlock            uint64     `json:"created_block" example:"12345678"`
+	CreatedTime             time.Time  `json:"created_time"`
+	ChainID                 string     `json:"chain_id,omitempty" example:"2q9e4r6Mu..."`
+	ConvertedBlock          uint64     `json:"converted_block,omitempty" example:"12345700"`
+	ConvertedTime           *time.Time `json:"converted_time,omitempty"`
+	ValidatorManagerAddress string     `json:"validator_manager_address,omitempty" example:"0x1234..."`
 }
 
 // SubnetChain represents a blockchain within a subnet
@@ -69,10 +70,11 @@ type ChainInfo struct {
 	CreatedTime  time.Time `json:"created_time"`
 
 	// Parent subnet
-	SubnetID       string     `json:"subnet_id"`
-	ChainType      string     `json:"chain_type"`
-	ConvertedBlock uint64     `json:"converted_block,omitempty"`
-	ConvertedTime  *time.Time `json:"converted_time,omitempty"`
+	SubnetID                string     `json:"subnet_id"`
+	ChainType               string     `json:"chain_type"`
+	ConvertedBlock          uint64     `json:"converted_block,omitempty"`
+	ConvertedTime           *time.Time `json:"converted_time,omitempty"`
+	ValidatorManagerAddress string     `json:"validator_manager_address,omitempty"`
 
 	// Registry metadata
 	Name        string `json:"name,omitempty"`
@@ -115,13 +117,13 @@ func (s *Server) handleGetSubnet(w http.ResponseWriter, r *http.Request) {
 	var convertedTime time.Time
 	err := s.conn.QueryRow(ctx, `
 		SELECT subnet_id, subnet_type, created_block, created_time,
-			chain_id, converted_block, converted_time
+			chain_id, converted_block, converted_time, validator_manager_address
 		FROM subnets FINAL
 		WHERE subnet_id = ?
 		LIMIT 1
 	`, subnetID).Scan(
 		&sub.SubnetID, &sub.SubnetType, &sub.CreatedBlock, &sub.CreatedTime,
-		&sub.ChainID, &sub.ConvertedBlock, &convertedTime,
+		&sub.ChainID, &sub.ConvertedBlock, &convertedTime, &sub.ValidatorManagerAddress,
 	)
 	if !convertedTime.IsZero() {
 		sub.ConvertedTime = &convertedTime
@@ -242,7 +244,7 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 	query := fmt.Sprintf(`
 		SELECT
 			c.chain_id, c.chain_name, c.vm_id, c.created_block, c.created_time,
-			s.subnet_id, s.subnet_type, s.converted_block, s.converted_time,
+			s.subnet_id, s.subnet_type, s.converted_block, s.converted_time, s.validator_manager_address,
 			r.name, r.description, r.logo_url, r.website_url,
 			r.evm_chain_id, r.categories, r.socials,
 			r.rpc_url, r.explorer_url, r.sybil_resistance_type,
@@ -299,7 +301,7 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 
 		if err := rows.Scan(
 			&ci.ChainID, &ci.ChainName, &ci.VMID, &ci.CreatedBlock, &ci.CreatedTime,
-			&ci.SubnetID, &ci.ChainType, &ci.ConvertedBlock, &convertedTime,
+			&ci.SubnetID, &ci.ChainType, &ci.ConvertedBlock, &convertedTime, &ci.ValidatorManagerAddress,
 			&name, &description, &logoURL, &websiteURL,
 			&evmChainID, &categories, &socialsJSON,
 			&rpcURL, &explorerURL, &sybilType,

@@ -184,11 +184,12 @@ func InsertPChainTxs(ctx context.Context, conn clickhouse.Conn, pchainID uint32,
 
 // L1Subnet represents an L1 subnet to be tracked
 type L1Subnet struct {
-	SubnetID        ids.ID
-	ChainID         ids.ID
-	ConversionBlock uint64
-	ConversionTime  time.Time
-	PChainID        uint32
+	SubnetID                ids.ID
+	ChainID                 ids.ID
+	ConversionBlock         uint64
+	ConversionTime          time.Time
+	PChainID                uint32
+	ValidatorManagerAddress string // 0x-prefixed EVM address of the ValidatorManager contract
 }
 
 // InsertL1Subnets inserts or updates L1 subnet records
@@ -198,7 +199,7 @@ func InsertL1Subnets(ctx context.Context, conn clickhouse.Conn, subnets []L1Subn
 	}
 
 	batch, err := conn.PrepareBatch(ctx, `INSERT INTO l1_subnets (
-		subnet_id, chain_id, conversion_block, conversion_time, p_chain_id, last_synced
+		subnet_id, chain_id, conversion_block, conversion_time, validator_manager_address, p_chain_id, last_synced
 	)`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare batch: %w", err)
@@ -211,6 +212,7 @@ func InsertL1Subnets(ctx context.Context, conn clickhouse.Conn, subnets []L1Subn
 			subnet.ChainID.String(),  // Store as CB58 string
 			subnet.ConversionBlock,
 			subnet.ConversionTime,
+			subnet.ValidatorManagerAddress,
 			subnet.PChainID,
 			now,
 		)
@@ -397,6 +399,7 @@ func DiscoverL1SubnetsFromTransactions(ctx context.Context, conn clickhouse.Conn
 		SELECT
 			tx_data.subnetID as subnet_id,
 			coalesce(tx_data.chainID, '') as chain_id,
+			CAST(coalesce(tx_data.address, '') AS String) as manager_address,
 			block_number,
 			block_time
 		FROM p_chain_txs
@@ -415,11 +418,11 @@ func DiscoverL1SubnetsFromTransactions(ctx context.Context, conn clickhouse.Conn
 	seen := make(map[ids.ID]bool) // Deduplicate by subnet_id
 
 	for rows.Next() {
-		var subnetIDStr, chainIDStr string
+		var subnetIDStr, chainIDStr, managerAddr string
 		var blockNumber uint64
 		var blockTime time.Time
 
-		if err := rows.Scan(&subnetIDStr, &chainIDStr, &blockNumber, &blockTime); err != nil {
+		if err := rows.Scan(&subnetIDStr, &chainIDStr, &managerAddr, &blockNumber, &blockTime); err != nil {
 			return nil, fmt.Errorf("failed to scan row: %w", err)
 		}
 
@@ -447,12 +450,19 @@ func DiscoverL1SubnetsFromTransactions(ctx context.Context, conn clickhouse.Conn
 			}
 		}
 
+		// Format validator manager address with 0x prefix
+		var vmAddr string
+		if managerAddr != "" {
+			vmAddr = "0x" + managerAddr
+		}
+
 		subnets = append(subnets, L1Subnet{
-			SubnetID:        subnetID,
-			ChainID:         chainID,
-			ConversionBlock: blockNumber,
-			ConversionTime:  blockTime,
-			PChainID:        pchainID,
+			SubnetID:                subnetID,
+			ChainID:                 chainID,
+			ConversionBlock:         blockNumber,
+			ConversionTime:          blockTime,
+			PChainID:                pchainID,
+			ValidatorManagerAddress: vmAddr,
 		})
 	}
 
@@ -465,14 +475,15 @@ func DiscoverL1SubnetsFromTransactions(ctx context.Context, conn clickhouse.Conn
 
 // Subnet represents a subnet with its lifecycle information
 type Subnet struct {
-	SubnetID       ids.ID
-	CreatedBlock   uint64
-	CreatedTime    time.Time
-	SubnetType     string // 'legacy', 'l1'
-	ChainID        ids.ID
-	ConvertedBlock uint64
-	ConvertedTime  time.Time
-	PChainID       uint32
+	SubnetID                ids.ID
+	CreatedBlock            uint64
+	CreatedTime             time.Time
+	SubnetType              string // 'legacy', 'l1'
+	ChainID                 ids.ID
+	ConvertedBlock          uint64
+	ConvertedTime           time.Time
+	PChainID                uint32
+	ValidatorManagerAddress string // 0x-prefixed EVM address of the ValidatorManager contract
 }
 
 // SubnetChain represents a blockchain created within a subnet
@@ -572,6 +583,7 @@ func DiscoverAllSubnets(ctx context.Context, conn clickhouse.Conn, pchainID uint
 			CAST(tx_data.subnetID AS String) as subnet_id,
 			tx_type,
 			CAST(coalesce(tx_data.chainID, '') AS String) as chain_id,
+			CAST(coalesce(tx_data.address, '') AS String) as manager_address,
 			block_number,
 			block_time
 		FROM p_chain_txs
@@ -588,11 +600,11 @@ func DiscoverAllSubnets(ctx context.Context, conn clickhouse.Conn, pchainID uint
 	defer rows.Close()
 
 	for rows.Next() {
-		var subnetIDStr, txType, chainIDStr string
+		var subnetIDStr, txType, chainIDStr, managerAddr string
 		var blockNumber uint64
 		var blockTime time.Time
 
-		if err := rows.Scan(&subnetIDStr, &txType, &chainIDStr, &blockNumber, &blockTime); err != nil {
+		if err := rows.Scan(&subnetIDStr, &txType, &chainIDStr, &managerAddr, &blockNumber, &blockTime); err != nil {
 			return nil, fmt.Errorf("failed to scan conversion row: %w", err)
 		}
 
@@ -637,6 +649,11 @@ func DiscoverAllSubnets(ctx context.Context, conn clickhouse.Conn, pchainID uint
 				if err == nil {
 					subnet.ChainID = chainID
 				}
+			}
+
+			// Set validator manager address (hex from avalanchego JSONByteSlice, no 0x prefix)
+			if managerAddr != "" {
+				subnet.ValidatorManagerAddress = "0x" + managerAddr
 			}
 		}
 	}
@@ -745,7 +762,7 @@ func InsertSubnets(ctx context.Context, conn clickhouse.Conn, subnets []Subnet) 
 
 	batch, err := conn.PrepareBatch(ctx, `INSERT INTO subnets (
 		subnet_id, created_block, created_time, subnet_type,
-		chain_id, converted_block, converted_time, p_chain_id, last_updated
+		chain_id, converted_block, converted_time, validator_manager_address, p_chain_id, last_updated
 	)`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare batch: %w", err)
@@ -761,6 +778,7 @@ func InsertSubnets(ctx context.Context, conn clickhouse.Conn, subnets []Subnet) 
 			subnet.ChainID.String(),
 			subnet.ConvertedBlock,
 			subnet.ConvertedTime,
+			subnet.ValidatorManagerAddress,
 			subnet.PChainID,
 			now,
 		)
@@ -790,7 +808,7 @@ func InsertPrimaryNetwork(ctx context.Context, conn clickhouse.Conn, pchainID ui
 
 	batch, err := conn.PrepareBatch(ctx, `INSERT INTO subnets (
 		subnet_id, created_block, created_time, subnet_type,
-		chain_id, converted_block, converted_time, p_chain_id, last_updated
+		chain_id, converted_block, converted_time, validator_manager_address, p_chain_id, last_updated
 	)`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare batch: %w", err)
@@ -805,6 +823,7 @@ func InsertPrimaryNetwork(ctx context.Context, conn clickhouse.Conn, pchainID ui
 		"",
 		uint64(0),
 		AvalancheGenesisTime,
+		"", // no validator manager for primary network
 		subnet.PChainID,
 		now,
 	)

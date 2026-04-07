@@ -213,6 +213,7 @@ CREATE TABLE IF NOT EXISTS l1_subnets (
     chain_id String,  -- The associated chain ID (CB58)
     conversion_block UInt64,  -- Block number when subnet was converted to L1
     conversion_time DateTime64(3, 'UTC'),  -- When subnet was converted to L1
+    validator_manager_address String DEFAULT '',  -- EVM address of the ValidatorManager contract (0x-prefixed hex)
     p_chain_id UInt32,  -- Which P-chain instance
     last_synced DateTime64(3, 'UTC')  -- Last time validators were synced for this subnet
 ) ENGINE = ReplacingMergeTree(last_synced)
@@ -265,6 +266,7 @@ CREATE TABLE IF NOT EXISTS subnets (
     chain_id String,  -- Associated chain ID (empty for non-L1 subnets)
     converted_block UInt64,  -- Block number when converted (0 if not converted)
     converted_time DateTime64(3, 'UTC'),  -- When converted (epoch 0 if not converted)
+    validator_manager_address String DEFAULT '',  -- EVM address of the ValidatorManager contract (0x-prefixed hex)
 
     -- Metadata
     p_chain_id UInt32,  -- Which P-chain instance
