@@ -47,9 +47,9 @@ func SyncValidatorManagerOwners(ctx context.Context, conn driver.Conn) error {
 			s.chain_id, s.converted_block, s.converted_time,
 			s.validator_manager_address, s.p_chain_id,
 			r.rpc_url
-		FROM subnets FINAL s
-		INNER JOIN subnet_chains FINAL sc ON s.subnet_id = sc.subnet_id
-		INNER JOIN l1_registry FINAL r ON sc.chain_id = r.blockchain_id
+		FROM (SELECT * FROM subnets FINAL) s
+		INNER JOIN (SELECT * FROM subnet_chains FINAL) sc ON s.subnet_id = sc.subnet_id
+		INNER JOIN (SELECT * FROM l1_registry FINAL) r ON sc.chain_id = r.blockchain_id
 		WHERE s.validator_manager_address != ''
 		  AND r.rpc_url != ''
 	`)
