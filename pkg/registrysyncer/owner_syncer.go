@@ -15,7 +15,8 @@ import (
 	"icicle/pkg/chwrapper"
 )
 
-const ownerSelector = "0x8da5cb5b" // keccak256("owner()")
+const ownerSelector = "0x8da5cb5b"                                    // keccak256("owner()")
+const cChainRPC = "https://api.avax.network/ext/bc/C/rpc" // C-Chain public RPC fallback
 
 // l1OwnerInfo holds the data needed to fetch and store a validator manager owner
 type l1OwnerInfo struct {
@@ -96,8 +97,12 @@ func SyncValidatorManagerOwners(ctx context.Context, conn driver.Conn) error {
 	for _, info := range l1s {
 		owner, err := fetchOwner(httpClient, info.RpcURL, info.ValidatorManagerAddress)
 		if err != nil {
-			slog.Warn("Failed to fetch owner", "subnet_id", info.SubnetID, "rpc_url", info.RpcURL, "error", err)
-			continue
+			// Fallback: some L1s deploy their ValidatorManager on C-Chain
+			owner, err = fetchOwner(httpClient, cChainRPC, info.ValidatorManagerAddress)
+			if err != nil {
+				slog.Warn("Failed to fetch owner", "subnet_id", info.SubnetID, "error", err)
+				continue
+			}
 		}
 
 		if err := batch.Append(
