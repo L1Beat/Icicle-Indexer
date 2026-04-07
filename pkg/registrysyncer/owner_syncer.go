@@ -123,7 +123,77 @@ func SyncValidatorManagerOwners(ctx context.Context, conn driver.Conn) error {
 		}
 	}
 
-	slog.Info("Validator manager owner sync complete", "updated", updated, "total", len(l1s), "duration", time.Since(startTime))
+	slog.Info("Validator manager owner sync (with RPC)", "updated", updated, "total", len(l1s))
+
+	// Second pass: try C-Chain for subnets without an RPC URL or not in registry
+	noRpcRows, err := conn.Query(ctx, `
+		SELECT
+			subnet_id, created_block, created_time, subnet_type,
+			chain_id, converted_block, converted_time,
+			validator_manager_address, p_chain_id
+		FROM (SELECT * FROM subnets FINAL)
+		WHERE validator_manager_address != ''
+		  AND validator_manager_owner = ''
+	`)
+	if err != nil {
+		return fmt.Errorf("failed to query subnets without owner: %w", err)
+	}
+	defer noRpcRows.Close()
+
+	var noRpcL1s []l1OwnerInfo
+	for noRpcRows.Next() {
+		var info l1OwnerInfo
+		if err := noRpcRows.Scan(
+			&info.SubnetID, &info.CreatedBlock, &info.CreatedTime, &info.SubnetType,
+			&info.ChainID, &info.ConvertedBlock, &info.ConvertedTime,
+			&info.ValidatorManagerAddress, &info.PChainID,
+		); err != nil {
+			return fmt.Errorf("failed to scan no-rpc row: %w", err)
+		}
+		noRpcL1s = append(noRpcL1s, info)
+	}
+
+	if len(noRpcL1s) > 0 {
+		slog.Info("Trying C-Chain fallback for remaining subnets", "count", len(noRpcL1s))
+
+		batch2, err := conn.PrepareBatch(ctx, `INSERT INTO subnets (
+			subnet_id, created_block, created_time, subnet_type,
+			chain_id, converted_block, converted_time,
+			validator_manager_address, validator_manager_owner,
+			p_chain_id, last_updated
+		)`)
+		if err != nil {
+			return fmt.Errorf("failed to prepare batch: %w", err)
+		}
+
+		var updated2 int
+		for _, info := range noRpcL1s {
+			owner, err := fetchOwner(httpClient, cChainRPC, info.ValidatorManagerAddress)
+			if err != nil {
+				continue // silently skip — contract likely only exists on the L1
+			}
+
+			if err := batch2.Append(
+				info.SubnetID, info.CreatedBlock, info.CreatedTime, info.SubnetType,
+				info.ChainID, info.ConvertedBlock, info.ConvertedTime,
+				info.ValidatorManagerAddress, owner,
+				info.PChainID, now,
+			); err != nil {
+				continue
+			}
+			updated2++
+		}
+
+		if updated2 > 0 {
+			if err := chwrapper.RetryableBatchSend(batch2); err != nil {
+				return fmt.Errorf("failed to send C-Chain fallback batch: %w", err)
+			}
+		}
+		updated += updated2
+		slog.Info("C-Chain fallback complete", "updated", updated2, "remaining", len(noRpcL1s)-updated2)
+	}
+
+	slog.Info("Validator manager owner sync complete", "total_updated", updated, "duration", time.Since(startTime))
 	return nil
 }
 
