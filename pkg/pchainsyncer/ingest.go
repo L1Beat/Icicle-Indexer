@@ -453,7 +453,11 @@ func DiscoverL1SubnetsFromTransactions(ctx context.Context, conn clickhouse.Conn
 		// Format validator manager address with 0x prefix
 		var vmAddr string
 		if managerAddr != "" {
-			vmAddr = "0x" + managerAddr
+			if strings.HasPrefix(managerAddr, "0x") {
+				vmAddr = managerAddr
+			} else {
+				vmAddr = "0x" + managerAddr
+			}
 		}
 
 		subnets = append(subnets, L1Subnet{
@@ -651,9 +655,13 @@ func DiscoverAllSubnets(ctx context.Context, conn clickhouse.Conn, pchainID uint
 				}
 			}
 
-			// Set validator manager address (hex from avalanchego JSONByteSlice, no 0x prefix)
+			// Set validator manager address
 			if managerAddr != "" {
-				subnet.ValidatorManagerAddress = "0x" + managerAddr
+				if strings.HasPrefix(managerAddr, "0x") {
+					subnet.ValidatorManagerAddress = managerAddr
+				} else {
+					subnet.ValidatorManagerAddress = "0x" + managerAddr
+				}
 			}
 		}
 	}
