@@ -94,6 +94,9 @@ type ChainInfo struct {
 	NetworkToken        *NetworkToken `json:"network_token,omitempty"`
 	Network             string       `json:"network,omitempty"`
 
+	// Status
+	IsActive bool `json:"is_active"`
+
 	// L1 stats (only for L1s)
 	ValidatorCount   *uint32 `json:"validator_count,omitempty"`
 	ActiveValidators *uint32 `json:"active_validators,omitempty"`
@@ -375,7 +378,8 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 			ci.Network = *network
 		}
 
-		// Validator stats
+		// Validator stats + active status
+		ci.IsActive = activeValidators != nil && *activeValidators > 0
 		if validatorCount != nil && *validatorCount > 0 {
 			ci.ValidatorCount = validatorCount
 		}
