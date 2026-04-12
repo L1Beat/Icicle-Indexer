@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
@@ -24,6 +25,7 @@ type IndexRunner struct {
 	rpcURL     string // RPC URL for token metadata fetching
 
 	// Block state (updated by OnBlock)
+	mu              sync.RWMutex
 	latestBlockNum  uint64
 	latestBlockTime time.Time
 
@@ -127,26 +129,46 @@ func (r *IndexRunner) discoverIndexers() error {
 
 // OnBlock updates the runner with latest block information
 func (r *IndexRunner) OnBlock(blockNum uint64, blockTime time.Time) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	r.latestBlockNum = blockNum
 	r.latestBlockTime = blockTime
 }
 
-// Start begins the indexer loop (runs forever)
-func (r *IndexRunner) Start() {
+func (r *IndexRunner) latestBlock() (uint64, time.Time) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	return r.latestBlockNum, r.latestBlockTime
+}
+
+// Start begins the indexer loop.
+func (r *IndexRunner) Start(ctx context.Context) {
 	slog.Info("Starting indexer loop", "chain_id", r.chainId, "token_metadata_fetcher_enabled", r.tokenMetadataFetcher != nil)
 
 	for {
+		if err := ctx.Err(); err != nil {
+			slog.Info("Stopping indexer loop", "chain_id", r.chainId, "reason", err)
+			return
+		}
+
+		latestBlockNum, latestBlockTime := r.latestBlock()
+
 		// Only process if we have block data
-		if r.latestBlockNum == 0 {
-			time.Sleep(100 * time.Millisecond)
+		if latestBlockNum == 0 {
+			if !sleepOrDone(ctx, 100*time.Millisecond) {
+				slog.Info("Stopping indexer loop", "chain_id", r.chainId, "reason", ctx.Err())
+				return
+			}
 			continue
 		}
 
 		// Process all pending blocks for incremental indexers
-		hasWork := r.processIncrementalBatch()
+		hasWork := r.processIncrementalBatch(latestBlockNum)
 
 		// Process granular metrics (time-based)
-		r.processGranularMetrics()
+		r.processGranularMetrics(latestBlockTime)
 
 		// Fetch token metadata periodically (every 10 seconds)
 		if r.tokenMetadataFetcher != nil && time.Since(r.lastMetadataFetch) > 10*time.Second {
@@ -163,7 +185,22 @@ func (r *IndexRunner) Start() {
 
 		// Sleep only if no incremental work was done
 		if !hasWork {
-			time.Sleep(100 * time.Millisecond)
+			if !sleepOrDone(ctx, 100*time.Millisecond) {
+				slog.Info("Stopping indexer loop", "chain_id", r.chainId, "reason", ctx.Err())
+				return
+			}
 		}
+	}
+}
+
+func sleepOrDone(ctx context.Context, d time.Duration) bool {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }

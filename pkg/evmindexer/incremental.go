@@ -13,7 +13,7 @@ const IncrementalBatchSize = 2000
 // processIncrementalBatch processes pending blocks for all incremental indexers in batches
 // Processes up to IncrementalBatchSize blocks per indexer per call
 // Returns true if any work was done
-func (r *IndexRunner) processIncrementalBatch() bool {
+func (r *IndexRunner) processIncrementalBatch(latestBlockNum uint64) bool {
 	hasWork := false
 
 	// Process each indexer independently
@@ -22,14 +22,15 @@ func (r *IndexRunner) processIncrementalBatch() bool {
 		watermark := r.getWatermark(indexerName)
 
 		// Initialize watermark to startBlock-1 if never run (so first processed block is startBlock)
-		if watermark.LastBlockNum == 0 {
-			watermark.LastBlockNum = r.startBlock - 1
+		lastBlockNum := watermark.LastBlockNum
+		if lastBlockNum == 0 {
+			lastBlockNum = r.startBlock - 1
 		}
 
 		// Check if there are blocks to process
-		if watermark.LastBlockNum < r.latestBlockNum {
-			fromBlock := watermark.LastBlockNum + 1
-			toBlock := r.latestBlockNum
+		if lastBlockNum < latestBlockNum {
+			fromBlock := lastBlockNum + 1
+			toBlock := latestBlockNum
 
 			// Limit batch size to prevent memory exhaustion
 			if toBlock-fromBlock+1 > IncrementalBatchSize {
@@ -44,18 +45,19 @@ func (r *IndexRunner) processIncrementalBatch() bool {
 			}
 			elapsed := time.Since(start)
 
-			// Update watermark to the last processed block
-			watermark.LastBlockNum = toBlock
-
 			// Save watermark to DB
-			if err := r.saveWatermark(indexerName, watermark); err != nil {
+			watermarkToSave := *watermark
+			watermarkToSave.LastBlockNum = toBlock
+			if err := r.saveWatermark(indexerName, &watermarkToSave); err != nil {
 				slog.Error("Failed to save watermark, will retry next cycle", "chain_id", r.chainId, "indexer", indexerName, "error", err)
-				// Don't update hasWork - watermark wasn't saved so next cycle will reprocess (safe with ReplacingMergeTree)
+				// Leave in-memory watermark unchanged so the next cycle retries the range.
+				continue
 			}
+			watermark.LastBlockNum = watermarkToSave.LastBlockNum
 
 			// Log the batch processing
 			blockCount := toBlock - fromBlock + 1
-			remainingBlocks := r.latestBlockNum - toBlock
+			remainingBlocks := latestBlockNum - toBlock
 			slog.Info("Incremental indexer processed batch", "chain_id", r.chainId, "indexer", indexerName, "from_block", fromBlock, "to_block", toBlock, "block_count", blockCount, "remaining", remainingBlocks, "elapsed", elapsed)
 
 			hasWork = true

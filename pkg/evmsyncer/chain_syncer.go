@@ -32,19 +32,19 @@ const (
 type Config struct {
 	ChainID        uint32
 	RpcURL         string
-	StartBlock     int64        // Starting block number when no watermark exists, default 1
-	MaxConcurrency int          // Maximum concurrent RPC and debug requests, default 20
-	FetchBatchSize int          // Blocks per fetch, default 500
-	RpcBatchSize   int          // RPC calls per HTTP request, default 100
-	DebugBatchSize int          // Debug/trace calls per HTTP request, default 15
-	BufferSize     int          // Channel buffer size, default 200000
+	StartBlock     int64         // Starting block number when no watermark exists, default 1
+	MaxConcurrency int           // Maximum concurrent RPC and debug requests, default 20
+	FetchBatchSize int           // Blocks per fetch, default 500
+	RpcBatchSize   int           // RPC calls per HTTP request, default 100
+	DebugBatchSize int           // Debug/trace calls per HTTP request, default 15
+	BufferSize     int           // Channel buffer size, default 200000
 	FlushInterval  time.Duration // Flush interval, default 1s
-	MaxRetries     int          // Max retries for RPC requests, default 20
+	MaxRetries     int           // Max retries for RPC requests, default 20
 	RetryDelay     time.Duration // Initial retry delay, default 100ms
-	CHConn         driver.Conn  // ClickHouse connection
-	Cache          *cache.Cache // Cache for RPC calls
-	Name           string       // Chain name for display and tracking
-	Fast           bool         // Fast mode - skip all indexers
+	CHConn         driver.Conn   // ClickHouse connection
+	Cache          *cache.Cache  // Cache for RPC calls
+	Name           string        // Chain name for display and tracking
+	Fast           bool          // Fast mode - skip all indexers
 }
 
 // ChainSyncer manages blockchain sync for a single chain
@@ -233,7 +233,7 @@ func (cs *ChainSyncer) Start() error {
 		cs.wg.Add(1)
 		go func() {
 			defer cs.wg.Done()
-			cs.indexerRunner.Start()
+			cs.indexerRunner.Start(cs.ctx)
 		}()
 	}
 
