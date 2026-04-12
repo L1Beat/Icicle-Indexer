@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -32,9 +33,9 @@ type TokenMetadata struct {
 
 // ERC-20 function selectors
 const (
-	nameSelector     = "0x06fdde03"     // name()
-	symbolSelector   = "0x95d89b41"     // symbol()
-	decimalsSelector = "0x313ce567"     // decimals()
+	nameSelector     = "0x06fdde03" // name()
+	symbolSelector   = "0x95d89b41" // symbol()
+	decimalsSelector = "0x313ce567" // decimals()
 )
 
 // NewTokenMetadataFetcher creates a new token metadata fetcher
@@ -94,12 +95,14 @@ func (f *TokenMetadataFetcher) FetchMissingMetadata(limit int) (int, error) {
 		m, err := f.fetchTokenMetadata(token)
 		if err != nil {
 			slog.Warn("Failed to fetch metadata for token", "chain_id", f.chainID, "token", hex.EncodeToString(token), "error", err)
-			// Insert with empty values so we don't retry forever
-			m = &TokenMetadata{
-				Token:    token,
-				Name:     "",
-				Symbol:   "",
-				Decimals: 18, // Default to 18 decimals
+			if m == nil {
+				// Insert with empty values so we don't retry forever
+				m = &TokenMetadata{
+					Token:    token,
+					Name:     "",
+					Symbol:   "",
+					Decimals: 18, // Default to 18 decimals
+				}
 			}
 		}
 		metadata = append(metadata, *m)
@@ -120,51 +123,55 @@ func (f *TokenMetadataFetcher) fetchTokenMetadata(token []byte) (*TokenMetadata,
 	tokenAddr := "0x" + hex.EncodeToString(token)
 
 	// Fetch all three in parallel
-	nameCh := make(chan string, 1)
-	symbolCh := make(chan string, 1)
-	decimalsCh := make(chan uint8, 1)
-	errCh := make(chan error, 3)
+	type result[T any] struct {
+		value T
+		err   error
+	}
+	nameCh := make(chan result[string], 1)
+	symbolCh := make(chan result[string], 1)
+	decimalsCh := make(chan result[uint8], 1)
 
 	go func() {
 		name, err := f.callStringMethod(tokenAddr, nameSelector)
 		if err != nil {
-			errCh <- err
-			nameCh <- ""
-		} else {
-			nameCh <- name
+			err = fmt.Errorf("name: %w", err)
 		}
+		nameCh <- result[string]{value: name, err: err}
 	}()
 
 	go func() {
 		symbol, err := f.callStringMethod(tokenAddr, symbolSelector)
 		if err != nil {
-			errCh <- err
-			symbolCh <- ""
-		} else {
-			symbolCh <- symbol
+			err = fmt.Errorf("symbol: %w", err)
 		}
+		symbolCh <- result[string]{value: symbol, err: err}
 	}()
 
 	go func() {
 		decimals, err := f.callDecimals(tokenAddr)
 		if err != nil {
-			errCh <- err
-			decimalsCh <- 18 // Default
-		} else {
-			decimalsCh <- decimals
+			err = fmt.Errorf("decimals: %w", err)
 		}
+		decimalsCh <- result[uint8]{value: decimals, err: err}
 	}()
 
 	name := <-nameCh
 	symbol := <-symbolCh
 	decimals := <-decimalsCh
 
+	var errs []error
+	for _, err := range []error{name.err, symbol.err, decimals.err} {
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+
 	return &TokenMetadata{
 		Token:    token,
-		Name:     name,
-		Symbol:   symbol,
-		Decimals: decimals,
-	}, nil
+		Name:     name.value,
+		Symbol:   symbol.value,
+		Decimals: decimals.value,
+	}, errors.Join(errs...)
 }
 
 // callStringMethod calls a method that returns a string (name or symbol)
@@ -230,6 +237,10 @@ func (f *TokenMetadataFetcher) ethCall(to, data string) (string, error) {
 		return "", err
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return "", fmt.Errorf("RPC HTTP status %d", resp.StatusCode)
+	}
 
 	var rpcResp struct {
 		Result string `json:"result"`

@@ -9,7 +9,7 @@ import (
 var epoch = time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
 
 // processGranularMetrics checks and runs all granular metrics
-func (r *IndexRunner) processGranularMetrics() {
+func (r *IndexRunner) processGranularMetrics(latestBlockTime time.Time) {
 	for _, metricFile := range r.granularMetrics {
 		for _, granularity := range []string{"hour", "day", "week", "month"} {
 			// Use just the metric filename for indexer name, granularity tracked separately
@@ -18,12 +18,13 @@ func (r *IndexRunner) processGranularMetrics() {
 			watermark := r.getWatermarkWithGranularity(indexerName, granularity)
 
 			// Initialize to epoch if never run
-			if watermark.LastPeriod.IsZero() {
-				watermark.LastPeriod = epoch
+			lastPeriod := watermark.LastPeriod
+			if lastPeriod.IsZero() {
+				lastPeriod = epoch
 			}
 
 			// Calculate periods to process
-			periods := getPeriodsToProcess(watermark.LastPeriod, r.latestBlockTime, granularity)
+			periods := getPeriodsToProcess(lastPeriod, latestBlockTime, granularity)
 			if len(periods) == 0 {
 				continue
 			}
@@ -37,12 +38,14 @@ func (r *IndexRunner) processGranularMetrics() {
 			elapsed := time.Since(start)
 			slog.Info("Granular metric processed", "chain_id", r.chainId, "indexer", indexerName, "granularity", granularity, "periods", len(periods), "elapsed", elapsed)
 
-			// Update watermark
-			watermark.LastPeriod = periods[len(periods)-1]
-			if err := r.saveWatermarkWithGranularity(indexerName, granularity, watermark); err != nil {
+			watermarkToSave := *watermark
+			watermarkToSave.LastPeriod = periods[len(periods)-1]
+			if err := r.saveWatermarkWithGranularity(indexerName, granularity, &watermarkToSave); err != nil {
 				slog.Error("Failed to save watermark, will retry next cycle", "chain_id", r.chainId, "indexer", indexerName, "granularity", granularity, "error", err)
-				// Don't continue here - watermark wasn't updated so next cycle will reprocess (safe with ReplacingMergeTree)
+				// Leave in-memory watermark unchanged so the next cycle retries the range.
+				continue
 			}
+			watermark.LastPeriod = watermarkToSave.LastPeriod
 		}
 	}
 }

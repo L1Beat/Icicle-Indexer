@@ -31,7 +31,7 @@ SELECT
     token,
     sum(deposits) as total_in,
     sum(withdrawals) as total_out,
-    sum(deposits) - sum(withdrawals) as balance,
+    toInt256(sum(deposits)) - toInt256(sum(withdrawals)) as balance,
     max(to_block) as last_updated_block
 FROM erc20_balance_changes FINAL
 GROUP BY chain_id, wallet, token;
