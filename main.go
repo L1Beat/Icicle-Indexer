@@ -73,12 +73,23 @@ func main() {
 			opts.Port, _ = command.Flags().GetInt("port")
 			opts.RateLimitPerMin, _ = command.Flags().GetInt("rate-limit")
 			opts.RateLimitBurst, _ = command.Flags().GetInt("burst")
+			trustedProxies, _ := command.Flags().GetString("trusted-proxies")
+			opts.TrustedProxies = cmd.ParseCSVFlag(trustedProxies)
+			opts.MetricsToken, _ = command.Flags().GetString("metrics-token")
+			opts.WSMaxConnections, _ = command.Flags().GetInt("ws-max-connections")
+			opts.WSMaxConnectionsPerIP, _ = command.Flags().GetInt("ws-max-connections-per-ip")
+			opts.WSMaxConnectionsPerChain, _ = command.Flags().GetInt("ws-max-connections-per-chain")
 			cmd.RunAPI(ctx, opts)
 		},
 	}
 	apiCmd.Flags().Int("port", 8080, "Port to listen on")
 	apiCmd.Flags().Int("rate-limit", 60, "Rate limit requests per minute per IP")
 	apiCmd.Flags().Int("burst", 10, "Rate limit burst size")
+	apiCmd.Flags().String("trusted-proxies", "", "Comma-separated trusted proxy IPs/CIDRs for X-Forwarded-For/X-Real-IP")
+	apiCmd.Flags().String("metrics-token", os.Getenv("ICICLE_METRICS_TOKEN"), "Bearer token required to enable and access /metrics")
+	apiCmd.Flags().Int("ws-max-connections", 1000, "Maximum concurrent WebSocket connections")
+	apiCmd.Flags().Int("ws-max-connections-per-ip", 20, "Maximum concurrent WebSocket connections per client IP")
+	apiCmd.Flags().Int("ws-max-connections-per-chain", 250, "Maximum concurrent WebSocket connections per chain")
 
 	root.AddCommand(
 		ingestCmd,

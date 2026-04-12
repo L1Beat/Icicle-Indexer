@@ -107,33 +107,59 @@ func TestGetClientIP_RemoteAddr(t *testing.T) {
 	assert.Equal(t, "192.168.1.1", ip)
 }
 
-func TestGetClientIP_XForwardedFor(t *testing.T) {
+func TestGetClientIP_IgnoresXForwardedForByDefault(t *testing.T) {
 	req := httptest.NewRequest("GET", "/test", nil)
 	req.RemoteAddr = "10.0.0.1:12345"
 	req.Header.Set("X-Forwarded-For", "203.0.113.195, 70.41.3.18, 150.172.238.178")
 
 	ip := getClientIP(req)
-	assert.Equal(t, "203.0.113.195", ip)
+	assert.Equal(t, "10.0.0.1", ip)
 }
 
-func TestGetClientIP_XRealIP(t *testing.T) {
+func TestGetClientIP_IgnoresXRealIPByDefault(t *testing.T) {
 	req := httptest.NewRequest("GET", "/test", nil)
 	req.RemoteAddr = "10.0.0.1:12345"
 	req.Header.Set("X-Real-IP", "203.0.113.195")
 
 	ip := getClientIP(req)
-	assert.Equal(t, "203.0.113.195", ip)
+	assert.Equal(t, "10.0.0.1", ip)
 }
 
-func TestGetClientIP_XForwardedForPriority(t *testing.T) {
+func TestRateLimiter_ClientIP_UsesForwardedForFromTrustedProxy(t *testing.T) {
+	cfg := RateLimitConfig{
+		RequestsPerMinute: 60,
+		BurstSize:         10,
+		CleanupInterval:   time.Hour,
+		TrustedProxies:    []string{"10.0.0.1"},
+	}
+	rl := NewRateLimiter(cfg)
+	defer rl.Stop()
+
 	req := httptest.NewRequest("GET", "/test", nil)
 	req.RemoteAddr = "10.0.0.1:12345"
 	req.Header.Set("X-Forwarded-For", "203.0.113.195")
 	req.Header.Set("X-Real-IP", "70.41.3.18")
 
-	// X-Forwarded-For should take priority
-	ip := getClientIP(req)
+	ip := rl.ClientIP(req)
 	assert.Equal(t, "203.0.113.195", ip)
+}
+
+func TestRateLimiter_ClientIP_IgnoresForwardedForFromUntrustedProxy(t *testing.T) {
+	cfg := RateLimitConfig{
+		RequestsPerMinute: 60,
+		BurstSize:         10,
+		CleanupInterval:   time.Hour,
+		TrustedProxies:    []string{"10.0.0.2"},
+	}
+	rl := NewRateLimiter(cfg)
+	defer rl.Stop()
+
+	req := httptest.NewRequest("GET", "/test", nil)
+	req.RemoteAddr = "10.0.0.1:12345"
+	req.Header.Set("X-Forwarded-For", "203.0.113.195")
+
+	ip := rl.ClientIP(req)
+	assert.Equal(t, "10.0.0.1", ip)
 }
 
 func TestRateLimiter_Returns429WithJSON(t *testing.T) {
