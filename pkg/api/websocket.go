@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"log/slog"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -30,11 +31,22 @@ const (
 	pollInterval = 500 * time.Millisecond
 )
 
+// DefaultWebSocketConfig returns public-safe connection caps.
+func DefaultWebSocketConfig() WebSocketConfig {
+	return WebSocketConfig{
+		MaxConnections:         1000,
+		MaxConnectionsPerIP:    20,
+		MaxConnectionsPerChain: 250,
+	}
+}
+
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin:     func(r *http.Request) bool { return true }, // Allow all origins
 }
+
+type clientIPFunc func(*http.Request) string
 
 // WSMessage represents a WebSocket message
 type WSMessage struct {
@@ -50,24 +62,46 @@ type WSHub struct {
 	mu         sync.RWMutex
 	conn       driver.Conn
 	lastBlock  map[uint32]uint64 // chain_id -> last seen block number
+	config     WebSocketConfig
+	clientIP   clientIPFunc
+	ipCounts   map[string]int
+	total      int
 }
 
 // WSClient represents a single WebSocket connection
 type WSClient struct {
-	hub     *WSHub
-	conn    *websocket.Conn
-	send    chan []byte
-	chainID uint32
+	hub      *WSHub
+	conn     *websocket.Conn
+	send     chan []byte
+	chainID  uint32
+	ip       string
+	reserved bool
 }
 
 // NewWSHub creates a new WebSocket hub
-func NewWSHub(conn driver.Conn) *WSHub {
+func NewWSHub(conn driver.Conn, cfg WebSocketConfig, clientIP clientIPFunc) *WSHub {
+	if cfg == (WebSocketConfig{}) {
+		cfg = DefaultWebSocketConfig()
+	}
+	if clientIP == nil {
+		clientIP = func(r *http.Request) string {
+			ip, _, err := net.SplitHostPort(r.RemoteAddr)
+			if err != nil {
+				return r.RemoteAddr
+			}
+			return ip
+		}
+	}
+
 	return &WSHub{
 		clients:    make(map[uint32]map[*WSClient]bool),
 		register:   make(chan *WSClient),
 		unregister: make(chan *WSClient),
 		conn:       conn,
 		lastBlock:  make(map[uint32]uint64),
+		config:     cfg,
+		clientIP:   clientIP,
+		ipCounts:   make(map[string]int),
 	}
 }
 
@@ -81,6 +115,10 @@ func (h *WSHub) Run() {
 				h.clients[client.chainID] = make(map[*WSClient]bool)
 			}
 			h.clients[client.chainID][client] = true
+			if !client.reserved {
+				h.ipCounts[client.ip]++
+				h.total++
+			}
 			slog.Info("WS client connected", "chain_id", client.chainID, "total", len(h.clients[client.chainID]))
 			h.mu.Unlock()
 
@@ -90,6 +128,11 @@ func (h *WSHub) Run() {
 				if _, exists := clients[client]; exists {
 					delete(clients, client)
 					close(client.send)
+					h.total--
+					h.ipCounts[client.ip]--
+					if h.ipCounts[client.ip] <= 0 {
+						delete(h.ipCounts, client.ip)
+					}
 					slog.Info("WS client disconnected", "chain_id", client.chainID, "remaining", len(clients))
 					if len(clients) == 0 {
 						delete(h.clients, client.chainID)
@@ -100,6 +143,52 @@ func (h *WSHub) Run() {
 			h.mu.Unlock()
 		}
 	}
+}
+
+func (h *WSHub) allowConnection(chainID uint32, ip string) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	return h.canAddConnectionLocked(chainID, ip)
+}
+
+func (h *WSHub) reserveConnection(chainID uint32, ip string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if !h.canAddConnectionLocked(chainID, ip) {
+		return false
+	}
+	h.ipCounts[ip]++
+	h.total++
+	return true
+}
+
+func (h *WSHub) releaseReservedConnection(ip string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.total--
+	if h.total < 0 {
+		h.total = 0
+	}
+	h.ipCounts[ip]--
+	if h.ipCounts[ip] <= 0 {
+		delete(h.ipCounts, ip)
+	}
+}
+
+func (h *WSHub) canAddConnectionLocked(chainID uint32, ip string) bool {
+	if h.config.MaxConnections > 0 && h.total >= h.config.MaxConnections {
+		return false
+	}
+	if h.config.MaxConnectionsPerIP > 0 && h.ipCounts[ip] >= h.config.MaxConnectionsPerIP {
+		return false
+	}
+	if h.config.MaxConnectionsPerChain > 0 && len(h.clients[chainID]) >= h.config.MaxConnectionsPerChain {
+		return false
+	}
+	return true
 }
 
 // StartPoller starts polling for new blocks
@@ -334,17 +423,26 @@ func (s *Server) handleWSBlocks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ip := s.wsHub.clientIP(r)
+	if !s.wsHub.reserveConnection(chainID, ip) {
+		writeAPIError(w, http.StatusTooManyRequests, ErrRateLimited, "WebSocket connection limit exceeded")
+		return
+	}
+
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
+		s.wsHub.releaseReservedConnection(ip)
 		slog.Error("WS upgrade error", "error", err)
 		return
 	}
 
 	client := &WSClient{
-		hub:     s.wsHub,
-		conn:    conn,
-		send:    make(chan []byte, 256),
-		chainID: chainID,
+		hub:      s.wsHub,
+		conn:     conn,
+		send:     make(chan []byte, 256),
+		chainID:  chainID,
+		ip:       ip,
+		reserved: true,
 	}
 
 	// Send initial blocks
@@ -355,6 +453,7 @@ func (s *Server) handleWSBlocks(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := conn.WriteJSON(initialMsg); err != nil {
 		slog.Error("WS error sending initial blocks", "error", err)
+		s.wsHub.releaseReservedConnection(ip)
 		conn.Close()
 		return
 	}

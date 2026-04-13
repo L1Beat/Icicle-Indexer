@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/subtle"
 	"net/http"
 	"strconv"
 	"time"
@@ -62,16 +63,16 @@ func MetricsMiddleware(next http.Handler) http.Handler {
 
 // knownExactPaths are static routes that should be recorded as-is.
 var knownExactPaths = map[string]bool{
-	"/health":                          true,
-	"/api/docs/":                       true,
-	"/api/v1/data/pchain/txs":          true,
-	"/api/v1/data/pchain/tx-types":     true,
-	"/api/v1/data/subnets":             true,
-	"/api/v1/data/l1s":                 true,
-	"/api/v1/data/chains":              true,
-	"/api/v1/data/validators":          true,
-	"/api/v1/metrics/fees":             true,
-	"/api/v1/metrics/indexer/status":   true,
+	"/health":                        true,
+	"/api/docs/":                     true,
+	"/api/v1/data/pchain/txs":        true,
+	"/api/v1/data/pchain/tx-types":   true,
+	"/api/v1/data/subnets":           true,
+	"/api/v1/data/l1s":               true,
+	"/api/v1/data/chains":            true,
+	"/api/v1/data/validators":        true,
+	"/api/v1/metrics/fees":           true,
+	"/api/v1/metrics/indexer/status": true,
 }
 
 // normalizePath replaces dynamic path segments with placeholders
@@ -183,6 +184,33 @@ func joinPath(parts []string) string {
 		result += p
 	}
 	return result
+}
+
+// MetricsAuthMiddleware protects Prometheus metrics with a bearer token.
+func MetricsAuthMiddleware(token string) Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if token == "" {
+				writeNotFoundError(w, "Metrics")
+				return
+			}
+
+			got := r.Header.Get("Authorization")
+			const prefix = "Bearer "
+			if len(got) <= len(prefix) || got[:len(prefix)] != prefix {
+				writeAPIError(w, http.StatusUnauthorized, ErrValidationFailed, "Unauthorized")
+				return
+			}
+			got = got[len(prefix):]
+
+			if subtle.ConstantTimeCompare([]byte(got), []byte(token)) != 1 {
+				writeAPIError(w, http.StatusUnauthorized, ErrValidationFailed, "Unauthorized")
+				return
+			}
+
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // PrometheusHandler returns the Prometheus metrics HTTP handler.

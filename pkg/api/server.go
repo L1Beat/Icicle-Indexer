@@ -24,7 +24,7 @@ import (
 // @description - **Metrics API** (`/api/v1/metrics/*`): Fee statistics, chain metrics, time series data
 // @description
 // @description ## Rate Limiting
-// @description All endpoints are rate limited to 100 requests/second per IP (burst of 100) by default. Configurable via CLI flags.
+// @description All endpoints are rate limited to 60 requests/minute per IP (burst of 10) by default. Configurable via CLI flags.
 
 // @host localhost:8080
 // @BasePath /
@@ -57,12 +57,25 @@ import (
 // Config holds API server configuration
 type Config struct {
 	RateLimit RateLimitConfig
+	Metrics   MetricsConfig
+	WebSocket WebSocketConfig
+}
+
+type MetricsConfig struct {
+	Token string
+}
+
+type WebSocketConfig struct {
+	MaxConnections         int
+	MaxConnectionsPerIP    int
+	MaxConnectionsPerChain int
 }
 
 // DefaultConfig returns sensible defaults
 func DefaultConfig() Config {
 	return Config{
 		RateLimit: DefaultRateLimitConfig(),
+		WebSocket: DefaultWebSocketConfig(),
 	}
 }
 
@@ -99,9 +112,10 @@ func NewServer(conn driver.Conn, cfg Config) *Server {
 		conn:        conn,
 		router:      http.NewServeMux(),
 		rateLimiter: NewRateLimiter(cfg.RateLimit),
-		wsHub:       NewWSHub(conn),
+		wsHub:       NewWSHub(conn, cfg.WebSocket, nil),
 	}
-	s.registerRoutes()
+	s.wsHub.clientIP = s.rateLimiter.ClientIP
+	s.registerRoutes(cfg)
 
 	// Start WebSocket hub
 	go s.wsHub.Run()
@@ -121,10 +135,12 @@ func NewServer(conn driver.Conn, cfg Config) *Server {
 	return s
 }
 
-func (s *Server) registerRoutes() {
+func (s *Server) registerRoutes(cfg Config) {
 	// System endpoints (no versioning)
 	s.router.HandleFunc("GET /health", s.handleHealth)
-	s.router.Handle("GET /metrics", PrometheusHandler())
+	if cfg.Metrics.Token != "" {
+		s.router.Handle("GET /metrics", MetricsAuthMiddleware(cfg.Metrics.Token)(PrometheusHandler()))
+	}
 
 	// Swagger documentation
 	s.router.HandleFunc("GET /api/docs/", httpSwagger.WrapHandler)
@@ -283,7 +299,6 @@ func getChainIDFromPath(r *http.Request) (uint32, error) {
 	}
 	return uint32(parsed), nil
 }
-
 
 // parseFlexibleTime parses time from various formats: 2025-01-01, 2025-01-01T00:00:00Z, or unix timestamp
 func parseFlexibleTime(s string) time.Time {

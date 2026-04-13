@@ -15,13 +15,14 @@ type RateLimitConfig struct {
 	RequestsPerMinute int
 	BurstSize         int
 	CleanupInterval   time.Duration
+	TrustedProxies    []string
 }
 
 // DefaultRateLimitConfig returns sensible defaults
 func DefaultRateLimitConfig() RateLimitConfig {
 	return RateLimitConfig{
-		RequestsPerMinute: 6000, // 100 requests per second
-		BurstSize:         100,
+		RequestsPerMinute: 60,
+		BurstSize:         10,
 		CleanupInterval:   5 * time.Minute,
 	}
 }
@@ -34,6 +35,7 @@ type RateLimiter struct {
 	burst    int
 	cleanup  time.Duration
 	stopCh   chan struct{}
+	proxies  []*net.IPNet
 }
 
 type rateLimiterEntry struct {
@@ -49,6 +51,7 @@ func NewRateLimiter(cfg RateLimitConfig) *RateLimiter {
 		burst:    cfg.BurstSize,
 		cleanup:  cfg.CleanupInterval,
 		stopCh:   make(chan struct{}),
+		proxies:  parseTrustedProxies(cfg.TrustedProxies),
 	}
 	go rl.cleanupLoop()
 	return rl
@@ -112,7 +115,7 @@ func (rl *RateLimiter) Stop() {
 // Middleware returns an HTTP middleware that applies rate limiting
 func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip := getClientIP(r)
+		ip := rl.ClientIP(r)
 
 		if !rl.Allow(ip) {
 			w.Header().Set("Retry-After", "1")
@@ -124,26 +127,80 @@ func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 	})
 }
 
-// getClientIP extracts the client IP from a request, handling proxies
-func getClientIP(r *http.Request) string {
-	// Check X-Forwarded-For for proxied requests
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		// Take the first IP in the chain
-		if idx := strings.Index(xff, ","); idx != -1 {
-			return strings.TrimSpace(xff[:idx])
+// ClientIP extracts the client IP from a request. Forwarded headers are only
+// trusted when the immediate peer is a configured trusted proxy.
+func (rl *RateLimiter) ClientIP(r *http.Request) string {
+	remoteIP := remoteAddrIP(r)
+	if rl.isTrustedProxy(remoteIP) {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			if idx := strings.Index(xff, ","); idx != -1 {
+				return strings.TrimSpace(xff[:idx])
+			}
+			return strings.TrimSpace(xff)
 		}
-		return strings.TrimSpace(xff)
+
+		if xri := r.Header.Get("X-Real-IP"); xri != "" {
+			return strings.TrimSpace(xri)
+		}
 	}
 
-	// Check X-Real-IP
-	if xri := r.Header.Get("X-Real-IP"); xri != "" {
-		return strings.TrimSpace(xri)
-	}
+	return remoteIP
+}
 
-	// Fall back to RemoteAddr
+// getClientIP extracts the client IP without trusting forwarded headers.
+func getClientIP(r *http.Request) string {
+	return remoteAddrIP(r)
+}
+
+func remoteAddrIP(r *http.Request) string {
 	ip, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
 	}
 	return ip
+}
+
+func (rl *RateLimiter) isTrustedProxy(remoteIP string) bool {
+	if remoteIP == "" || len(rl.proxies) == 0 {
+		return false
+	}
+	ip := net.ParseIP(remoteIP)
+	if ip == nil {
+		return false
+	}
+	for _, proxy := range rl.proxies {
+		if proxy.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+func parseTrustedProxies(values []string) []*net.IPNet {
+	proxies := make([]*net.IPNet, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if strings.Contains(value, "/") {
+			if _, cidr, err := net.ParseCIDR(value); err == nil {
+				proxies = append(proxies, cidr)
+			}
+			continue
+		}
+		ip := net.ParseIP(value)
+		if ip == nil {
+			continue
+		}
+		bits := 32
+		if ip.To4() == nil {
+			bits = 128
+		}
+		proxies = append(proxies, &net.IPNet{
+			IP:   ip,
+			Mask: net.CIDRMask(bits, bits),
+		})
+	}
+	return proxies
 }
