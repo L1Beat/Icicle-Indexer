@@ -6,32 +6,30 @@ INSERT INTO metrics (chain_id, metric_name, granularity, period, value)
 WITH
 -- Find the first period each address appeared in (within our range)
 first_appearances AS (
-    SELECT 
+    SELECT
         toStartOf{granularityCamelCase}(min(block_time)) as first_period,
         address
     FROM (
-        SELECT from as address, block_time
-        FROM raw_traces
+        SELECT `from` as address, block_time
+        FROM raw_txs
         WHERE chain_id = @chain_id
           AND block_time >= @first_period
           AND block_time < @last_period
-          AND from != unhex('0000000000000000000000000000000000000000')
-        
+
         UNION ALL
-        
-        SELECT to as address, block_time
-        FROM raw_traces
+
+        SELECT `to` as address, block_time
+        FROM raw_txs
         WHERE chain_id = @chain_id
           AND block_time >= @first_period
           AND block_time < @last_period
-          AND to IS NOT NULL
-          AND to != unhex('0000000000000000000000000000000000000000')
+          AND `to` IS NOT NULL
     ) AS all_occurrences
     GROUP BY address
 ),
 -- Count new addresses per period
 new_per_period AS (
-    SELECT 
+    SELECT
         first_period as period,
         uniq(address) as new_count
     FROM first_appearances
@@ -41,20 +39,18 @@ new_per_period AS (
 baseline AS (
     SELECT countDistinct(address) as prev_cumulative
     FROM (
-        SELECT from as address
-        FROM raw_traces
+        SELECT `from` as address
+        FROM raw_txs
         WHERE chain_id = @chain_id
           AND block_time < @first_period
-          AND from != unhex('0000000000000000000000000000000000000000')
-        
+
         UNION ALL
-        
-        SELECT to as address
-        FROM raw_traces
+
+        SELECT `to` as address
+        FROM raw_txs
         WHERE chain_id = @chain_id
           AND block_time < @first_period
-          AND to IS NOT NULL
-          AND to != unhex('0000000000000000000000000000000000000000')
+          AND `to` IS NOT NULL
     ) AS historical_addresses
 )
 -- Running sum of new addresses + baseline

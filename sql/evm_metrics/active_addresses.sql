@@ -1,4 +1,4 @@
--- Active addresses metric
+-- Active addresses metric (unique senders + receivers per period)
 -- Parameters: chain_id, first_period, last_period, granularity
 
 INSERT INTO metrics (chain_id, metric_name, granularity, period, value)
@@ -9,22 +9,20 @@ SELECT
     toStartOf{granularityCamelCase}(block_time) as period,
     uniq(address) as value
 FROM (
-    SELECT from as address, block_time
-    FROM raw_traces
+    SELECT `from` as address, block_time
+    FROM raw_txs
     WHERE chain_id = @chain_id
       AND block_time >= @first_period
       AND block_time < @last_period
-      AND from != unhex('0000000000000000000000000000000000000000')
-    
+
     UNION ALL
-    
-    SELECT to as address, block_time
-    FROM raw_traces
+
+    SELECT `to` as address, block_time
+    FROM raw_txs
     WHERE chain_id = @chain_id
       AND block_time >= @first_period
       AND block_time < @last_period
-      AND to IS NOT NULL
-      AND to != unhex('0000000000000000000000000000000000000000')
+      AND `to` IS NOT NULL
 )
 GROUP BY period
 ORDER BY period;
