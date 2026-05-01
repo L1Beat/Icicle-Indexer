@@ -7,10 +7,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
+
+const queryTimeout = 5 * time.Minute
 
 // executeSQLFile reads and executes a SQL file with parameter substitution and binding
 func executeSQLFile(conn driver.Conn, sqlDir string, filename string, templateParams []struct{ key, value string }, bindParams map[string]interface{}) error {
@@ -41,9 +44,11 @@ func executeSQLFile(conn driver.Conn, sqlDir string, filename string, templatePa
 			namedParams = append(namedParams, clickhouse.Named(key, value))
 		}
 
-		// Execute statement with parameter binding and retry logic
+		// Execute statement with parameter binding, timeout, and retry logic
 		err = chwrapper.WithRetry(func() error {
-			return conn.Exec(context.Background(), sql, namedParams...)
+			ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
+			defer cancel()
+			return conn.Exec(ctx, sql, namedParams...)
 		})
 		if err != nil {
 			// Check if it's a CREATE TABLE that already exists (not an error)
