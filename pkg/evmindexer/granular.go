@@ -23,10 +23,14 @@ func (r *IndexRunner) processGranularMetrics(latestBlockTime time.Time) {
 				lastPeriod = epoch
 			}
 
-			// Calculate periods to process
+			// Calculate periods to process (cap batch size to avoid query timeouts)
 			periods := getPeriodsToProcess(lastPeriod, latestBlockTime, granularity)
 			if len(periods) == 0 {
 				continue
+			}
+			const maxPeriodsPerBatch = 6
+			if len(periods) > maxPeriodsPerBatch {
+				periods = periods[:maxPeriodsPerBatch]
 			}
 
 			// Run metric
