@@ -28,13 +28,13 @@ func TestHandleIndexerStatus_Success(t *testing.T) {
 		QueryRowFunc: func(ctx context.Context, query string, args ...interface{}) driver.Row {
 			return &MockRow{
 				scanFunc: func(dest ...interface{}) error {
-					if len(dest) == 2 {
-						// P-Chain query
+					if len(dest) == 1 {
+						// p_chain_txs MAX(block_number)
 						*dest[0].(*uint64) = 24160141
-						*dest[1].(*time.Time) = time.Now()
-					} else if len(dest) == 1 {
-						// P-Chain latest block query
+					} else if len(dest) == 2 {
+						// chain_status: last_block_on_chain, last_updated
 						*dest[0].(*uint64) = 24160200
+						*dest[1].(*time.Time) = time.Now()
 					}
 					return nil
 				},
@@ -63,9 +63,8 @@ func TestHandleIndexerStatus_Healthy(t *testing.T) {
 			// P-Chain query returns 0 (no P-Chain data)
 			return &MockRow{
 				scanFunc: func(dest ...interface{}) error {
-					if len(dest) == 2 {
+					if len(dest) == 1 {
 						*dest[0].(*uint64) = 0
-						*dest[1].(*time.Time) = time.Time{}
 					}
 					return nil
 				},
@@ -160,9 +159,8 @@ func TestHandleIndexerStatus_NoPChainData(t *testing.T) {
 			return &MockRow{
 				scanFunc: func(dest ...interface{}) error {
 					// Return 0 for P-Chain block (no data)
-					if len(dest) == 2 {
+					if len(dest) == 1 {
 						*dest[0].(*uint64) = 0
-						*dest[1].(*time.Time) = time.Time{}
 					}
 					return nil
 				},
@@ -193,9 +191,8 @@ func TestHandleIndexerStatus_BlocksBehindCalculation(t *testing.T) {
 			// P-Chain query returns 0 (no P-Chain data)
 			return &MockRow{
 				scanFunc: func(dest ...interface{}) error {
-					if len(dest) == 2 {
+					if len(dest) == 1 {
 						*dest[0].(*uint64) = 0
-						*dest[1].(*time.Time) = time.Time{}
 					}
 					return nil
 				},
@@ -212,6 +209,80 @@ func TestHandleIndexerStatus_BlocksBehindCalculation(t *testing.T) {
 	require.Len(t, status.EVM, 1)
 	assert.Equal(t, int64(5), status.EVM[0].BlocksBehind)
 	assert.True(t, status.EVM[0].IsSynced, "should be synced when <10 blocks behind")
+}
+
+func TestHandleIndexerStatus_Unhealthy_EVMStaleSync(t *testing.T) {
+	// Watermark equals latest block (so blocks_behind = 0) but last_updated
+	// is 10 minutes old — beyond the EVM staleness threshold. This is the
+	// RPC-bootstrapping case: numbers move in lockstep but the indexer is
+	// actually behind real chain tip.
+	mock := &MockConn{
+		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
+			return NewMockRows(
+				[]string{"chain_id", "name", "last_block_on_chain", "last_updated", "watermark_block"},
+				[][]interface{}{
+					{uint32(43114), "C-Chain", uint64(12345700), time.Now().Add(-10 * time.Minute), uint32Ptr(12345700)},
+				},
+			), nil
+		},
+		QueryRowFunc: func(ctx context.Context, query string, args ...interface{}) driver.Row {
+			return &MockRow{
+				scanFunc: func(dest ...interface{}) error {
+					if len(dest) == 1 {
+						*dest[0].(*uint64) = 0
+					}
+					return nil
+				},
+			}
+		},
+	}
+
+	server := NewTestServer(mock)
+	w := MakeRequest(t, server, "GET", "/api/v1/metrics/indexer/status")
+
+	AssertJSONResponse(t, w, http.StatusOK)
+
+	status := ParseResponse[IndexerStatus](t, w)
+	require.Len(t, status.EVM, 1)
+	assert.Equal(t, int64(0), status.EVM[0].BlocksBehind)
+	assert.False(t, status.EVM[0].IsSynced, "should be unsynced when last_updated is stale")
+	assert.False(t, status.Healthy, "overall should be unhealthy when any chain is stale")
+}
+
+func TestHandleIndexerStatus_Unhealthy_PChainStaleSync(t *testing.T) {
+	mock := &MockConn{
+		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
+			return NewMockRows(
+				[]string{"chain_id", "name", "last_block_on_chain", "last_updated", "watermark_block"},
+				[][]interface{}{}, // No EVM chains so EVM doesn't trip first
+			), nil
+		},
+		QueryRowFunc: func(ctx context.Context, query string, args ...interface{}) driver.Row {
+			return &MockRow{
+				scanFunc: func(dest ...interface{}) error {
+					if len(dest) == 1 {
+						*dest[0].(*uint64) = 24160200
+					} else if len(dest) == 2 {
+						// chain_status: latest matches current (no block lag), but stale.
+						*dest[0].(*uint64) = 24160200
+						*dest[1].(*time.Time) = time.Now().Add(-20 * time.Minute)
+					}
+					return nil
+				},
+			}
+		},
+	}
+
+	server := NewTestServer(mock)
+	w := MakeRequest(t, server, "GET", "/api/v1/metrics/indexer/status")
+
+	AssertJSONResponse(t, w, http.StatusOK)
+
+	status := ParseResponse[IndexerStatus](t, w)
+	require.NotNil(t, status.PChain)
+	assert.Equal(t, int64(0), status.PChain.BlocksBehind)
+	assert.False(t, status.PChain.IsSynced, "P-Chain should be unsynced when last_updated is stale")
+	assert.False(t, status.Healthy, "overall should be unhealthy when P-Chain is stale")
 }
 
 func TestHandleIndexerStatus_MethodNotAllowed(t *testing.T) {
