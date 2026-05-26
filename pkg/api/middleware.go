@@ -50,7 +50,14 @@ func LoggingMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(lrw, r)
 
 		duration := time.Since(start)
-		slog.Info("HTTP request", "method", r.Method, "path", r.URL.Path, "status", lrw.statusCode, "duration", duration)
+		slog.Info("HTTP request",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", lrw.statusCode,
+			"duration", duration,
+			"remote", r.RemoteAddr,
+			"xff", r.Header.Get("X-Forwarded-For"),
+		)
 	})
 }
 
