@@ -46,6 +46,10 @@ func Connect() (driver.Conn, error) {
 				Username: "default",
 				Password: os.Getenv("CLICKHOUSE_PASSWORD"),
 			},
+			Settings: clickhouse.Settings{
+				"max_execution_time": 60,
+				"max_memory_usage":   uint64(4_000_000_000),
+			},
 			ClientInfo: clickhouse.ClientInfo{
 				Products: []struct {
 					Name    string

@@ -443,6 +443,9 @@ func (s *Server) handleDailyFeeBurn(w http.ResponseWriter, r *http.Request) {
 			days = parsed
 		}
 	}
+	if days > 365 {
+		days = 365
+	}
 
 	// If no days specified (or 0), compute from earliest validator start
 	if days == 0 {
