@@ -12,10 +12,15 @@ import (
 //go:embed raw_tables.sql
 var rawTablesSQL string
 
+//go:embed stablecoins_seed.sql
+var stablecoinsSeedSQL string
+
 func CreateTables(conn driver.Conn) error {
-	err := ExecuteSql(conn, rawTablesSQL)
-	if err != nil {
+	if err := ExecuteSql(conn, rawTablesSQL); err != nil {
 		return fmt.Errorf("failed to create tables: %w", err)
+	}
+	if err := ExecuteSql(conn, stablecoinsSeedSQL); err != nil {
+		return fmt.Errorf("failed to seed stablecoins: %w", err)
 	}
 	return nil
 }

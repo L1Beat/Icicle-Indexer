@@ -366,6 +366,22 @@ CREATE TABLE IF NOT EXISTS l1_validator_balance_txs (
 ) ENGINE = ReplacingMergeTree(inserted_at)
 ORDER BY (p_chain_id, node_id, tx_id);
 
+-- Stablecoins registry - curated list of stablecoins by chain.
+-- Populated via the embedded seed (stablecoins_seed.sql) on startup, and extensible
+-- by manual INSERTs as new stablecoins launch. ReplacingMergeTree dedupes by (chain_id, token).
+CREATE TABLE IF NOT EXISTS stablecoins (
+    chain_id UInt32,
+    token FixedString(20),
+    symbol String,
+    name String,
+    decimals UInt8,
+    peg LowCardinality(String) DEFAULT 'USD',
+    issuer String DEFAULT '',
+    bridged Bool DEFAULT false,
+    added_at DateTime64(3, 'UTC') DEFAULT now64(3)
+) ENGINE = ReplacingMergeTree(added_at)
+ORDER BY (chain_id, token);
+
 -- L1 Validator Refunds table - tracks refunds when validators are disabled
 CREATE TABLE IF NOT EXISTS l1_validator_refunds (
     -- Identifiers
