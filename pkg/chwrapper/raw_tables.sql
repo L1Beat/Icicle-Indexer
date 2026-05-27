@@ -382,6 +382,19 @@ CREATE TABLE IF NOT EXISTS stablecoins (
 ) ENGINE = ReplacingMergeTree(added_at)
 ORDER BY (chain_id, token);
 
+-- Stablecoin excluded holders - wallets to subtract when computing circulating supply.
+-- Used for treasury / issuance / bridge contracts that hold tokens which haven't been
+-- distributed to end users (e.g. Tether treasury). Seeded with known addresses on startup;
+-- extensible by manual INSERTs.
+CREATE TABLE IF NOT EXISTS stablecoin_excluded_holders (
+    chain_id UInt32,
+    token FixedString(20),
+    holder FixedString(20),
+    reason String DEFAULT '',
+    added_at DateTime64(3, 'UTC') DEFAULT now64(3)
+) ENGINE = ReplacingMergeTree(added_at)
+ORDER BY (chain_id, token, holder);
+
 -- L1 Validator Refunds table - tracks refunds when validators are disabled
 CREATE TABLE IF NOT EXISTS l1_validator_refunds (
     -- Identifiers

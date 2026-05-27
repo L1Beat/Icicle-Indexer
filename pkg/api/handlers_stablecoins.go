@@ -6,6 +6,10 @@ import (
 )
 
 // Stablecoin represents a curated stablecoin with current supply / holder / 24h volume stats.
+//
+// Supply is "circulating": balances held by addresses listed in stablecoin_excluded_holders
+// (e.g. issuer treasuries) are subtracted, so the number matches DeFiLlama-style methodology
+// rather than raw on-chain totalSupply.
 type Stablecoin struct {
 	Token        string `json:"token" example:"0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e"`
 	Symbol       string `json:"symbol" example:"USDC"`
@@ -20,11 +24,11 @@ type Stablecoin struct {
 	Transfers24h uint64 `json:"transfers_24h" example:"58210"`
 }
 
-// handleListStablecoins returns curated stablecoins for a chain with current supply, holder count,
-// and last-24h transfer volume / count.
+// handleListStablecoins returns curated stablecoins for a chain with circulating supply,
+// holder count, and last-24h transfer volume / count.
 //
 // @Summary List stablecoins for a chain
-// @Description Returns curated stablecoins with circulating supply, holder count, and 24h transfer stats.
+// @Description Returns curated stablecoins with circulating supply (excludes addresses listed in stablecoin_excluded_holders, e.g. issuer treasuries), holder count, and 24h transfer stats.
 // @Tags Data - EVM
 // @Produce json
 // @Param chainId path int true "Chain ID (e.g. 43114 for Avalanche C-Chain)"
@@ -68,6 +72,9 @@ func (s *Server) handleListStablecoins(w http.ResponseWriter, r *http.Request) {
 			FROM erc20_balances
 			WHERE chain_id = ?
 			  AND token IN (SELECT token FROM stablecoins FINAL WHERE chain_id = ?)
+			  AND (token, wallet) NOT IN (
+			      SELECT token, holder FROM stablecoin_excluded_holders FINAL WHERE chain_id = ?
+			  )
 			GROUP BY token
 		) b ON b.token = s.token
 		LEFT JOIN (
@@ -86,7 +93,7 @@ func (s *Server) handleListStablecoins(w http.ResponseWriter, r *http.Request) {
 		ORDER BY b.supply_total DESC
 	`
 
-	rows, err := s.conn.Query(ctx, query, chainID, chainID, chainID, chainID, chainID)
+	rows, err := s.conn.Query(ctx, query, chainID, chainID, chainID, chainID, chainID, chainID)
 	if err != nil {
 		writeInternalError(w, err.Error())
 		return
