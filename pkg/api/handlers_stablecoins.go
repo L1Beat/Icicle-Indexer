@@ -5,6 +5,8 @@ import (
 	"math/big"
 	"net/http"
 	"sort"
+	"strings"
+	"time"
 )
 
 // Stablecoin represents a curated stablecoin with current supply / holder / 24h volume stats.
@@ -171,6 +173,202 @@ func (s *Server) handleListStablecoins(w http.ResponseWriter, r *http.Request) {
 	out := make([]Stablecoin, 0, len(ordered))
 	for _, e := range ordered {
 		out = append(out, e.Stablecoin)
+	}
+
+	writeJSON(w, http.StatusOK, Response{Data: out})
+}
+
+type StablecoinMetricDataPoint struct {
+	Period time.Time `json:"period"`
+	Value  string    `json:"value"`
+}
+
+type StablecoinMetricSeries struct {
+	ChainID     uint32                      `json:"chain_id"`
+	Token       string                      `json:"token"`
+	MetricName  string                      `json:"metric_name"`
+	Granularity string                      `json:"granularity"`
+	Data        []StablecoinMetricDataPoint `json:"data"`
+}
+
+// handleStablecoinTimeseries returns time-series data for stablecoin metrics.
+//
+// @Summary Get stablecoin metric time series
+// @Description Returns time-series data for a stablecoin metric (supply, volume, transfers, holders)
+// @Tags Data - EVM
+// @Produce json
+// @Param chainId path int true "Chain ID (e.g. 43114 for Avalanche C-Chain)"
+// @Param metric query string true "Metric name (supply, volume, transfers, holders)"
+// @Param granularity query string false "Time granularity (hour, day, week, month)" default(day)
+// @Param token query string false "Token address (0x-prefixed hex). Omit for all stablecoins."
+// @Param from query string false "Start time (date, RFC3339, or unix timestamp)"
+// @Param to query string false "End time (date, RFC3339, or unix timestamp)"
+// @Param limit query int false "Number of data points per token (max 1000)" default(365)
+// @Success 200 {object} Response{data=[]StablecoinMetricSeries}
+// @Failure 400 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/data/evm/{chainId}/stablecoins/timeseries [get]
+func (s *Server) handleStablecoinTimeseries(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	chainID, err := getChainIDFromPath(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid chain_id")
+		return
+	}
+
+	metricName := r.URL.Query().Get("metric")
+	validMetrics := map[string]bool{"supply": true, "volume": true, "transfers": true, "holders": true}
+	if !validMetrics[metricName] {
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid metric (use: supply, volume, transfers, holders)")
+		return
+	}
+
+	granularity := r.URL.Query().Get("granularity")
+	if granularity == "" {
+		granularity = "day"
+	}
+	validGranularities := map[string]bool{"hour": true, "day": true, "week": true, "month": true}
+	if !validGranularities[granularity] {
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid granularity (use: hour, day, week, month)")
+		return
+	}
+
+	var fromTime, toTime time.Time
+	if from := r.URL.Query().Get("from"); from != "" {
+		fromTime = parseFlexibleTime(from)
+	}
+	if to := r.URL.Query().Get("to"); to != "" {
+		toTime = parseFlexibleTime(to)
+	}
+
+	limit, _ := getPagination(r)
+	if limit == 0 {
+		limit = 365
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+
+	// Supply is stored as per-period deltas (supply_change); compute cumulative at query time.
+	dbMetric := metricName
+	if metricName == "supply" {
+		dbMetric = "supply_change"
+	}
+
+	var tokenFilter string
+	var tokenArg []interface{}
+	if tokenHex := r.URL.Query().Get("token"); tokenHex != "" {
+		tokenHex = strings.TrimPrefix(tokenHex, "0x")
+		tokenBytes, err := hex.DecodeString(tokenHex)
+		if err != nil || len(tokenBytes) != 20 {
+			writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid token address")
+			return
+		}
+		tokenFilter = " AND sm.token = ?"
+		tokenArg = append(tokenArg, string(tokenBytes))
+	}
+
+	var query string
+	var args []interface{}
+
+	if metricName == "supply" {
+		// Running sum of supply_change deltas, then filter/limit the result
+		inner := `
+			SELECT sm.token, sm.period,
+				toString(sum(toInt256(sm.value)) OVER (PARTITION BY sm.token ORDER BY sm.period)) AS value
+			FROM (SELECT * FROM stablecoin_metrics FINAL) sm
+			WHERE sm.chain_id = ?
+			  AND sm.metric_name = 'supply_change'
+			  AND sm.granularity = ?
+		`
+		args = append(args, chainID, granularity)
+		inner += tokenFilter
+		args = append(args, tokenArg...)
+
+		query = "SELECT token, period, value FROM (" + inner + ") WHERE 1=1"
+		if !fromTime.IsZero() {
+			query += " AND period >= ?"
+			args = append(args, fromTime)
+		}
+		if !toTime.IsZero() {
+			query += " AND period <= ?"
+			args = append(args, toTime)
+		}
+		query += " ORDER BY token, period DESC LIMIT ?"
+		args = append(args, limit*20)
+	} else {
+		query = `
+			SELECT sm.token, sm.period, sm.value
+			FROM (SELECT * FROM stablecoin_metrics FINAL) sm
+			WHERE sm.chain_id = ?
+			  AND sm.metric_name = ?
+			  AND sm.granularity = ?
+		`
+		args = append(args, chainID, dbMetric, granularity)
+		query += tokenFilter
+		args = append(args, tokenArg...)
+
+		if !fromTime.IsZero() {
+			query += " AND sm.period >= ?"
+			args = append(args, fromTime)
+		}
+		if !toTime.IsZero() {
+			query += " AND sm.period <= ?"
+			args = append(args, toTime)
+		}
+		query += " ORDER BY sm.token, sm.period DESC LIMIT ?"
+		args = append(args, limit*20)
+	}
+
+	rows, err := s.conn.Query(ctx, query, args...)
+	if err != nil {
+		writeInternalError(w, err.Error())
+		return
+	}
+	defer rows.Close()
+
+	seriesMap := map[string]*StablecoinMetricSeries{}
+	var seriesOrder []string
+	for rows.Next() {
+		var (
+			tokenBytes []byte
+			period     time.Time
+			value      string
+		)
+		if err := rows.Scan(&tokenBytes, &period, &value); err != nil {
+			writeInternalError(w, err.Error())
+			return
+		}
+		key := "0x" + hex.EncodeToString(tokenBytes)
+		series, ok := seriesMap[key]
+		if !ok {
+			series = &StablecoinMetricSeries{
+				ChainID:     chainID,
+				Token:       key,
+				MetricName:  metricName,
+				Granularity: granularity,
+			}
+			seriesMap[key] = series
+			seriesOrder = append(seriesOrder, key)
+		}
+		if len(series.Data) < limit {
+			series.Data = append(series.Data, StablecoinMetricDataPoint{
+				Period: period,
+				Value:  value,
+			})
+		}
+	}
+
+	for _, series := range seriesMap {
+		for i, j := 0, len(series.Data)-1; i < j; i, j = i+1, j-1 {
+			series.Data[i], series.Data[j] = series.Data[j], series.Data[i]
+		}
+	}
+
+	out := make([]StablecoinMetricSeries, 0, len(seriesOrder))
+	for _, key := range seriesOrder {
+		out = append(out, *seriesMap[key])
 	}
 
 	writeJSON(w, http.StatusOK, Response{Data: out})

@@ -165,6 +165,7 @@ func (s *Server) registerRoutes(cfg Config) {
 
 	// EVM Stablecoins
 	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/stablecoins", s.handleListStablecoins)
+	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/stablecoins/timeseries", s.handleStablecoinTimeseries)
 
 	// P-Chain Transactions
 	s.router.HandleFunc("GET /api/v1/data/pchain/txs", s.handleListPChainTxs)

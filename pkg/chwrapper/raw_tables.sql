@@ -395,6 +395,19 @@ CREATE TABLE IF NOT EXISTS stablecoin_excluded_holders (
 ) ENGINE = ReplacingMergeTree(added_at)
 ORDER BY (chain_id, token, holder);
 
+-- Stablecoin time-series metrics (supply, volume, transfers, holders per token per period)
+CREATE TABLE IF NOT EXISTS stablecoin_metrics (
+    chain_id UInt32,
+    token FixedString(20),
+    metric_name LowCardinality(String),
+    granularity LowCardinality(String),
+    period DateTime64(3, 'UTC'),
+    value String,
+    computed_at DateTime64(3, 'UTC') DEFAULT now64(3)
+) ENGINE = ReplacingMergeTree(computed_at)
+ORDER BY (chain_id, token, metric_name, granularity, period)
+PARTITION BY (chain_id, toYYYYMM(period));
+
 -- L1 Validator Refunds table - tracks refunds when validators are disabled
 CREATE TABLE IF NOT EXISTS l1_validator_refunds (
     -- Identifiers

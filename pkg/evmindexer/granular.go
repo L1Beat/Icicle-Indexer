@@ -3,6 +3,7 @@ package evmindexer
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 )
 
@@ -12,6 +13,9 @@ var epoch = time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC)
 func (r *IndexRunner) processGranularMetrics(latestBlockTime time.Time) {
 	for _, metricFile := range r.granularMetrics {
 		for _, granularity := range []string{"hour", "day", "week", "month"} {
+			if strings.Contains(metricFile, "_snapshot") && granularity != "day" {
+				continue
+			}
 			// Use just the metric filename for indexer name, granularity tracked separately
 			indexerName := fmt.Sprintf("evm_metrics/%s", metricFile)
 
