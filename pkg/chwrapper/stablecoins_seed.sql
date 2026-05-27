@@ -11,8 +11,7 @@ INSERT INTO stablecoins (chain_id, token, symbol, name, decimals, peg, issuer, b
     (43114, unhex('00000000efe302beaa2b3e6e1b18d08d69a9012a'), 'AUSD',  'Agora Dollar',                  6, 'USD', 'Agora',       false, '2026-01-01 00:00:00'),
     (43114, unhex('24de8771bc5ddb3362db529fc3358f2df3a0e346'), 'avUSD', 'Avant USD',                    18, 'USD', 'Avant',       false, '2026-01-01 00:00:00'),
     (43114, unhex('9c9e5fd8bbc25984b178fdce6117defa39d2db39'), 'BUSD',  'Binance USD',                  18, 'USD', 'Binance',     false, '2026-01-01 00:00:00'),
-    -- BUIDL: yield-bearing money-market fund token. Circulating supply here
-    -- may differ from DeFiLlama figures; methodology gap to investigate.
+    -- BUIDL is yield-bearing — circulating supply here may differ from DeFiLlama.
     (43114, unhex('d33176eec8a769f794ea13118ae1cc21345c51f0'), 'BUIDL', 'BlackRock USD Liquidity Fund', 18, 'USD', 'BlackRock',   false, '2026-01-01 00:00:00'),
     (43114, unhex('c891eb4cbdeff6e073e859e987815ed1505c2acd'), 'EURC',  'Euro Coin',                     6, 'EUR', 'Circle',      false, '2026-01-01 00:00:00'),
     (43114, unhex('e7c3d8c9a439fede00d2600032d5db0be71c3c29'), 'JPYC',  'JPY Coin',                     18, 'JPY', 'JPYC Inc.',   false, '2026-01-01 00:00:00'),

@@ -28,23 +28,22 @@ func CreateTables(conn driver.Conn) error {
 func ExecuteSql(conn driver.Conn, sql string) error {
 	ctx := context.Background()
 
-	statements := strings.Split(sql, ";")
-
-	for _, stmt := range statements {
-		// Remove comment lines
-		var lines []string
-		for _, line := range strings.Split(stmt, "\n") {
-			trimmed := strings.TrimSpace(line)
-			if !strings.HasPrefix(trimmed, "--") && trimmed != "" {
-				lines = append(lines, line)
-			}
+	// Strip line comments first, then split on ; — otherwise a ';' inside a
+	// comment splits a statement in two and the second half becomes garbage.
+	var cleaned []string
+	for _, line := range strings.Split(sql, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "--") || trimmed == "" {
+			continue
 		}
+		cleaned = append(cleaned, line)
+	}
 
-		cleanStmt := strings.TrimSpace(strings.Join(lines, "\n"))
+	for _, stmt := range strings.Split(strings.Join(cleaned, "\n"), ";") {
+		cleanStmt := strings.TrimSpace(stmt)
 		if cleanStmt == "" {
 			continue
 		}
-
 		if err := conn.Exec(ctx, cleanStmt); err != nil {
 			return fmt.Errorf("failed to execute statement: %w", err)
 		}
