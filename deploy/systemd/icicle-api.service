@@ -1,0 +1,29 @@
+[Unit]
+Description=Icicle API Server
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+Group=__USER__
+WorkingDirectory=__HOME__/icicle
+
+# Secrets live here. setup.sh writes this file with mode 600.
+EnvironmentFile=/etc/icicle/api.env
+
+ExecStart=__HOME__/icicle/icicle api --port 8080 --trusted-proxies 127.0.0.1
+
+Restart=always
+RestartSec=5
+LimitNOFILE=524288
+
+# Memory caps. Tune in /etc/icicle/api.env or by editing this file.
+MemoryHigh=4G
+MemoryMax=6G
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

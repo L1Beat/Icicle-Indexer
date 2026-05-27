@@ -1,0 +1,25 @@
+# ClickHouse for the Icicle indexer.
+#
+# Run from this directory after `cp .env.example .env` and filling in values:
+#   docker compose up -d
+#
+# Key choices:
+# - Ports are bound to 127.0.0.1 only. The DB must NEVER be on 0.0.0.0.
+# - users.d is bind-mounted from host so the `default` password survives container recreation.
+# - Data volume on host, not a docker-managed volume, so it's easy to back up and reason about.
+
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.10
+    container_name: icicle-clickhouse
+    restart: unless-stopped
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      - ${CH_DATA_DIR}:/var/lib/clickhouse
+      - ${CH_CONFIG_DIR}/users.d:/etc/clickhouse-server/users.d:ro
+    ports:
+      - "127.0.0.1:8123:8123"
+      - "127.0.0.1:9000:9000"
