@@ -82,26 +82,16 @@ func (s *Server) handleListStablecoins(w http.ResponseWriter, r *http.Request) {
 	supplyQuery := `
 		SELECT
 			token,
-			toString(sum(net_balance)) AS supply_total,
-			countIf(net_balance > toInt256(0)) AS holders
-		FROM (
-			SELECT
-				ebc.token,
-				ebc.wallet,
-				toInt256(sum(ebc.deposits)) - toInt256(sum(ebc.withdrawals)) AS net_balance
-			FROM (
-				SELECT token, wallet, deposits, withdrawals
-				FROM erc20_balance_changes FINAL
-				WHERE chain_id = ?
-				  AND token IN (SELECT token FROM stablecoins FINAL WHERE chain_id = ?)
-			) AS ebc
-			WHERE (ebc.token, ebc.wallet) NOT IN (
-				SELECT token, holder FROM stablecoin_excluded_holders FINAL WHERE chain_id = ?
-			)
-			GROUP BY ebc.token, ebc.wallet
-		)
+			toString(sum(balance)) AS supply_total,
+			countIf(balance > toInt256(0)) AS holders
+		FROM erc20_balances
+		WHERE chain_id = ?
+		  AND token IN (SELECT token FROM stablecoins FINAL WHERE chain_id = ?)
+		  AND (token, wallet) NOT IN (
+		      SELECT token, holder FROM stablecoin_excluded_holders FINAL WHERE chain_id = ?
+		  )
 		GROUP BY token
-		SETTINGS max_bytes_before_external_group_by = 500000000
+		SETTINGS max_bytes_before_external_group_by = 500000000, max_memory_usage = 8000000000
 	`
 	supplyRows, err := s.conn.Query(ctx, supplyQuery, chainID, chainID, chainID)
 	if err != nil {
