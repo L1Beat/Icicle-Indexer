@@ -12,6 +12,6 @@ CLAUDE.md
 .docs/
 icicle
 
-# Deployment (machine-specific)
-deploy/
+# Deployment: track templates / configs, NOT per-server secrets.
+# The deploy/.env (matched by *.env above) holds CLICKHOUSE_PASSWORD etc. and stays ignored.
 Makefile
