@@ -91,7 +91,7 @@ func (s *Server) handleListStablecoins(w http.ResponseWriter, r *http.Request) {
 		      SELECT token, holder FROM stablecoin_excluded_holders FINAL WHERE chain_id = ?
 		  )
 		GROUP BY token
-		SETTINGS max_bytes_before_external_group_by = 500000000, max_memory_usage = 8000000000
+		SETTINGS max_memory_usage = 8000000000
 	`
 	supplyRows, err := s.conn.Query(ctx, supplyQuery, chainID, chainID, chainID)
 	if err != nil {
