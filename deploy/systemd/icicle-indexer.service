@@ -1,0 +1,28 @@
+[Unit]
+Description=Icicle Indexer
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+Group=__USER__
+WorkingDirectory=__HOME__/icicle
+
+EnvironmentFile=/etc/icicle/indexer.env
+
+ExecStart=__HOME__/icicle/icicle indexer
+
+Restart=always
+RestartSec=10
+LimitNOFILE=524288
+
+# Indexer is heavier than the API — set caps accordingly.
+MemoryHigh=8G
+MemoryMax=12G
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,17 @@
+<clickhouse>
+  <!-- Overrides the image's default `default` user. Removes the no-password
+       definition that ships with the image, then re-defines with a real password.
+       The setup script renders this template by substituting __CLICKHOUSE_PASSWORD_SHA256__. -->
+  <users>
+    <default remove="remove"></default>
+    <default>
+      <profile>default</profile>
+      <networks>
+        <ip>::/0</ip>
+      </networks>
+      <password_sha256_hex>__CLICKHOUSE_PASSWORD_SHA256__</password_sha256_hex>
+      <quota>default</quota>
+      <access_management>1</access_management>
+    </default>
+  </users>
+</clickhouse>

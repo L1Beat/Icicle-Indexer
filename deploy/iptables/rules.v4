@@ -1,0 +1,47 @@
+# iptables rules for an Icicle indexer server.
+# Loaded at boot by netfilter-persistent (apt install iptables-persistent).
+# Apply with: iptables-restore < /etc/iptables/rules.v4
+#
+# Docker adds its own rules to DOCKER / DOCKER-USER chains at runtime — those don't
+# belong here. This file covers host-facing INPUT/FORWARD/OUTPUT and a couple of
+# defense-in-depth NAT-level drops.
+
+*filter
+:INPUT DROP [0:0]
+:FORWARD DROP [0:0]
+:OUTPUT ACCEPT [0:0]
+
+# Allow established/related (return traffic for outbound connections)
+-A INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+
+# Loopback (required for inter-service localhost talk)
+-A INPUT -i lo -j ACCEPT
+
+# Drop invalid packets
+-A INPUT -m conntrack --ctstate INVALID -j DROP
+
+# SSH — consider restricting to known source IPs in production
+-A INPUT -p tcp --dport 22 -j ACCEPT
+
+# Public web (HTTP for ACME challenges + redirect, HTTPS for the API)
+-A INPUT -p tcp --dport 80 -j ACCEPT
+-A INPUT -p tcp --dport 443 -j ACCEPT
+
+# avalanchego P2P (only needed if avalanchego runs on this host)
+-A INPUT -p tcp --dport 9651 -j ACCEPT
+-A INPUT -p udp --dport 9651 -j ACCEPT
+
+COMMIT
+
+# Defense in depth: block any non-loopback source from reaching 127.0.0.1
+# on the ClickHouse ports, even if docker-proxy is ever misconfigured to 0.0.0.0.
+*nat
+:PREROUTING ACCEPT [0:0]
+:INPUT ACCEPT [0:0]
+:OUTPUT ACCEPT [0:0]
+:POSTROUTING ACCEPT [0:0]
+
+-A PREROUTING -d 127.0.0.1/32 ! -i lo -p tcp --dport 8123 -j DROP
+-A PREROUTING -d 127.0.0.1/32 ! -i lo -p tcp --dport 9000 -j DROP
+
+COMMIT
