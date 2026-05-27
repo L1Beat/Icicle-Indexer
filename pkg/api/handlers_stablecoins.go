@@ -2,7 +2,9 @@ package api
 
 import (
 	"encoding/hex"
+	"math/big"
 	"net/http"
+	"sort"
 )
 
 // Stablecoin represents a curated stablecoin with current supply / holder / 24h volume stats.
@@ -153,6 +155,18 @@ func (s *Server) handleListStablecoins(w http.ResponseWriter, r *http.Request) {
 			e.Transfers24h = transfers24h
 		}
 	}
+
+	sort.Slice(ordered, func(i, j int) bool {
+		a, _ := new(big.Int).SetString(ordered[i].Supply, 10)
+		b, _ := new(big.Int).SetString(ordered[j].Supply, 10)
+		if a == nil {
+			a = new(big.Int)
+		}
+		if b == nil {
+			b = new(big.Int)
+		}
+		return a.Cmp(b) > 0
+	})
 
 	out := make([]Stablecoin, 0, len(ordered))
 	for _, e := range ordered {
