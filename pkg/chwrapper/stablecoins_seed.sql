@@ -20,7 +20,6 @@ INSERT INTO stablecoins (chain_id, token, symbol, name, decimals, peg, issuer, b
     (43114, unhex('180af87b47bf272b2df59dccf2d76a6eafa625bf'), 'reUSD', 'Re Protocol reUSD',            18, 'USD', 'Re Protocol', false, '2026-01-01 00:00:00'),
     (43114, unhex('1c20e891bab6b1727d14da358fae2984ed9b59eb'), 'TUSD',  'TrueUSD',                      18, 'USD', 'TrustToken',  false, '2026-01-01 00:00:00'),
     (43114, unhex('ab05b04743e0aeaf9d2ca81e5d3b8385e4bf961e'), 'USDS',  'Spice USD',                    18, 'USD', '',            false, '2026-01-01 00:00:00'),
-    (43114, unhex('dacde03d7ab4d81feddc3a20faa89abac9072ce2'), 'USP',   'USP Stablecoin',               18, 'USD', '',            false, '2026-01-01 00:00:00'),
     (43114, unhex('dbc5192a6b6ffee7451301bb4ec312f844f02b4a'), 'UTY',   'XSY UTY',                      18, 'USD', 'XSY',         false, '2026-01-01 00:00:00'),
     (43114, unhex('b2f85b7ab3c2b6f62df06de6ae7d09c010a5096e'), 'XSGD',  'XSGD',                          6, 'SGD', 'StraitsX',    false, '2026-01-01 00:00:00'),
     (43114, unhex('111111111111ed1d73f860f57b2798b683f2d325'), 'YUSD',  'YUSD Stablecoin',              18, 'USD', 'Yeti',        false, '2026-01-01 00:00:00');
