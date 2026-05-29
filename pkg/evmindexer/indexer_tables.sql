@@ -25,3 +25,15 @@ CREATE TABLE IF NOT EXISTS indexer_watermarks (
     updated_at DateTime64(3, 'UTC') DEFAULT now64(3)
 ) ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY (chain_id, indexer_name, granularity);
+
+-- First-seen address registry: one logical row per address holding the earliest
+-- block_time it was ever observed (as sender or recipient) in raw_traces.
+-- Used by the cumulative_addresses metric to count genuinely-new addresses per
+-- period in O(distinct addresses) instead of re-scanning all of raw_traces.
+-- SimpleAggregateFunction(min) merges duplicate inserts down to the global min.
+CREATE TABLE IF NOT EXISTS evm_address_first_seen (
+    chain_id UInt32,
+    address FixedString(20),
+    first_seen SimpleAggregateFunction(min, DateTime64(3, 'UTC'))
+) ENGINE = AggregatingMergeTree()
+ORDER BY (chain_id, address);
