@@ -2,23 +2,26 @@
 -- Parameters: chain_id, first_period, last_period, granularity
 --
 -- Strategy (incremental, bounded memory):
---   1. Maintain evm_address_first_seen: insert the global first appearance of any
---      address that is NEW in this window (anti-join against the registry). Because
---      we process strictly forward, the first time an address is inserted is its
---      true global first_seen.
---   2. Count addresses whose first_seen falls in each period of the window (these
---      are the genuinely-new addresses), take the running sum on top of the prior
---      cumulative value already stored in `metrics`.
+--   1. Maintain evm_address_first_seen: insert every address active in this window
+--      with its windowed min(block_time). The table is AggregatingMergeTree with
+--      SimpleAggregateFunction(min), so re-inserting an address that already exists
+--      merges down to the GLOBAL earliest block_time -- no anti-join needed.
+--   2. Count addresses whose GLOBAL first_seen (read via FINAL) falls in each period
+--      of the window -- these are the genuinely-new addresses -- then take the
+--      running sum on top of the prior cumulative value already stored in `metrics`.
 --
--- This avoids the previous approach's two problems:
---   * OOM: the old baseline did countDistinct() over all of raw_traces every cycle,
---     building a multi-GB exact hash set. We now read the prior cumulative from
---     `metrics` (O(1)) and only scan the small first_seen registry.
---   * Overcounting: the old query counted an address as "new" if its first
---     appearance WITHIN the window fell in a period, double-counting returning
---     addresses on top of the baseline. We now key off the GLOBAL first_seen.
+-- Memory notes (why this shape, not the obvious ones):
+--   * NO `WHERE address NOT IN (SELECT address FROM evm_address_first_seen)`:
+--     that materialises the ENTIRE ~92M-row registry into an in-memory set
+--     (CreatingSetsTransform) every run -> ~14 GiB -> code 241 OOM. The min-merge
+--     makes the anti-join unnecessary, so we drop it entirely.
+--   * NO `countDistinct()` / `GROUP BY address` over the full registry: a hash of
+--     92M keys also blows the server memory cap. Step 2 instead reads the registry
+--     with FINAL, which is a streaming merge by sort key (chain_id, address) -- low,
+--     bounded memory regardless of registry size.
+--   * Prior cumulative is read O(1) from `metrics`, never recomputed from raw_traces.
 
--- Step 1: register first appearance of addresses new in this window.
+-- Step 1: register/refresh first appearance of every address active in this window.
 INSERT INTO evm_address_first_seen (chain_id, address, first_seen)
 SELECT
     @chain_id AS chain_id,
@@ -42,11 +45,8 @@ FROM (
       AND to IS NOT NULL
       AND to != unhex('0000000000000000000000000000000000000000')
 ) AS window_occurrences
-WHERE address NOT IN (
-    SELECT address FROM evm_address_first_seen WHERE chain_id = @chain_id
-)
 GROUP BY address
-SETTINGS max_memory_usage = 8000000000;
+SETTINGS max_bytes_before_external_group_by = 2000000000;
 
 -- Step 2: cumulative count = prior cumulative + running sum of new addresses.
 INSERT INTO metrics (chain_id, metric_name, granularity, period, value)
@@ -55,9 +55,14 @@ new_per_period AS (
     SELECT
         toStartOf{granularityCamelCase}(first_seen) AS period,
         count() AS new_count
-    FROM evm_address_first_seen
-    WHERE chain_id = @chain_id
-      AND first_seen >= @first_period
+    FROM (
+        -- FINAL collapses each address to its global-min first_seen via a streaming
+        -- merge (bounded memory), so we count genuinely-new addresses per period.
+        SELECT first_seen
+        FROM evm_address_first_seen FINAL
+        WHERE chain_id = @chain_id
+    ) AS registry
+    WHERE first_seen >= @first_period
       AND first_seen < @last_period
     GROUP BY period
 ),
