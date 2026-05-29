@@ -5,6 +5,7 @@ import (
 	"math/big"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -242,9 +243,15 @@ func (s *Server) handleStablecoinTimeseries(w http.ResponseWriter, r *http.Reque
 		toTime = parseFlexibleTime(to)
 	}
 
-	limit, _ := getPagination(r)
-	if limit == 0 {
-		limit = 365
+	// NOTE: parse limit locally instead of getPagination(), which hard-caps at 100.
+	// Timeseries needs up to 1000 points per token (e.g. ~3 years of daily history),
+	// so the shared paginator's 100 cap would silently truncate daily series to the
+	// most-recent 100 points.
+	limit := 365
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
+			limit = parsed
+		}
 	}
 	if limit > 1000 {
 		limit = 1000
