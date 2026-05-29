@@ -295,8 +295,11 @@ func (s *Server) handleStablecoinTimeseries(w http.ResponseWriter, r *http.Reque
 			query += " AND period <= ?"
 			args = append(args, toTime)
 		}
-		query += " ORDER BY token, period DESC LIMIT ?"
-		args = append(args, limit*20)
+		// LIMIT ? BY token returns the most-recent `limit` points for EACH token,
+		// so omitting the token filter yields one series per stablecoin. A plain
+		// global LIMIT would be consumed entirely by whichever token sorts first.
+		query += " ORDER BY token, period DESC LIMIT ? BY token"
+		args = append(args, limit)
 	} else {
 		query = `
 			SELECT sm.token, sm.period, sm.value
@@ -317,8 +320,9 @@ func (s *Server) handleStablecoinTimeseries(w http.ResponseWriter, r *http.Reque
 			query += " AND sm.period <= ?"
 			args = append(args, toTime)
 		}
-		query += " ORDER BY sm.token, sm.period DESC LIMIT ?"
-		args = append(args, limit*20)
+		// Per-token limit (see supply branch) so every stablecoin gets its own series.
+		query += " ORDER BY sm.token, sm.period DESC LIMIT ? BY sm.token"
+		args = append(args, limit)
 	}
 
 	rows, err := s.conn.Query(ctx, query, args...)
