@@ -204,7 +204,7 @@ type StablecoinMetricSeries struct {
 // @Param token query string false "Token address (0x-prefixed hex). Omit for all stablecoins."
 // @Param from query string false "Start time (date, RFC3339, or unix timestamp)"
 // @Param to query string false "End time (date, RFC3339, or unix timestamp)"
-// @Param limit query int false "Number of data points per token (max 1000)" default(365)
+// @Param limit query int false "Number of data points per token (max 5000)" default(365)
 // @Success 200 {object} Response{data=[]StablecoinMetricSeries}
 // @Failure 400 {object} ErrorResponse
 // @Failure 500 {object} ErrorResponse
@@ -244,17 +244,18 @@ func (s *Server) handleStablecoinTimeseries(w http.ResponseWriter, r *http.Reque
 	}
 
 	// NOTE: parse limit locally instead of getPagination(), which hard-caps at 100.
-	// Timeseries needs up to 1000 points per token (e.g. ~3 years of daily history),
-	// so the shared paginator's 100 cap would silently truncate daily series to the
-	// most-recent 100 points.
+	// Timeseries needs the full per-token history in one request (~1600+ daily points
+	// back to 2021, and growing), so the shared paginator's 100 cap would silently
+	// truncate daily series. 5000 ≈ 13.7 years of daily points — full history with
+	// headroom, while still bounding the per-token row count.
 	limit := 365
 	if l := r.URL.Query().Get("limit"); l != "" {
 		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
 			limit = parsed
 		}
 	}
-	if limit > 1000 {
-		limit = 1000
+	if limit > 5000 {
+		limit = 5000
 	}
 
 	// Supply is stored as per-period deltas (supply_change); compute cumulative at query time.
