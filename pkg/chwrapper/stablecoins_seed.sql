@@ -11,8 +11,9 @@ INSERT INTO stablecoins (chain_id, token, symbol, name, decimals, peg, issuer, b
     (43114, unhex('00000000efe302beaa2b3e6e1b18d08d69a9012a'), 'AUSD',  'Agora Dollar',                  6, 'USD', 'Agora',       false, '2026-01-01 00:00:00'),
     (43114, unhex('24de8771bc5ddb3362db529fc3358f2df3a0e346'), 'avUSD', 'Avant USD',                    18, 'USD', 'Avant',       false, '2026-01-01 00:00:00'),
     (43114, unhex('9c9e5fd8bbc25984b178fdce6117defa39d2db39'), 'BUSD',  'Binance USD',                  18, 'USD', 'Binance',     false, '2026-01-01 00:00:00'),
-    -- BUIDL is yield-bearing — circulating supply here may differ from DeFiLlama.
-    (43114, unhex('d33176eec8a769f794ea13118ae1cc21345c51f0'), 'BUIDL', 'BlackRock USD Liquidity Fund', 18, 'USD', 'BlackRock',   false, '2026-01-01 00:00:00'),
+    -- BUIDL: Securitize-issued, 6 decimals. Live circulating contract on C-Chain (~$386M).
+    -- Replaced 2026-05-31: old seed used 0xd33176… (decimals 18), a dead/old contract with junk balances.
+    (43114, unhex('53fc82f14f009009b440a706e31c9021e1196a2f'), 'BUIDL', 'BlackRock USD Institutional Digital Liquidity Fund', 6, 'USD', 'BlackRock', false, '2026-01-01 00:00:00'),
     (43114, unhex('c891eb4cbdeff6e073e859e987815ed1505c2acd'), 'EURC',  'Euro Coin',                     6, 'EUR', 'Circle',      false, '2026-01-01 00:00:00'),
     (43114, unhex('e7c3d8c9a439fede00d2600032d5db0be71c3c29'), 'JPYC',  'JPY Coin',                     18, 'JPY', 'JPYC Inc.',   false, '2026-01-01 00:00:00'),
     (43114, unhex('130966628846bfd36ff31a822705796e8cb8c18d'), 'MIM',   'Magic Internet Money',         18, 'USD', 'Abracadabra', false, '2026-01-01 00:00:00'),
@@ -30,6 +31,4 @@ INSERT INTO stablecoin_excluded_holders (chain_id, token, holder, reason, added_
     -- Tether treasury / authorized-but-not-issued reserve on C-Chain.
     -- Verified empirically: this single holder accounts for the entire delta between
     -- our totalSupply and DeFiLlama's circulating-supply figure.
-    (43114, unhex('9702230a8ea53601f5cd2dc00fdbc13d4df4a8c7'), unhex('5754284f345afc66a98fbb0a0afe71e0f007b949'), 'treasury', '2026-01-01 00:00:00'),
-    -- BlackRock BUIDL treasury / issuance contract — holds 99.67% of all BUIDL on C-Chain.
-    (43114, unhex('d33176eec8a769f794ea13118ae1cc21345c51f0'), unhex('e077eff3adb61511dd1e4015938c4b8b51afee3b'), 'treasury', '2026-01-01 00:00:00');
+    (43114, unhex('9702230a8ea53601f5cd2dc00fdbc13d4df4a8c7'), unhex('5754284f345afc66a98fbb0a0afe71e0f007b949'), 'treasury', '2026-01-01 00:00:00');
