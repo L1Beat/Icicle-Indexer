@@ -312,6 +312,63 @@ func TestHandleChainRisk_Success(t *testing.T) {
 	assert.NotEmpty(t, data["updated_at"])
 }
 
+func TestHandleChainRisk_ValidatorManagerPopulated(t *testing.T) {
+	mock := &MockConn{
+		QueryRowFunc: func(ctx context.Context, query string, args ...interface{}) driver.Row {
+			require.Contains(t, query, "chain_risk")
+			return &MockRow{
+				scanFunc: func(dest ...interface{}) error {
+					*dest[0].(*string) = "chain123"
+					*dest[1].(*string) = "0xvm0000000000000000000000000000000000000a"
+					*dest[2].(*string) = "0xsubnetsowner000000000000000000000000000b"
+					// no decentralization
+					// chain_risk (Tier 1)
+					*dest[8].(*string) = "PoS-erc20"
+					*dest[9].(**string) = stringPtr("0xstakingmanager00000000000000000000000c")
+					*dest[10].(*string) = "multisig"
+					*dest[11].(**uint16) = uint16Ptr(2)
+					*dest[12].(**uint16) = uint16Ptr(5)
+					*dest[13].(*bool) = true
+					*dest[14].(**string) = stringPtr("0ximpl000000000000000000000000000000000d")
+					*dest[15].(**string) = stringPtr("0xproxyadmin0000000000000000000000000000e")
+					*dest[16].(**string) = stringPtr("0xpadminowner000000000000000000000000000f")
+					*dest[17].(**uint64) = uint64Ptr(172800)
+					*dest[18].(**uint64) = uint64Ptr(3600)
+					*dest[19].(**uint8) = uint8Ptr(20)
+					return nil
+				},
+			}
+		},
+	}
+
+	server := NewTestServer(mock)
+	w := MakeRequest(t, server, "GET", "/api/v1/data/chains/chain123/risk")
+	AssertJSONResponse(t, w, http.StatusOK)
+
+	resp := ParseResponse[Response](t, w)
+	data := resp.Data.(map[string]interface{})
+	vm := data["validator_manager"].(map[string]interface{})
+	assert.Equal(t, "0xvm0000000000000000000000000000000000000a", vm["address"])
+	assert.Equal(t, "PoS-erc20", vm["type"])
+
+	owner := vm["owner"].(map[string]interface{})
+	assert.Equal(t, "0xstakingmanager00000000000000000000000c", owner["address"])
+	assert.Equal(t, "multisig", owner["kind"])
+	ms := owner["multisig"].(map[string]interface{})
+	assert.Equal(t, float64(2), ms["threshold"])
+	assert.Equal(t, float64(5), ms["owners"])
+
+	proxy := vm["proxy"].(map[string]interface{})
+	assert.Equal(t, true, proxy["is_proxy"])
+	assert.Equal(t, "0ximpl000000000000000000000000000000000d", proxy["implementation"])
+	assert.Equal(t, "0xpadminowner000000000000000000000000000f", proxy["proxy_admin_owner"])
+	assert.Equal(t, float64(172800), proxy["upgrade_delay_seconds"])
+
+	churn := vm["churn"].(map[string]interface{})
+	assert.Equal(t, float64(3600), churn["period_seconds"])
+	assert.Equal(t, float64(20), churn["max_churn_percentage"])
+}
+
 func TestHandleChainRisk_NotFound(t *testing.T) {
 	mock := &MockConn{
 		QueryRowFunc: func(ctx context.Context, query string, args ...interface{}) driver.Row {
@@ -339,5 +396,9 @@ func uint64Ptr(v uint64) *uint64 {
 }
 
 func uint8Ptr(v uint8) *uint8 {
+	return &v
+}
+
+func uint16Ptr(v uint16) *uint16 {
 	return &v
 }

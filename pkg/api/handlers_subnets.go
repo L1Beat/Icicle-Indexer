@@ -561,6 +561,20 @@ func (s *Server) handleChainRisk(w http.ResponseWriter, r *http.Request) {
 		nakamoto33       *uint32
 		nakamoto50       *uint32
 		sortedWeights    []uint64
+
+		// chain_risk (Tier 1); crManagerType == "" means no risk row resolved yet.
+		crManagerType     string
+		crOwnerAddress    *string
+		crOwnerKind       string
+		crMultisigThresh  *uint16
+		crMultisigOwners  *uint16
+		crIsProxy         bool
+		crProxyImpl       *string
+		crProxyAdmin      *string
+		crProxyAdminOwner *string
+		crUpgradeDelay    *uint64
+		crChurnPeriod     *uint64
+		crMaxChurn        *uint8
 	)
 
 	query := fmt.Sprintf(`
@@ -568,10 +582,14 @@ func (s *Server) handleChainRisk(w http.ResponseWriter, r *http.Request) {
 			c.chain_id,
 			s.validator_manager_address,
 			s.validator_manager_owner,
-			v.active_validators, v.active_weight, v.nakamoto_33, v.nakamoto_50, v.sorted_weights
+			v.active_validators, v.active_weight, v.nakamoto_33, v.nakamoto_50, v.sorted_weights,
+			cr.manager_type, cr.owner_address, cr.owner_kind, cr.multisig_threshold, cr.multisig_owners,
+			cr.is_proxy, cr.proxy_implementation, cr.proxy_admin, cr.proxy_admin_owner, cr.upgrade_delay_seconds,
+			cr.churn_period_seconds, cr.max_churn_percentage
 		FROM (SELECT * FROM subnet_chains FINAL) c
 		INNER JOIN (SELECT * FROM subnets FINAL) s ON c.subnet_id = s.subnet_id
 		LEFT JOIN %s v ON c.subnet_id = v.subnet_id
+		LEFT JOIN (SELECT * FROM chain_risk FINAL) cr ON c.chain_id = cr.chain_id
 		WHERE c.chain_id = ?
 		LIMIT 1
 	`, decentralizationSubquery)
@@ -581,6 +599,9 @@ func (s *Server) handleChainRisk(w http.ResponseWriter, r *http.Request) {
 		&vmAddress,
 		&vmOwner,
 		&activeValidators, &activeWeight, &nakamoto33, &nakamoto50, &sortedWeights,
+		&crManagerType, &crOwnerAddress, &crOwnerKind, &crMultisigThresh, &crMultisigOwners,
+		&crIsProxy, &crProxyImpl, &crProxyAdmin, &crProxyAdminOwner, &crUpgradeDelay,
+		&crChurnPeriod, &crMaxChurn,
 	)
 	if err != nil {
 		writeNotFoundError(w, "Chain")
@@ -592,14 +613,59 @@ func (s *Server) handleChainRisk(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 
-	// ValidatorManager: Tier 2 fills only the known on-chain addresses. type/owner-kind/
-	// proxy/churn stay "unknown"/null until the Tier 1 contract-reading syncer lands.
+	// ValidatorManager: populated from chain_risk (Tier 1) when the risk syncer has
+	// resolved this chain. Until then, fall back to the known on-chain addresses only.
 	if vmAddress != "" {
-		vm := &ValidatorManagerRisk{
-			Address: vmAddress,
-			Type:    "unknown",
-		}
-		if vmOwner != "" {
+		vm := &ValidatorManagerRisk{Address: vmAddress, Type: "unknown"}
+		if crManagerType != "" {
+			// Tier 1 data present. Unknown fields stay null/"unknown" (never fabricated).
+			vm.Type = crManagerType
+
+			ownerAddr := vmOwner
+			if crOwnerAddress != nil && *crOwnerAddress != "" {
+				ownerAddr = *crOwnerAddress
+			}
+			if ownerAddr != "" {
+				kind := "unknown"
+				if crOwnerKind != "" {
+					kind = crOwnerKind
+				}
+				o := &OwnerInfo{Address: ownerAddr, Kind: kind}
+				if crMultisigThresh != nil && crMultisigOwners != nil {
+					o.Multisig = &MultisigInfo{Threshold: int(*crMultisigThresh), Owners: int(*crMultisigOwners)}
+				}
+				vm.Owner = o
+			}
+
+			if crIsProxy {
+				p := &ProxyInfo{IsProxy: true}
+				if crProxyImpl != nil {
+					p.Implementation = *crProxyImpl
+				}
+				if crProxyAdmin != nil {
+					p.ProxyAdmin = *crProxyAdmin
+				}
+				if crProxyAdminOwner != nil {
+					p.ProxyAdminOwner = *crProxyAdminOwner
+				}
+				if crUpgradeDelay != nil {
+					p.UpgradeDelaySeconds = *crUpgradeDelay
+				}
+				vm.Proxy = p
+			}
+
+			if crChurnPeriod != nil || crMaxChurn != nil {
+				c := &ChurnInfo{}
+				if crChurnPeriod != nil {
+					c.PeriodSeconds = *crChurnPeriod
+				}
+				if crMaxChurn != nil {
+					c.MaxChurnPercentage = uint32(*crMaxChurn)
+				}
+				vm.Churn = c
+			}
+		} else if vmOwner != "" {
+			// No Tier 1 row yet: known owner address only.
 			vm.Owner = &OwnerInfo{Address: vmOwner, Kind: "unknown"}
 		}
 		resp.ValidatorManager = vm

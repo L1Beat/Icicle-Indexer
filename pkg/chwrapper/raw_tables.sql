@@ -427,3 +427,34 @@ CREATE TABLE IF NOT EXISTS l1_validator_refunds (
     p_chain_id UInt32
 ) ENGINE = ReplacingMergeTree(block_time)
 ORDER BY (p_chain_id, validation_id, tx_id);
+
+-- Chain Risk table - ValidatorManager control & upgradeability, read from on-chain
+-- contract state (eth_call / eth_getCode / eth_getStorageAt) by the risk syncer.
+-- Keyed by chain_id (the blockchain ID used everywhere in the API). Nullable columns
+-- hold "unknown" (we never fabricate); the /risk endpoint maps them to JSON null.
+CREATE TABLE IF NOT EXISTS chain_risk (
+    chain_id String,  -- Blockchain ID (CB58), same key as subnet_chains.chain_id
+    validator_manager_address String,  -- The ValidatorManager contract (0x-prefixed hex)
+
+    -- Manager type & owner
+    manager_type LowCardinality(String) DEFAULT 'unknown',  -- PoA | PoS-native | PoS-erc20 | unknown
+    owner_address Nullable(String),  -- ValidatorManager owner() (0x-prefixed hex); null if unresolved
+    owner_kind LowCardinality(String) DEFAULT 'unknown',  -- eoa | multisig | timelock | dao | contract | unknown
+    multisig_threshold Nullable(UInt16),  -- Gnosis Safe threshold (null if owner not a multisig)
+    multisig_owners Nullable(UInt16),  -- Gnosis Safe owner count
+
+    -- EIP-1967 proxy / upgradeability
+    is_proxy Bool DEFAULT false,  -- true if the EIP-1967 implementation slot is non-zero
+    proxy_implementation Nullable(String),  -- implementation address from slot 0x360894…bbc
+    proxy_admin Nullable(String),  -- admin address from slot 0xb53127…103 (usually a ProxyAdmin)
+    proxy_admin_owner Nullable(String),  -- ProxyAdmin.owner() — the real upgrade controller
+    upgrade_delay_seconds Nullable(UInt64),  -- timelock delay on upgrades; 0 = instant; null if unknown
+
+    -- Churn limits (read from the ValidatorManager)
+    churn_period_seconds Nullable(UInt64),  -- getChurnPeriodSeconds()
+    max_churn_percentage Nullable(UInt8),  -- maximumChurnPercentage from getChurnTracker()
+
+    -- Metadata
+    last_updated DateTime64(3, 'UTC')
+) ENGINE = ReplacingMergeTree(last_updated)
+ORDER BY chain_id;

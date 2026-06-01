@@ -47,6 +47,9 @@ func RunIngest(ctx context.Context, fast bool) {
 		if err := registrysyncer.SyncValidatorManagerOwners(ctx, conn); err != nil {
 			slog.Error("Failed to sync validator manager owners", "error", err)
 		}
+		if err := registrysyncer.SyncChainRisk(ctx, conn); err != nil {
+			slog.Error("Failed to sync chain risk", "error", err)
+		}
 	}()
 
 	var wg sync.WaitGroup
