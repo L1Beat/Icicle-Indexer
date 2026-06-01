@@ -53,6 +53,7 @@ type riskRow struct {
 	ChainID             string
 	VMAddress           string
 	ManagerType         string // PoA | PoS-native | PoS-erc20 | unknown
+	ManagerLocation     string // c-chain | self | unknown — which chain the manager contract has code on
 	OwnerAddress        *string
 	OwnerKind           string // eoa | multisig | timelock | dao | contract | unknown
 	MultisigThreshold   *uint16
@@ -126,7 +127,7 @@ func SyncChainRisk(ctx context.Context, conn driver.Conn) error {
 
 	batch, err := conn.PrepareBatch(ctx, `INSERT INTO chain_risk (
 		chain_id, validator_manager_address,
-		manager_type, owner_address, owner_kind, multisig_threshold, multisig_owners,
+		manager_type, manager_location, owner_address, owner_kind, multisig_threshold, multisig_owners,
 		is_proxy, proxy_implementation, proxy_admin, proxy_admin_owner, upgrade_delay_seconds,
 		churn_period_seconds, max_churn_percentage, last_updated
 	)`)
@@ -135,11 +136,11 @@ func SyncChainRisk(ctx context.Context, conn driver.Conn) error {
 	}
 
 	now := time.Now()
-	var resolved, poa, pos int
+	var resolved, poa, pos, onCChain, onSelf int
 	for _, r := range results {
 		if err := batch.Append(
 			r.ChainID, r.VMAddress,
-			r.ManagerType, r.OwnerAddress, r.OwnerKind, r.MultisigThreshold, r.MultisigOwners,
+			r.ManagerType, r.ManagerLocation, r.OwnerAddress, r.OwnerKind, r.MultisigThreshold, r.MultisigOwners,
 			r.IsProxy, r.ProxyImplementation, r.ProxyAdmin, r.ProxyAdminOwner, r.UpgradeDelaySeconds,
 			r.ChurnPeriodSeconds, r.MaxChurnPercentage, now,
 		); err != nil {
@@ -155,6 +156,12 @@ func SyncChainRisk(ctx context.Context, conn driver.Conn) error {
 		case "PoS-native", "PoS-erc20":
 			pos++
 		}
+		switch r.ManagerLocation {
+		case "c-chain":
+			onCChain++
+		case "self":
+			onSelf++
+		}
 	}
 
 	if err := chwrapper.RetryableBatchSend(batch); err != nil {
@@ -163,6 +170,7 @@ func SyncChainRisk(ctx context.Context, conn driver.Conn) error {
 
 	slog.Info("Chain risk sync complete",
 		"total", len(inputs), "owner_resolved", resolved, "poa", poa, "pos", pos,
+		"manager_on_cchain", onCChain, "manager_on_self", onSelf,
 		"duration", time.Since(startTime))
 	return nil
 }
@@ -170,18 +178,22 @@ func SyncChainRisk(ctx context.Context, conn driver.Conn) error {
 // resolveChainRisk runs the detection algorithm for one chain's ValidatorManager.
 func resolveChainRisk(client *http.Client, in riskInput) riskRow {
 	row := riskRow{
-		ChainID:     in.ChainID,
-		VMAddress:   in.VMAddress,
-		ManagerType: "unknown",
-		OwnerKind:   "unknown",
+		ChainID:         in.ChainID,
+		VMAddress:       in.VMAddress,
+		ManagerType:     "unknown",
+		ManagerLocation: "unknown",
+		OwnerKind:       "unknown",
 	}
 
 	// The ValidatorManager may live on the L1's own chain or on C-Chain. Find the one
-	// that actually has code at the address, then run all probes against it.
-	rpc := workingRPC(client, in)
+	// that actually has code at the address, then run all probes against it. Where the
+	// code lives is itself a liveness signal: a manager on C-Chain can still add/remove
+	// validators if the L1 halts; one deployed on the L1 ("self") cannot.
+	rpc, location := workingRPC(client, in)
 	if rpc == "" {
 		return row // no contract code found anywhere; minimal row
 	}
+	row.ManagerLocation = location
 
 	// Churn limits. getChurnTracker() returns (uint64 churnPeriodSeconds, uint8 maxChurnPct, ...)
 	// in words 0 and 1 — read both from the single call (more reliable than the standalone
@@ -318,20 +330,25 @@ func upgradeDelay(client *http.Client, rpc, addr string) uint64 {
 	return 0
 }
 
-// workingRPC returns the first RPC (L1 first, C-Chain fallback) that has contract code at
-// the ValidatorManager address, or "" if none does.
-func workingRPC(client *http.Client, in riskInput) string {
+// workingRPC returns the first RPC (the L1's own chain first, then C-Chain fallback) that
+// has contract code at the ValidatorManager address, along with a location label
+// ("self" for the L1's own chain, "c-chain" for C-Chain). Returns "", "" if none does.
+func workingRPC(client *http.Client, in riskInput) (rpcURL, location string) {
+	candidates := []struct{ url, loc string }{
+		{in.RpcURL, "self"},
+		{cChainRPC, "c-chain"},
+	}
 	seen := map[string]bool{}
-	for _, rpc := range []string{in.RpcURL, cChainRPC} {
-		if rpc == "" || seen[rpc] {
+	for _, c := range candidates {
+		if c.url == "" || seen[c.url] {
 			continue
 		}
-		seen[rpc] = true
-		if code, err := ethGetCode(client, rpc, in.VMAddress); err == nil && hasCode(code) {
-			return rpc
+		seen[c.url] = true
+		if code, err := ethGetCode(client, c.url, in.VMAddress); err == nil && hasCode(code) {
+			return c.url, c.loc
 		}
 	}
-	return ""
+	return "", ""
 }
 
 // --- ABI / hex helpers ---

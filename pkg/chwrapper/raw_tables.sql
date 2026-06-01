@@ -438,6 +438,7 @@ CREATE TABLE IF NOT EXISTS chain_risk (
 
     -- Manager type & owner
     manager_type LowCardinality(String) DEFAULT 'unknown',  -- PoA | PoS-native | PoS-erc20 | unknown
+    manager_location LowCardinality(String) DEFAULT 'unknown',  -- where the manager contract has code: c-chain | self | unknown
     owner_address Nullable(String),  -- ValidatorManager owner() as 0x-prefixed hex, null if unresolved
     owner_kind LowCardinality(String) DEFAULT 'unknown',  -- eoa | multisig | timelock | dao | contract | unknown
     multisig_threshold Nullable(UInt16),  -- Gnosis Safe threshold (null if owner not a multisig)
@@ -458,3 +459,6 @@ CREATE TABLE IF NOT EXISTS chain_risk (
     last_updated DateTime64(3, 'UTC')
 ) ENGINE = ReplacingMergeTree(last_updated)
 ORDER BY chain_id;
+
+-- Migrate existing chain_risk deployments to add manager_location (idempotent, no-op on fresh installs)
+ALTER TABLE chain_risk ADD COLUMN IF NOT EXISTS manager_location LowCardinality(String) DEFAULT 'unknown';

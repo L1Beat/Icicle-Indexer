@@ -136,11 +136,15 @@ type RiskResponse struct {
 // address and its owner); type/owner-kind/proxy/churn are filled by the Tier 1
 // contract-reading syncer and remain "unknown"/null until then.
 type ValidatorManagerRisk struct {
-	Address string     `json:"address"`
-	Type    string     `json:"type"` // "PoA" | "PoS-native" | "PoS-erc20" | "unknown"
-	Owner   *OwnerInfo `json:"owner"`
-	Proxy   *ProxyInfo `json:"proxy"`
-	Churn   *ChurnInfo `json:"churn"`
+	Address string `json:"address"`
+	Type    string `json:"type"` // "PoA" | "PoS-native" | "PoS-erc20" | "unknown"
+	// DeployedOn is where the manager contract has code: "c-chain" means validators can
+	// still be managed if the L1 halts; "self" means the manager lives on the L1 itself
+	// and is unreachable if the chain is stuck; "unknown" means no contract was found.
+	DeployedOn string     `json:"deployed_on"`
+	Owner      *OwnerInfo `json:"owner"`
+	Proxy      *ProxyInfo `json:"proxy"`
+	Churn      *ChurnInfo `json:"churn"`
 }
 
 // OwnerInfo identifies the ValidatorManager owner and (Tier 1) classifies it.
@@ -564,6 +568,7 @@ func (s *Server) handleChainRisk(w http.ResponseWriter, r *http.Request) {
 
 		// chain_risk (Tier 1); crManagerType == "" means no risk row resolved yet.
 		crManagerType     string
+		crManagerLocation string
 		crOwnerAddress    *string
 		crOwnerKind       string
 		crMultisigThresh  *uint16
@@ -583,7 +588,7 @@ func (s *Server) handleChainRisk(w http.ResponseWriter, r *http.Request) {
 			s.validator_manager_address,
 			s.validator_manager_owner,
 			v.active_validators, v.active_weight, v.nakamoto_33, v.nakamoto_50, v.sorted_weights,
-			cr.manager_type, cr.owner_address, cr.owner_kind, cr.multisig_threshold, cr.multisig_owners,
+			cr.manager_type, cr.manager_location, cr.owner_address, cr.owner_kind, cr.multisig_threshold, cr.multisig_owners,
 			cr.is_proxy, cr.proxy_implementation, cr.proxy_admin, cr.proxy_admin_owner, cr.upgrade_delay_seconds,
 			cr.churn_period_seconds, cr.max_churn_percentage
 		FROM (SELECT * FROM subnet_chains FINAL) c
@@ -599,7 +604,7 @@ func (s *Server) handleChainRisk(w http.ResponseWriter, r *http.Request) {
 		&vmAddress,
 		&vmOwner,
 		&activeValidators, &activeWeight, &nakamoto33, &nakamoto50, &sortedWeights,
-		&crManagerType, &crOwnerAddress, &crOwnerKind, &crMultisigThresh, &crMultisigOwners,
+		&crManagerType, &crManagerLocation, &crOwnerAddress, &crOwnerKind, &crMultisigThresh, &crMultisigOwners,
 		&crIsProxy, &crProxyImpl, &crProxyAdmin, &crProxyAdminOwner, &crUpgradeDelay,
 		&crChurnPeriod, &crMaxChurn,
 	)
@@ -616,10 +621,13 @@ func (s *Server) handleChainRisk(w http.ResponseWriter, r *http.Request) {
 	// ValidatorManager: populated from chain_risk (Tier 1) when the risk syncer has
 	// resolved this chain. Until then, fall back to the known on-chain addresses only.
 	if vmAddress != "" {
-		vm := &ValidatorManagerRisk{Address: vmAddress, Type: "unknown"}
+		vm := &ValidatorManagerRisk{Address: vmAddress, Type: "unknown", DeployedOn: "unknown"}
 		if crManagerType != "" {
 			// Tier 1 data present. Unknown fields stay null/"unknown" (never fabricated).
 			vm.Type = crManagerType
+			if crManagerLocation != "" {
+				vm.DeployedOn = crManagerLocation
+			}
 
 			ownerAddr := vmOwner
 			if crOwnerAddress != nil && *crOwnerAddress != "" {

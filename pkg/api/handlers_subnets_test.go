@@ -324,17 +324,18 @@ func TestHandleChainRisk_ValidatorManagerPopulated(t *testing.T) {
 					// no decentralization
 					// chain_risk (Tier 1)
 					*dest[8].(*string) = "PoS-erc20"
-					*dest[9].(**string) = stringPtr("0xstakingmanager00000000000000000000000c")
-					*dest[10].(*string) = "multisig"
-					*dest[11].(**uint16) = uint16Ptr(2)
-					*dest[12].(**uint16) = uint16Ptr(5)
-					*dest[13].(*bool) = true
-					*dest[14].(**string) = stringPtr("0ximpl000000000000000000000000000000000d")
-					*dest[15].(**string) = stringPtr("0xproxyadmin0000000000000000000000000000e")
-					*dest[16].(**string) = stringPtr("0xpadminowner000000000000000000000000000f")
-					*dest[17].(**uint64) = uint64Ptr(172800)
-					*dest[18].(**uint64) = uint64Ptr(3600)
-					*dest[19].(**uint8) = uint8Ptr(20)
+					*dest[9].(*string) = "c-chain"
+					*dest[10].(**string) = stringPtr("0xstakingmanager00000000000000000000000c")
+					*dest[11].(*string) = "multisig"
+					*dest[12].(**uint16) = uint16Ptr(2)
+					*dest[13].(**uint16) = uint16Ptr(5)
+					*dest[14].(*bool) = true
+					*dest[15].(**string) = stringPtr("0ximpl000000000000000000000000000000000d")
+					*dest[16].(**string) = stringPtr("0xproxyadmin0000000000000000000000000000e")
+					*dest[17].(**string) = stringPtr("0xpadminowner000000000000000000000000000f")
+					*dest[18].(**uint64) = uint64Ptr(172800)
+					*dest[19].(**uint64) = uint64Ptr(3600)
+					*dest[20].(**uint8) = uint8Ptr(20)
 					return nil
 				},
 			}
@@ -350,6 +351,7 @@ func TestHandleChainRisk_ValidatorManagerPopulated(t *testing.T) {
 	vm := data["validator_manager"].(map[string]interface{})
 	assert.Equal(t, "0xvm0000000000000000000000000000000000000a", vm["address"])
 	assert.Equal(t, "PoS-erc20", vm["type"])
+	assert.Equal(t, "c-chain", vm["deployed_on"])
 
 	owner := vm["owner"].(map[string]interface{})
 	assert.Equal(t, "0xstakingmanager00000000000000000000000c", owner["address"])
