@@ -8,19 +8,30 @@ import (
 	"time"
 )
 
+// BlockBurn is the per-block fee burn, all amounts in nAVAX (1 nAVAX = 1e9 wei)
+// as strings. On the C-Chain 100% of the tx fee is burned, so Total is the real
+// burn for the block (base fee + priority tip). Only populated on the block
+// websocket feed; omitted on the REST block endpoints.
+type BlockBurn struct {
+	Total       string `json:"total" example:"123456789"`        // sum(gas_used * gas_price)
+	BaseFee     string `json:"base_fee" example:"100000000"`     // sum(gas_used * base_fee_per_gas)
+	PriorityFee string `json:"priority_fee" example:"23456789"`  // total - base
+}
+
 // Block represents an EVM block
 type Block struct {
-	ChainID     uint32    `json:"chain_id" example:"43114"`
-	BlockNumber uint32    `json:"block_number" example:"12345678"`
-	Hash        string    `json:"hash" example:"0x1234..."`
-	ParentHash  string    `json:"parent_hash" example:"0xabcd..."`
-	BlockTime   time.Time `json:"block_time"`
-	Miner       string    `json:"miner" example:"0x742d35Cc6634C0532925a3b844Bc9e7595f..."`
-	Size        uint32    `json:"size" example:"1024"`
-	GasLimit    uint32    `json:"gas_limit" example:"8000000"`
-	GasUsed     uint32    `json:"gas_used" example:"500000"`
-	BaseFee     uint64    `json:"base_fee_per_gas" example:"25000000000"`
-	TxCount     uint32    `json:"tx_count" example:"150"`
+	ChainID     uint32     `json:"chain_id" example:"43114"`
+	BlockNumber uint32     `json:"block_number" example:"12345678"`
+	Hash        string     `json:"hash" example:"0x1234..."`
+	ParentHash  string     `json:"parent_hash" example:"0xabcd..."`
+	BlockTime   time.Time  `json:"block_time"`
+	Miner       string     `json:"miner" example:"0x742d35Cc6634C0532925a3b844Bc9e7595f..."`
+	Size        uint32     `json:"size" example:"1024"`
+	GasLimit    uint32     `json:"gas_limit" example:"8000000"`
+	GasUsed     uint32     `json:"gas_used" example:"500000"`
+	BaseFee     uint64     `json:"base_fee_per_gas" example:"25000000000"`
+	TxCount     uint32     `json:"tx_count" example:"150"`
+	Burned      *BlockBurn `json:"burned,omitempty"`
 }
 
 // handleListBlocks returns a paginated list of blocks

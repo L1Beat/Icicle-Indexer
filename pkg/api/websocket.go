@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
@@ -240,54 +241,120 @@ func (h *WSHub) pollNewBlocks() {
 
 		// Check if there are new blocks
 		if uint64(latestBlock) > lastSeen {
-			blocks := h.fetchBlockRange(ctx, chainID, lastSeen+1, uint64(latestBlock))
+			blocks, highestReady := h.fetchBlocksWithBurn(ctx, chainID, lastSeen+1, uint64(latestBlock))
 			for _, block := range blocks {
 				h.broadcastBlock(chainID, block)
 			}
 
-			h.mu.Lock()
-			h.lastBlock[chainID] = uint64(latestBlock)
-			h.mu.Unlock()
+			// Only advance past blocks whose txs were fully indexed, so a block is
+			// never broadcast with an understated (txs-not-yet-present) burn; the
+			// rest are retried on the next poll.
+			if highestReady > lastSeen {
+				h.mu.Lock()
+				h.lastBlock[chainID] = highestReady
+				h.mu.Unlock()
+			}
 		}
 	}
 }
 
-// fetchBlockRange fetches blocks in a range
-func (h *WSHub) fetchBlockRange(ctx context.Context, chainID uint32, from, to uint64) []Block {
-	rows, err := h.conn.Query(ctx, `
-		SELECT
-			chain_id, block_number, hash, parent_hash, block_time,
-			miner, size, gas_limit, gas_used, base_fee_per_gas, tx_count
-		FROM raw_blocks
+// blockBurnSelect reads block rows enriched with per-block fee burn (nAVAX) and
+// the number of tx rows actually present in raw_txs. The tx aggregate is bounded
+// by a block_number range so it's a primary-key range read (one block per poll),
+// not a scan. seen_tx_rows lets callers gate broadcasts until a block's
+// transactions are fully indexed (blocks and txs are written in parallel, so a
+// block can briefly be visible before its txs).
+const blockBurnSelect = `
+	SELECT
+		b.chain_id, b.block_number, b.hash, b.parent_hash, b.block_time,
+		b.miner, b.size, b.gas_limit, b.gas_used, b.base_fee_per_gas, b.tx_count,
+		toUInt64(intDiv(t.total_wei, 1000000000)) AS total_navax,
+		toUInt64(intDiv(t.base_wei, 1000000000)) AS base_navax,
+		t.tx_rows AS seen_tx_rows
+	FROM raw_blocks b
+	LEFT JOIN (
+		SELECT block_number,
+			sum(toUInt256(gas_used) * toUInt256(gas_price)) AS total_wei,
+			sum(toUInt256(gas_used) * toUInt256(base_fee_per_gas)) AS base_wei,
+			count() AS tx_rows
+		FROM raw_txs
 		WHERE chain_id = ? AND block_number >= ? AND block_number <= ?
-		ORDER BY block_number ASC
-	`, chainID, from, to)
+		GROUP BY block_number
+	) t ON b.block_number = t.block_number
+	WHERE b.chain_id = ? AND b.block_number >= ? AND b.block_number <= ?
+	ORDER BY b.block_number ASC
+`
+
+// scanBlockWithBurn scans one row from blockBurnSelect. ready is false when the
+// block's txs aren't all present in raw_txs yet; in that case Burned is left nil.
+func scanBlockWithBurn(rows interface {
+	Scan(...interface{}) error
+}) (Block, bool, error) {
+	var b Block
+	var hashBytes, parentHashBytes [32]byte
+	var minerAddr [20]byte
+	var totalNavax, baseNavax, seenTxRows uint64
+
+	if err := rows.Scan(
+		&b.ChainID, &b.BlockNumber, &hashBytes, &parentHashBytes, &b.BlockTime,
+		&minerAddr, &b.Size, &b.GasLimit, &b.GasUsed, &b.BaseFee, &b.TxCount,
+		&totalNavax, &baseNavax, &seenTxRows,
+	); err != nil {
+		return b, false, err
+	}
+
+	b.Hash = "0x" + hex.EncodeToString(hashBytes[:])
+	b.ParentHash = "0x" + hex.EncodeToString(parentHashBytes[:])
+	b.Miner = "0x" + hex.EncodeToString(minerAddr[:])
+
+	// A block is ready once every tx it claims is present in raw_txs.
+	ready := uint64(b.TxCount) == seenTxRows
+	if ready {
+		var priority uint64
+		if totalNavax > baseNavax {
+			priority = totalNavax - baseNavax
+		}
+		b.Burned = &BlockBurn{
+			Total:       strconv.FormatUint(totalNavax, 10),
+			BaseFee:     strconv.FormatUint(baseNavax, 10),
+			PriorityFee: strconv.FormatUint(priority, 10),
+		}
+	}
+	return b, ready, nil
+}
+
+// fetchBlocksWithBurn returns the contiguous run of ready blocks in [from, to]
+// (oldest first), each with Burned populated, plus the highest block number that
+// was ready. It stops at the first block whose txs aren't fully indexed yet so
+// the feed stays contiguous and no block is emitted with an understated burn.
+func (h *WSHub) fetchBlocksWithBurn(ctx context.Context, chainID uint32, from, to uint64) ([]Block, uint64) {
+	highestReady := uint64(0)
+	if from > 0 {
+		highestReady = from - 1
+	}
+
+	rows, err := h.conn.Query(ctx, blockBurnSelect, chainID, from, to, chainID, from, to)
 	if err != nil {
 		slog.Error("WS error fetching blocks", "error", err)
-		return nil
+		return nil, highestReady
 	}
 	defer rows.Close()
 
 	var blocks []Block
 	for rows.Next() {
-		var b Block
-		var hashBytes, parentHashBytes [32]byte
-		var minerAddr [20]byte
-
-		if err := rows.Scan(
-			&b.ChainID, &b.BlockNumber, &hashBytes, &parentHashBytes, &b.BlockTime,
-			&minerAddr, &b.Size, &b.GasLimit, &b.GasUsed, &b.BaseFee, &b.TxCount,
-		); err != nil {
-			continue
+		b, ready, err := scanBlockWithBurn(rows)
+		if err != nil {
+			break
 		}
-
-		b.Hash = "0x" + hex.EncodeToString(hashBytes[:])
-		b.ParentHash = "0x" + hex.EncodeToString(parentHashBytes[:])
-		b.Miner = "0x" + hex.EncodeToString(minerAddr[:])
+		if !ready {
+			// Txs not fully indexed yet; stop so the next poll retries this block.
+			break
+		}
 		blocks = append(blocks, b)
+		highestReady = uint64(b.BlockNumber)
 	}
 
-	return blocks
+	return blocks, highestReady
 }
 
 // broadcastBlock sends a block to all clients subscribed to the chain
@@ -319,44 +386,23 @@ func (h *WSHub) broadcastBlock(chainID uint32, block Block) {
 func (h *WSHub) getRecentBlocks(chainID uint32, limit int) []Block {
 	ctx := context.Background()
 
-	rows, err := h.conn.Query(ctx, `
-		SELECT
-			chain_id, block_number, hash, parent_hash, block_time,
-			miner, size, gas_limit, gas_used, base_fee_per_gas, tx_count
-		FROM raw_blocks
-		WHERE chain_id = ?
-		ORDER BY block_number DESC
-		LIMIT ?
-	`, chainID, limit)
-	if err != nil {
+	// Resolve the block_number window so the burn join stays a bounded
+	// primary-key range read rather than a scan.
+	var maxBlock uint32
+	if err := h.conn.QueryRow(ctx,
+		`SELECT max(block_number) FROM raw_blocks WHERE chain_id = ?`, chainID,
+	).Scan(&maxBlock); err != nil || maxBlock == 0 {
 		return nil
 	}
-	defer rows.Close()
 
-	var blocks []Block
-	for rows.Next() {
-		var b Block
-		var hashBytes, parentHashBytes [32]byte
-		var minerAddr [20]byte
-
-		if err := rows.Scan(
-			&b.ChainID, &b.BlockNumber, &hashBytes, &parentHashBytes, &b.BlockTime,
-			&minerAddr, &b.Size, &b.GasLimit, &b.GasUsed, &b.BaseFee, &b.TxCount,
-		); err != nil {
-			continue
-		}
-
-		b.Hash = "0x" + hex.EncodeToString(hashBytes[:])
-		b.ParentHash = "0x" + hex.EncodeToString(parentHashBytes[:])
-		b.Miner = "0x" + hex.EncodeToString(minerAddr[:])
-		blocks = append(blocks, b)
+	from := uint64(1)
+	if uint64(maxBlock) > uint64(limit) {
+		from = uint64(maxBlock) - uint64(limit) + 1
 	}
 
-	// Reverse to get oldest first (chronological order)
-	for i, j := 0, len(blocks)-1; i < j; i, j = i+1, j-1 {
-		blocks[i], blocks[j] = blocks[j], blocks[i]
-	}
-
+	// Returns ready blocks oldest-first with Burned populated; a not-yet-indexed
+	// newest block is excluded here and arrives shortly via a new_block message.
+	blocks, _ := h.fetchBlocksWithBurn(ctx, chainID, from, uint64(maxBlock))
 	return blocks
 }
 

@@ -198,6 +198,7 @@ func (s *Server) registerRoutes(cfg Config) {
 	s.router.HandleFunc("GET /api/v1/metrics/evm/{chainId}/timeseries", s.handleListMetrics)
 	s.router.HandleFunc("GET /api/v1/metrics/evm/{chainId}/timeseries/{metric}", s.handleGetMetric)
 	s.router.HandleFunc("GET /api/v1/metrics/evm/{chainId}/fees/burned", s.handleFeeBurn)
+	s.router.HandleFunc("GET /api/v1/metrics/burned/total", s.handleNetworkBurnedTotal)
 
 	// Indexer Status
 	s.router.HandleFunc("GET /api/v1/metrics/indexer/status", s.handleIndexerStatus)

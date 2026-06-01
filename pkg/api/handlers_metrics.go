@@ -725,3 +725,68 @@ func (s *Server) handleFeeBurn(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, Response{Data: result})
 }
+
+// cChainID is the Avalanche C-Chain EVM chain id.
+const cChainID uint32 = 43114
+
+// BurnedByChain holds the all-time burn per Avalanche chain, nAVAX strings.
+// A nil pointer means that chain is not indexed yet (render as null).
+type BurnedByChain struct {
+	PChain *string `json:"p_chain"`
+	XChain *string `json:"x_chain"`
+	CChain *string `json:"c_chain"`
+}
+
+// NetworkBurnedTotal is the network-wide all-time AVAX burned with a P/X/C split.
+type NetworkBurnedTotal struct {
+	Unit        string        `json:"unit" example:"nAVAX"`
+	TotalBurned string        `json:"total_burned" example:"5013452000000000"`
+	ByChain     BurnedByChain `json:"by_chain"`
+	UpdatedAt   time.Time     `json:"updated_at"`
+}
+
+// handleNetworkBurnedTotal returns the network-wide all-time AVAX burned, split
+// by chain. Only the C-Chain is indexed today; P-Chain and X-Chain are reported
+// as null until their fee data is computed.
+// @Summary Get network total AVAX burned
+// @Description All-time AVAX burned across Avalanche, split P/X/C. Amounts are nAVAX (1 nAVAX = 1e9 wei). Unindexed chains are null.
+// @Tags Metrics - Fees
+// @Produce json
+// @Success 200 {object} Response{data=NetworkBurnedTotal}
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/metrics/burned/total [get]
+func (s *Server) handleNetworkBurnedTotal(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// C-Chain all-time burn = sum of the daily fees_burned_total metric (nAVAX).
+	var cTotal uint64
+	var updatedAt time.Time
+	err := s.conn.QueryRow(ctx, `
+		SELECT sum(value) AS total_navax, max(computed_at) AS updated_at
+		FROM metrics FINAL
+		WHERE chain_id = ?
+		  AND granularity = 'day'
+		  AND metric_name = 'fees_burned_total'
+	`, cChainID).Scan(&cTotal, &updatedAt)
+	if err != nil {
+		writeInternalError(w, err.Error())
+		return
+	}
+
+	cStr := strconv.FormatUint(cTotal, 10)
+
+	// P-Chain and X-Chain burn aren't indexed yet -> null. The network total is
+	// the sum of the chains we can actually measure (C-Chain only, for now).
+	resp := NetworkBurnedTotal{
+		Unit:        "nAVAX",
+		TotalBurned: cStr,
+		ByChain: BurnedByChain{
+			PChain: nil,
+			XChain: nil,
+			CChain: &cStr,
+		},
+		UpdatedAt: updatedAt,
+	}
+
+	writeJSON(w, http.StatusOK, Response{Data: resp})
+}
