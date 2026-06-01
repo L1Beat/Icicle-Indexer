@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -85,14 +86,14 @@ type ChainInfo struct {
 	WebsiteURL  string `json:"website_url,omitempty"`
 
 	// Extended registry fields
-	EvmChainID          *uint64      `json:"evm_chain_id,omitempty"`
-	Categories          []string     `json:"categories,omitempty"`
-	Socials             []SocialLink `json:"socials,omitempty"`
-	RpcURL              string       `json:"rpc_url,omitempty"`
-	ExplorerURL         string       `json:"explorer_url,omitempty"`
-	SybilResistanceType string       `json:"sybil_resistance_type,omitempty"`
+	EvmChainID          *uint64       `json:"evm_chain_id,omitempty"`
+	Categories          []string      `json:"categories,omitempty"`
+	Socials             []SocialLink  `json:"socials,omitempty"`
+	RpcURL              string        `json:"rpc_url,omitempty"`
+	ExplorerURL         string        `json:"explorer_url,omitempty"`
+	SybilResistanceType string        `json:"sybil_resistance_type,omitempty"`
 	NetworkToken        *NetworkToken `json:"network_token,omitempty"`
-	Network             string       `json:"network,omitempty"`
+	Network             string        `json:"network,omitempty"`
 
 	// Status
 	IsActive bool `json:"is_active"`
@@ -102,7 +103,98 @@ type ChainInfo struct {
 	ActiveValidators *uint32 `json:"active_validators,omitempty"`
 	TotalStaked      *uint64 `json:"total_staked,omitempty"`
 	TotalFeesPaid    *uint64 `json:"total_fees_paid,omitempty"`
+
+	// Decentralization summary (compact; only for chains with active L1 validators)
+	Decentralization *Decentralization `json:"decentralization,omitempty"`
 }
+
+// Decentralization summarizes how concentrated an L1's validator set is.
+// Computed from active validators in l1_validator_state. The Nakamoto coefficient
+// is the smallest number of validators whose combined weight exceeds the threshold
+// fraction of total active weight. Raw weights are strings; counts are numbers.
+type Decentralization struct {
+	ActiveValidatorCount uint32   `json:"active_validator_count"`
+	Nakamoto33           *uint32  `json:"nakamoto_33"`       // min validators controlling >33% of active weight; null if unknown
+	Nakamoto50           *uint32  `json:"nakamoto_50"`       // min validators controlling >50% of active weight; null if unknown
+	TotalWeight          string   `json:"total_weight"`      // sum of active validator weights, raw
+	Weights              []string `json:"weights,omitempty"` // active validator weights sorted desc, raw (full detail only)
+}
+
+// RiskResponse is the per-chain risk/decentralization envelope returned by
+// GET /api/v1/data/chains/{chainId}/risk. validator_manager and economic are
+// populated by later tiers; unknown fields are null, never fabricated.
+type RiskResponse struct {
+	ChainID          string                `json:"chain_id"`
+	ValidatorManager *ValidatorManagerRisk `json:"validator_manager"`
+	Decentralization *Decentralization     `json:"decentralization"`
+	Economic         *EconomicSecurity     `json:"economic"`
+	UpdatedAt        string                `json:"updated_at"`
+}
+
+// ValidatorManagerRisk describes who controls the ValidatorManager and whether it
+// is upgradeable. Tier 2 populates only the known on-chain addresses (the manager
+// address and its owner); type/owner-kind/proxy/churn are filled by the Tier 1
+// contract-reading syncer and remain "unknown"/null until then.
+type ValidatorManagerRisk struct {
+	Address string     `json:"address"`
+	Type    string     `json:"type"` // "PoA" | "PoS-native" | "PoS-erc20" | "unknown"
+	Owner   *OwnerInfo `json:"owner"`
+	Proxy   *ProxyInfo `json:"proxy"`
+	Churn   *ChurnInfo `json:"churn"`
+}
+
+// OwnerInfo identifies the ValidatorManager owner and (Tier 1) classifies it.
+type OwnerInfo struct {
+	Address  string        `json:"address"`
+	Kind     string        `json:"kind"` // "eoa" | "multisig" | "timelock" | "dao" | "contract" | "unknown"
+	Multisig *MultisigInfo `json:"multisig"`
+}
+
+// MultisigInfo is populated when the owner is detected as a Gnosis Safe (Tier 1).
+type MultisigInfo struct {
+	Threshold int `json:"threshold"`
+	Owners    int `json:"owners"`
+}
+
+// ProxyInfo describes EIP-1967 proxy state of the ValidatorManager (Tier 1).
+type ProxyInfo struct {
+	IsProxy             bool   `json:"is_proxy"`
+	Implementation      string `json:"implementation"`
+	ProxyAdmin          string `json:"proxy_admin"`
+	ProxyAdminOwner     string `json:"proxy_admin_owner"`
+	UpgradeDelaySeconds uint64 `json:"upgrade_delay_seconds"`
+}
+
+// ChurnInfo describes the validator-set churn limits (Tier 1).
+type ChurnInfo struct {
+	PeriodSeconds      uint64 `json:"period_seconds"`
+	MaxChurnPercentage uint32 `json:"max_churn_percentage"`
+}
+
+// EconomicSecurity describes the cost to attack the validator set (Tier 3).
+type EconomicSecurity struct {
+	StakingToken    *NetworkToken `json:"staking_token"`
+	TotalStakeRaw   string        `json:"total_stake_raw"`
+	TotalStakeUSD   *float64      `json:"total_stake_usd"`
+	CostToControl33 *float64      `json:"cost_to_control_33_usd"`
+}
+
+// decentralizationSubquery aggregates l1_validator_state into per-subnet
+// decentralization metrics. Shared by the chains list and the /risk endpoint so
+// the Nakamoto math stays in one place. Weights are sorted descending; the
+// Nakamoto coefficient is the 1-based index at which the cumulative weight first
+// exceeds the threshold fraction of total active weight.
+const decentralizationSubquery = `(
+		SELECT subnet_id,
+			toUInt32(countIf(active = true)) AS active_validators,
+			sum(weight) AS total_staked,
+			arrayReverseSort(groupArrayIf(weight, active = true)) AS sorted_weights,
+			arraySum(sorted_weights) AS active_weight,
+			toUInt32(arrayFirstIndex(x -> x > active_weight * 0.33, arrayCumSum(sorted_weights))) AS nakamoto_33,
+			toUInt32(arrayFirstIndex(x -> x > active_weight * 0.50, arrayCumSum(sorted_weights))) AS nakamoto_50
+		FROM l1_validator_state FINAL
+		GROUP BY subnet_id
+	)`
 
 // handleGetSubnet returns details for a specific subnet
 // @Summary Get subnet by ID
@@ -256,22 +348,16 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 			r.network_token_name, r.network_token_symbol, r.network_token_decimals, r.network_token_logo_uri,
 			r.network,
 			f.validator_count, f.total_fees_paid,
-			v.active_validators, v.total_staked
+			v.active_validators, v.total_staked, v.active_weight, v.nakamoto_33, v.nakamoto_50
 		FROM (SELECT * FROM subnet_chains FINAL) c
 		INNER JOIN (SELECT * FROM subnets FINAL) s ON c.subnet_id = s.subnet_id
 		LEFT JOIN (SELECT * FROM l1_registry FINAL) r ON c.chain_id = r.blockchain_id
 		LEFT JOIN (SELECT * FROM l1_fee_stats FINAL) f ON c.subnet_id = f.subnet_id
-		LEFT JOIN (
-			SELECT subnet_id,
-				toUInt32(countIf(active = true)) AS active_validators,
-				sum(weight) AS total_staked
-			FROM l1_validator_state FINAL
-			GROUP BY subnet_id
-		) v ON c.subnet_id = v.subnet_id
+		LEFT JOIN %s v ON c.subnet_id = v.subnet_id
 		%s
 		ORDER BY c.created_block DESC, c.chain_id ASC
 		LIMIT ?
-	`, whereClause)
+	`, decentralizationSubquery, whereClause)
 
 	if cursor != nil {
 		args = append(args, fetchLimit)
@@ -301,8 +387,8 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 		var tokenDecimals *uint8
 		var tokenLogoURI *string
 		var network *string
-		var validatorCount, activeValidators *uint32
-		var totalFeesPaid, totalStaked *uint64
+		var validatorCount, activeValidators, nakamoto33, nakamoto50 *uint32
+		var totalFeesPaid, totalStaked, activeWeight *uint64
 
 		if err := rows.Scan(
 			&ci.ChainID, &ci.ChainName, &ci.VMID, &ci.CreatedBlock, &ci.CreatedTime,
@@ -313,7 +399,7 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 			&tokenName, &tokenSymbol, &tokenDecimals, &tokenLogoURI,
 			&network,
 			&validatorCount, &totalFeesPaid,
-			&activeValidators, &totalStaked,
+			&activeValidators, &totalStaked, &activeWeight, &nakamoto33, &nakamoto50,
 		); err != nil {
 			writeInternalError(w, err.Error())
 			return
@@ -361,7 +447,7 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 		}
 		if tokenName != nil && *tokenName != "" {
 			ci.NetworkToken = &NetworkToken{
-				Name:    *tokenName,
+				Name:     *tokenName,
 				Decimals: 18,
 			}
 			if tokenSymbol != nil {
@@ -391,6 +477,21 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 		}
 		if totalFeesPaid != nil && *totalFeesPaid > 0 {
 			ci.TotalFeesPaid = totalFeesPaid
+		}
+
+		// Decentralization summary: only meaningful when the chain has active L1 validators.
+		if activeValidators != nil && *activeValidators > 0 {
+			d := &Decentralization{ActiveValidatorCount: *activeValidators}
+			if activeWeight != nil {
+				d.TotalWeight = strconv.FormatUint(*activeWeight, 10)
+			}
+			if nakamoto33 != nil && *nakamoto33 > 0 {
+				d.Nakamoto33 = nakamoto33
+			}
+			if nakamoto50 != nil && *nakamoto50 > 0 {
+				d.Nakamoto50 = nakamoto50
+			}
+			ci.Decentralization = d
 		}
 
 		chains = append(chains, ci)
@@ -436,4 +537,95 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 		Data: chains,
 		Meta: meta,
 	})
+}
+
+// handleChainRisk returns the per-chain risk/decentralization detail.
+// @Summary Get chain risk profile
+// @Description Validator-set decentralization (Nakamoto coefficient) plus, in later tiers, ValidatorManager control and economic security. Keyed by the same chain_id as /api/v1/data/chains.
+// @Tags Data - Chains
+// @Produce json
+// @Param chainId path string true "Chain ID"
+// @Success 200 {object} Response{data=RiskResponse}
+// @Failure 404 {object} ErrorResponse
+// @Router /api/v1/data/chains/{chainId}/risk [get]
+func (s *Server) handleChainRisk(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	chainID := r.PathValue("chainId")
+
+	var (
+		gotChainID       string
+		vmAddress        string
+		vmOwner          string
+		activeValidators *uint32
+		activeWeight     *uint64
+		nakamoto33       *uint32
+		nakamoto50       *uint32
+		sortedWeights    []uint64
+	)
+
+	query := fmt.Sprintf(`
+		SELECT
+			c.chain_id,
+			s.validator_manager_address,
+			s.validator_manager_owner,
+			v.active_validators, v.active_weight, v.nakamoto_33, v.nakamoto_50, v.sorted_weights
+		FROM (SELECT * FROM subnet_chains FINAL) c
+		INNER JOIN (SELECT * FROM subnets FINAL) s ON c.subnet_id = s.subnet_id
+		LEFT JOIN %s v ON c.subnet_id = v.subnet_id
+		WHERE c.chain_id = ?
+		LIMIT 1
+	`, decentralizationSubquery)
+
+	err := s.conn.QueryRow(ctx, query, chainID).Scan(
+		&gotChainID,
+		&vmAddress,
+		&vmOwner,
+		&activeValidators, &activeWeight, &nakamoto33, &nakamoto50, &sortedWeights,
+	)
+	if err != nil {
+		writeNotFoundError(w, "Chain")
+		return
+	}
+
+	resp := RiskResponse{
+		ChainID:   gotChainID,
+		UpdatedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+
+	// ValidatorManager: Tier 2 fills only the known on-chain addresses. type/owner-kind/
+	// proxy/churn stay "unknown"/null until the Tier 1 contract-reading syncer lands.
+	if vmAddress != "" {
+		vm := &ValidatorManagerRisk{
+			Address: vmAddress,
+			Type:    "unknown",
+		}
+		if vmOwner != "" {
+			vm.Owner = &OwnerInfo{Address: vmOwner, Kind: "unknown"}
+		}
+		resp.ValidatorManager = vm
+	}
+
+	// Decentralization (full, with sorted weights): only when the chain has active L1 validators.
+	if activeValidators != nil && *activeValidators > 0 {
+		d := &Decentralization{ActiveValidatorCount: *activeValidators}
+		if activeWeight != nil {
+			d.TotalWeight = strconv.FormatUint(*activeWeight, 10)
+		}
+		if nakamoto33 != nil && *nakamoto33 > 0 {
+			d.Nakamoto33 = nakamoto33
+		}
+		if nakamoto50 != nil && *nakamoto50 > 0 {
+			d.Nakamoto50 = nakamoto50
+		}
+		if len(sortedWeights) > 0 {
+			ws := make([]string, len(sortedWeights))
+			for i, wt := range sortedWeights {
+				ws[i] = strconv.FormatUint(wt, 10)
+			}
+			d.Weights = ws
+		}
+		resp.Decentralization = d
+	}
+
+	writeJSON(w, http.StatusOK, Response{Data: resp})
 }

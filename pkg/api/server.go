@@ -177,6 +177,7 @@ func (s *Server) registerRoutes(cfg Config) {
 
 	// Chains (unified endpoint: chains + subnets + L1 registry + validator stats)
 	s.router.HandleFunc("GET /api/v1/data/chains", s.handleListChains)
+	s.router.HandleFunc("GET /api/v1/data/chains/{chainId}/risk", s.handleChainRisk)
 
 	// Validators
 	s.router.HandleFunc("GET /api/v1/data/validators", s.handleListValidators)

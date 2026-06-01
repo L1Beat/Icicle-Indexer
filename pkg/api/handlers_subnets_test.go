@@ -21,7 +21,7 @@ var chainColumns = []string{
 	"network_token_name", "network_token_symbol", "network_token_decimals", "network_token_logo_uri",
 	"network",
 	"validator_count", "total_fees_paid",
-	"active_validators", "total_staked",
+	"active_validators", "total_staked", "active_weight", "nakamoto_33", "nakamoto_50",
 }
 
 func TestHandleGetSubnet_Success(t *testing.T) {
@@ -100,7 +100,7 @@ func TestHandleListChains_Success(t *testing.T) {
 					stringPtr("AVAX"), stringPtr("Avalanche"), uint8Ptr(18), stringPtr("https://token-logo.png"),
 					stringPtr("mainnet"),
 					uint32Ptr(5), uint64Ptr(1000000),
-					uint32Ptr(3), uint64Ptr(500000),
+					uint32Ptr(3), uint64Ptr(500000), uint64Ptr(500000), uint32Ptr(2), uint32Ptr(2),
 				},
 			}), nil
 		},
@@ -191,7 +191,7 @@ func TestHandleListChains_LegacyChainOmitsL1Fields(t *testing.T) {
 					(*string)(nil), (*string)(nil), (*uint8)(nil), (*string)(nil),
 					(*string)(nil),
 					(*uint32)(nil), (*uint64)(nil),
-					(*uint32)(nil), (*uint64)(nil),
+					(*uint32)(nil), (*uint64)(nil), (*uint64)(nil), (*uint32)(nil), (*uint32)(nil),
 				},
 			}), nil
 		},
@@ -254,6 +254,79 @@ func TestHandleListChains_Pagination(t *testing.T) {
 	resp := ParseResponse[Response](t, w)
 	assert.Equal(t, 25, resp.Meta.Limit)
 	assert.Equal(t, 50, resp.Meta.Offset)
+}
+
+func TestHandleChainRisk_Success(t *testing.T) {
+	mock := &MockConn{
+		QueryRowFunc: func(ctx context.Context, query string, args ...interface{}) driver.Row {
+			require.Contains(t, query, "c.chain_id = ?")
+			assert.Equal(t, "chain123", args[0])
+			return &MockRow{
+				scanFunc: func(dest ...interface{}) error {
+					*dest[0].(*string) = "chain123"
+					*dest[1].(*string) = "0x1234567890abcdef1234567890abcdef12345678"
+					*dest[2].(*string) = "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+					*dest[3].(**uint32) = uint32Ptr(3)
+					*dest[4].(**uint64) = uint64Ptr(1000000)
+					*dest[5].(**uint32) = uint32Ptr(1)
+					*dest[6].(**uint32) = uint32Ptr(2)
+					*dest[7].(*[]uint64) = []uint64{500000, 300000, 200000}
+					return nil
+				},
+			}
+		},
+	}
+
+	server := NewTestServer(mock)
+	w := MakeRequest(t, server, "GET", "/api/v1/data/chains/chain123/risk")
+
+	AssertJSONResponse(t, w, http.StatusOK)
+
+	resp := ParseResponse[Response](t, w)
+	data, ok := resp.Data.(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "chain123", data["chain_id"])
+
+	vm, ok := data["validator_manager"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "0x1234567890abcdef1234567890abcdef12345678", vm["address"])
+	assert.Equal(t, "unknown", vm["type"])
+	owner, ok := vm["owner"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd", owner["address"])
+	assert.Equal(t, "unknown", owner["kind"])
+	assert.Nil(t, vm["proxy"])
+	assert.Nil(t, vm["churn"])
+
+	dec, ok := data["decentralization"].(map[string]interface{})
+	require.True(t, ok)
+	assert.Equal(t, float64(3), dec["active_validator_count"])
+	assert.Equal(t, float64(1), dec["nakamoto_33"])
+	assert.Equal(t, float64(2), dec["nakamoto_50"])
+	assert.Equal(t, "1000000", dec["total_weight"])
+	weights, ok := dec["weights"].([]interface{})
+	require.True(t, ok)
+	assert.Equal(t, []interface{}{"500000", "300000", "200000"}, weights)
+
+	assert.Nil(t, data["economic"])
+	assert.NotEmpty(t, data["updated_at"])
+}
+
+func TestHandleChainRisk_NotFound(t *testing.T) {
+	mock := &MockConn{
+		QueryRowFunc: func(ctx context.Context, query string, args ...interface{}) driver.Row {
+			return &MockRow{
+				scanFunc: func(dest ...interface{}) error {
+					return ErrMockDB
+				},
+			}
+		},
+	}
+
+	server := NewTestServer(mock)
+	w := MakeRequest(t, server, "GET", "/api/v1/data/chains/missing/risk")
+
+	AssertErrorResponse(t, w, http.StatusNotFound, ErrNotFound)
 }
 
 // Helper functions for nullable types in mock rows
