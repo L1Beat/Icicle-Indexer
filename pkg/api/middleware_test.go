@@ -211,6 +211,7 @@ func TestCacheControlMiddleware(t *testing.T) {
 		wantCache bool
 	}{
 		{"cacheable data 200", "GET", "/api/v1/data/chains", http.StatusOK, true},
+		{"cacheable HEAD 200", "HEAD", "/api/v1/data/chains", http.StatusOK, true},
 		{"cacheable metrics 200", "GET", "/api/v1/metrics/evm/43114/fees/burned", http.StatusOK, true},
 		{"error not cached", "GET", "/api/v1/data/chains", http.StatusInternalServerError, false},
 		{"404 not cached", "GET", "/api/v1/data/chains/x/risk", http.StatusNotFound, false},

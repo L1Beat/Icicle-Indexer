@@ -118,7 +118,8 @@ func isCacheablePath(path string) bool {
 // non-cacheable paths are left untouched.
 func CacheControlMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || !isCacheablePath(r.URL.Path) {
+		cacheable := (r.Method == http.MethodGet || r.Method == http.MethodHead) && isCacheablePath(r.URL.Path)
+		if !cacheable {
 			next.ServeHTTP(w, r)
 			return
 		}
