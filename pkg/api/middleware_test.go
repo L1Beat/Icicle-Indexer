@@ -192,3 +192,47 @@ func TestCORSAndLoggingTogether(t *testing.T) {
 	assert.Equal(t, "*", w.Header().Get("Access-Control-Allow-Origin"))
 	assert.Equal(t, "OK", w.Body.String())
 }
+
+func TestCacheControlMiddleware(t *testing.T) {
+	const cc = "Cache-Control"
+
+	newHandler := func(status int) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(status)
+			w.Write([]byte("body"))
+		})
+	}
+
+	cases := []struct {
+		name      string
+		method    string
+		path      string
+		status    int
+		wantCache bool
+	}{
+		{"cacheable data 200", "GET", "/api/v1/data/chains", http.StatusOK, true},
+		{"cacheable metrics 200", "GET", "/api/v1/metrics/evm/43114/fees/burned", http.StatusOK, true},
+		{"error not cached", "GET", "/api/v1/data/chains", http.StatusInternalServerError, false},
+		{"404 not cached", "GET", "/api/v1/data/chains/x/risk", http.StatusNotFound, false},
+		{"indexer status not cached", "GET", "/api/v1/metrics/indexer/status", http.StatusOK, false},
+		{"non-api path not cached", "GET", "/health", http.StatusOK, false},
+		{"non-GET not cached", "POST", "/api/v1/data/chains", http.StatusOK, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			wrapped := CacheControlMiddleware(newHandler(tc.status))
+			req := httptest.NewRequest(tc.method, tc.path, nil)
+			w := httptest.NewRecorder()
+			wrapped.ServeHTTP(w, req)
+
+			assert.Equal(t, tc.status, w.Code)
+			assert.Equal(t, "body", w.Body.String())
+			if tc.wantCache {
+				assert.Equal(t, cacheControlValue, w.Header().Get(cc))
+			} else {
+				assert.Empty(t, w.Header().Get(cc))
+			}
+		})
+	}
+}

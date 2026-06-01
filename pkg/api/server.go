@@ -121,7 +121,7 @@ func NewServer(conn driver.Conn, cfg Config) *Server {
 	go s.wsHub.Run()
 	go s.wsHub.StartPoller()
 
-	// Chain middlewares: Recovery -> CORS -> Metrics -> Timeout -> Logging -> RateLimit -> Router
+	// Chain middlewares: Recovery -> CORS -> Metrics -> Timeout -> Logging -> RateLimit -> CacheControl -> Router
 	s.handler = Chain(
 		s.router,
 		RecoveryMiddleware,
@@ -130,6 +130,7 @@ func NewServer(conn driver.Conn, cfg Config) *Server {
 		TimeoutMiddleware(30*time.Second),
 		LoggingMiddleware,
 		s.rateLimiter.Middleware,
+		CacheControlMiddleware,
 	)
 
 	return s
@@ -227,14 +228,22 @@ func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 }
 
 func getPagination(r *http.Request) (limit, offset int) {
+	return getPaginationWithCap(r, 100)
+}
+
+// getPaginationWithCap is like getPagination but allows a higher per-endpoint
+// limit cap. Used for endpoints whose full result set is small and bounded
+// (e.g. validators), so the client can fetch everything in one request instead
+// of walking many pages.
+func getPaginationWithCap(r *http.Request, maxLimit int) (limit, offset int) {
 	limit = 20
 	offset = 0
 
 	if l := r.URL.Query().Get("limit"); l != "" {
 		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
 			limit = parsed
-			if limit > 100 {
-				limit = 100
+			if limit > maxLimit {
+				limit = maxLimit
 			}
 		}
 	}

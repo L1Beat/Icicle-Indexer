@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"runtime/debug"
+	"strings"
 	"time"
 )
 
@@ -91,6 +92,62 @@ func RecoveryMiddleware(next http.Handler) http.Handler {
 		}()
 		next.ServeHTTP(w, r)
 	})
+}
+
+// cacheControlValue is sent on cacheable GET responses. The indexer updates
+// these metrics on the order of minutes, so a short max-age plus a longer
+// stale-while-revalidate window lets a CDN serve cold loads from the edge and
+// refresh in the background without ever blocking a user.
+const cacheControlValue = "public, max-age=60, stale-while-revalidate=300"
+
+// isCacheablePath reports whether a request path serves public, edge-cacheable
+// data. Live/operational endpoints (indexer status, health, websockets) are
+// excluded so they always reflect current state.
+func isCacheablePath(path string) bool {
+	if strings.HasPrefix(path, "/api/v1/data/") {
+		return true
+	}
+	if strings.HasPrefix(path, "/api/v1/metrics/") && !strings.HasPrefix(path, "/api/v1/metrics/indexer/") {
+		return true
+	}
+	return false
+}
+
+// CacheControlMiddleware sets Cache-Control on successful (2xx) GET responses to
+// public data endpoints so CDNs and browsers can cache them. Errors and
+// non-cacheable paths are left untouched.
+func CacheControlMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || !isCacheablePath(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		next.ServeHTTP(&cacheResponseWriter{ResponseWriter: w}, r)
+	})
+}
+
+// cacheResponseWriter adds Cache-Control just before the status line is written,
+// but only for 2xx responses, so error responses are never cached.
+type cacheResponseWriter struct {
+	http.ResponseWriter
+	wroteHeader bool
+}
+
+func (c *cacheResponseWriter) WriteHeader(code int) {
+	if !c.wroteHeader {
+		c.wroteHeader = true
+		if code >= 200 && code < 300 {
+			c.ResponseWriter.Header().Set("Cache-Control", cacheControlValue)
+		}
+	}
+	c.ResponseWriter.WriteHeader(code)
+}
+
+func (c *cacheResponseWriter) Write(b []byte) (int, error) {
+	if !c.wroteHeader {
+		c.WriteHeader(http.StatusOK)
+	}
+	return c.ResponseWriter.Write(b)
 }
 
 // TimeoutMiddleware adds a server-side timeout to each request's context

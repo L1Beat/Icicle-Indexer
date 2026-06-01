@@ -100,8 +100,10 @@ const primaryNetworkSubnetID = "11111111111111111111111111111111LpoYY"
 // @Router /api/v1/data/validators [get]
 func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	limit, offset := getPagination(r)
-	wantCount := getCountParam(r)
+	// Validators are a small, bounded set per subnet (the Primary Network — the
+	// largest — has ~3k rows), so allow fetching them all in one request rather
+	// than forcing dozens of paginated round-trips into the rate limiter.
+	limit, offset := getPaginationWithCap(r, 5000)
 
 	subnetID := r.URL.Query().Get("subnet_id")
 	activeOnly := r.URL.Query().Get("active") == "true"
@@ -238,16 +240,16 @@ func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 
 	meta := &Meta{Limit: limit, Offset: offset, HasMore: hasMore}
 
-	if wantCount {
-		countWhereClause := ""
-		if len(whereParts) > 0 {
-			countWhereClause = "WHERE " + strings.Join(whereParts, " AND ")
-		}
-		countQuery := fmt.Sprintf(`SELECT toInt64(count()) FROM (SELECT * FROM l1_validator_state FINAL) v %s`, countWhereClause)
-		var total int64
-		_ = s.conn.QueryRow(ctx, countQuery, whereArgs...).Scan(&total)
-		meta.Total = total
+	// Always include the full count so the client knows the total without
+	// walking pages. The validator set is small, so this is a cheap query.
+	countWhereClause := ""
+	if len(whereParts) > 0 {
+		countWhereClause = "WHERE " + strings.Join(whereParts, " AND ")
 	}
+	countQuery := fmt.Sprintf(`SELECT toInt64(count()) FROM (SELECT * FROM l1_validator_state FINAL) v %s`, countWhereClause)
+	var total int64
+	_ = s.conn.QueryRow(ctx, countQuery, whereArgs...).Scan(&total)
+	meta.Total = total
 
 	writeJSON(w, http.StatusOK, Response{
 		Data: validators,
