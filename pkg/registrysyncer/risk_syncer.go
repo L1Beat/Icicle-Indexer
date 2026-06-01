@@ -183,17 +183,23 @@ func resolveChainRisk(client *http.Client, in riskInput) riskRow {
 		return row // no contract code found anywhere; minimal row
 	}
 
-	// Churn limits.
-	if res, err := ethCall(client, rpc, in.VMAddress, getChurnPeriodSelector); err == nil && hasResult(res) {
+	// Churn limits. getChurnTracker() returns (uint64 churnPeriodSeconds, uint8 maxChurnPct, ...)
+	// in words 0 and 1 — read both from the single call (more reliable than the standalone
+	// getChurnPeriodSeconds(), which returns 0 on some manager versions). Fall back to
+	// getChurnPeriodSeconds() for the period only if the tracker call is unavailable.
+	if res, err := ethCall(client, rpc, in.VMAddress, getChurnTrackerSelector); err == nil && hasResult(res) {
 		if w, ok := wordAt(res, 0); ok {
 			p := hexWordToUint64(w)
 			row.ChurnPeriodSeconds = &p
 		}
-	}
-	if res, err := ethCall(client, rpc, in.VMAddress, getChurnTrackerSelector); err == nil {
-		if w, ok := wordAt(res, 1); ok { // word 1 = maximumChurnPercentage
+		if w, ok := wordAt(res, 1); ok {
 			m := uint8(hexWordToUint64(w))
 			row.MaxChurnPercentage = &m
+		}
+	} else if res, err := ethCall(client, rpc, in.VMAddress, getChurnPeriodSelector); err == nil && hasResult(res) {
+		if w, ok := wordAt(res, 0); ok {
+			p := hexWordToUint64(w)
+			row.ChurnPeriodSeconds = &p
 		}
 	}
 
