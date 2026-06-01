@@ -559,3 +559,169 @@ func (s *Server) handleDailyFeeBurn(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, Response{Data: result})
 }
+
+// FeeBurnPoint is the transaction-fee burn for a single period.
+// All amounts are nAVAX (1 nAVAX = 1e9 wei), returned as strings.
+type FeeBurnPoint struct {
+	Period            time.Time `json:"period"`
+	TotalBurned       string    `json:"total_burned" example:"123456789"`
+	BaseFeeBurned     string    `json:"base_fee_burned" example:"100000000"`
+	PriorityFeeBurned string    `json:"priority_fee_burned" example:"23456789"`
+}
+
+// FeeBurnTotals is the all-time cumulative burn, nAVAX as strings.
+type FeeBurnTotals struct {
+	TotalBurned       string `json:"total_burned"`
+	BaseFeeBurned     string `json:"base_fee_burned"`
+	PriorityFeeBurned string `json:"priority_fee_burned"`
+}
+
+// FeeBurnResponse is the payload for the fee-burn endpoint.
+type FeeBurnResponse struct {
+	ChainID     uint32         `json:"chain_id" example:"43114"`
+	Granularity string         `json:"granularity" example:"day"`
+	Unit        string         `json:"unit" example:"nAVAX"`
+	Cumulative  FeeBurnTotals  `json:"cumulative"`
+	Series      []FeeBurnPoint `json:"series"`
+}
+
+// handleFeeBurn returns transaction-fee burn for a chain, split into total /
+// base-fee / priority-tip, plus the all-time cumulative totals.
+// @Summary Get transaction fee burn
+// @Description Per-period (and cumulative) tx-fee burn. On the C-Chain 100% of the fee is burned. Amounts are nAVAX (1 nAVAX = 1e9 wei).
+// @Tags Metrics - Fees
+// @Produce json
+// @Param chainId path int true "Chain ID (e.g. 43114 for C-Chain)"
+// @Param granularity query string false "hour, day, week, or month" default(day)
+// @Param from query string false "Start time (date, RFC3339, or unix timestamp)"
+// @Param to query string false "End time (date, RFC3339, or unix timestamp)"
+// @Param limit query int false "Number of periods (max 1000)" default(100)
+// @Success 200 {object} Response{data=FeeBurnResponse}
+// @Failure 400 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/metrics/evm/{chainId}/fees/burned [get]
+func (s *Server) handleFeeBurn(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	chainID, err := getChainIDFromPath(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid chain_id")
+		return
+	}
+
+	granularity := r.URL.Query().Get("granularity")
+	if granularity == "" {
+		granularity = "day"
+	}
+	validGranularities := map[string]bool{"hour": true, "day": true, "week": true, "month": true}
+	if !validGranularities[granularity] {
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid granularity (use: hour, day, week, month)")
+		return
+	}
+
+	var fromTime, toTime time.Time
+	if from := r.URL.Query().Get("from"); from != "" {
+		fromTime = parseFlexibleTime(from)
+	}
+	if to := r.URL.Query().Get("to"); to != "" {
+		toTime = parseFlexibleTime(to)
+	}
+
+	limit, _ := getPagination(r)
+	if limit > 1000 {
+		limit = 1000
+	}
+
+	// One row per period; total and base summed from the two burn metrics.
+	query := `
+		SELECT
+			period,
+			sumIf(value, metric_name = 'fees_burned_total') AS total_navax,
+			sumIf(value, metric_name = 'fees_burned_base')  AS base_navax
+		FROM metrics FINAL
+		WHERE chain_id = ?
+		  AND granularity = ?
+		  AND metric_name IN ('fees_burned_total', 'fees_burned_base')
+	`
+	args := []interface{}{chainID, granularity}
+	if !fromTime.IsZero() {
+		query += " AND period >= ?"
+		args = append(args, fromTime)
+	}
+	if !toTime.IsZero() {
+		query += " AND period <= ?"
+		args = append(args, toTime)
+	}
+	query += " GROUP BY period ORDER BY period DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := s.conn.Query(ctx, query, args...)
+	if err != nil {
+		writeInternalError(w, err.Error())
+		return
+	}
+	defer rows.Close()
+
+	series := []FeeBurnPoint{}
+	for rows.Next() {
+		var period time.Time
+		var total, base uint64
+		if err := rows.Scan(&period, &total, &base); err != nil {
+			writeInternalError(w, err.Error())
+			return
+		}
+		var tip uint64
+		if total > base {
+			tip = total - base
+		}
+		series = append(series, FeeBurnPoint{
+			Period:            period,
+			TotalBurned:       strconv.FormatUint(total, 10),
+			BaseFeeBurned:     strconv.FormatUint(base, 10),
+			PriorityFeeBurned: strconv.FormatUint(tip, 10),
+		})
+	}
+	if err := rows.Err(); err != nil {
+		writeInternalError(w, err.Error())
+		return
+	}
+
+	// Reverse to chronological order.
+	for i, j := 0, len(series)-1; i < j; i, j = i+1, j-1 {
+		series[i], series[j] = series[j], series[i]
+	}
+
+	// All-time cumulative from the day granularity (full coverage, fewest rows).
+	var cumTotal, cumBase uint64
+	cumQuery := `
+		SELECT
+			sumIf(value, metric_name = 'fees_burned_total') AS total_navax,
+			sumIf(value, metric_name = 'fees_burned_base')  AS base_navax
+		FROM metrics FINAL
+		WHERE chain_id = ?
+		  AND granularity = 'day'
+		  AND metric_name IN ('fees_burned_total', 'fees_burned_base')
+	`
+	if err := s.conn.QueryRow(ctx, cumQuery, chainID).Scan(&cumTotal, &cumBase); err != nil {
+		writeInternalError(w, err.Error())
+		return
+	}
+	var cumTip uint64
+	if cumTotal > cumBase {
+		cumTip = cumTotal - cumBase
+	}
+
+	result := FeeBurnResponse{
+		ChainID:     chainID,
+		Granularity: granularity,
+		Unit:        "nAVAX",
+		Cumulative: FeeBurnTotals{
+			TotalBurned:       strconv.FormatUint(cumTotal, 10),
+			BaseFeeBurned:     strconv.FormatUint(cumBase, 10),
+			PriorityFeeBurned: strconv.FormatUint(cumTip, 10),
+		},
+		Series: series,
+	}
+
+	writeJSON(w, http.StatusOK, Response{Data: result})
+}
