@@ -433,7 +433,13 @@ func (cs *ChainSyncer) writeBlocks(blocks []*evmrpc.NormalizedBlock) error {
 		return nil
 	}
 
-	ctx := context.Background()
+	// Bound the whole multi-table insert with a write deadline so a connection
+	// severed mid-INSERT fails fast and self-heals instead of parking pooled
+	// connections forever (L1B-51). Parent on Background, not cs.ctx, so a
+	// final drain flush during shutdown still gets to complete within the
+	// deadline rather than being cancelled immediately.
+	ctx, cancel := chwrapper.WriteContext(context.Background())
+	defer cancel()
 	g, ctx := errgroup.WithContext(ctx)
 	start := time.Now()
 

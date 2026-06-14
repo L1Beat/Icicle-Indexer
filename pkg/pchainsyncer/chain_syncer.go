@@ -370,8 +370,16 @@ func (ps *PChainSyncer) writeBlocks(blocks []*pchainrpc.JSONBlock) error {
 
 	start := time.Now()
 
+	// Bound the insert with a write deadline so a severed connection fails fast
+	// and self-heals instead of parking pooled connections forever (L1B-51).
+	// The pool is shared with the EVM syncers, so an unbounded P-Chain write can
+	// drain it for every chain. Parent on Background, not ps.ctx, so a final
+	// drain flush during shutdown still completes within the deadline.
+	ctx, cancel := chwrapper.WriteContext(context.Background())
+	defer cancel()
+
 	// Insert transactions
-	if err := InsertPChainTxs(ps.ctx, ps.conn, ps.chainID, blocks); err != nil {
+	if err := InsertPChainTxs(ctx, ps.conn, ps.chainID, blocks); err != nil {
 		return fmt.Errorf("failed to insert P-chain txs: %w", err)
 	}
 
