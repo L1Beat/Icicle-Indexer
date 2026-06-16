@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -50,6 +51,14 @@ func (s *Server) handleListPChainTxs(w http.ResponseWriter, r *http.Request) {
 	if txType != "" {
 		whereParts = append(whereParts, "tx_type = ?")
 		whereArgs = append(whereArgs, txType)
+	}
+
+	// Optional exact-block filter (used to list a single block's transactions).
+	if bn := r.URL.Query().Get("block_number"); bn != "" {
+		if parsed, err := strconv.ParseUint(bn, 10, 64); err == nil {
+			whereParts = append(whereParts, "block_number = ?")
+			whereArgs = append(whereArgs, parsed)
+		}
 	}
 
 	if subnetID != "" {
@@ -179,21 +188,38 @@ func (s *Server) handleGetPChainTx(w http.ResponseWriter, r *http.Request) {
 
 // handlePChainTxTypes returns transaction type counts
 // @Summary List P-Chain transaction types
-// @Description Get a list of P-Chain transaction types with counts
+// @Description Get a list of P-Chain transaction types with counts. Pass ?days=N to restrict to the last N days.
 // @Tags Data - P-Chain
 // @Produce json
+// @Param days query int false "Restrict to the last N days (default: all time)"
 // @Success 200 {object} Response{data=[]object}
 // @Failure 500 {object} ErrorResponse
 // @Router /api/v1/data/pchain/tx-types [get]
 func (s *Server) handlePChainTxTypes(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	rows, err := s.conn.Query(ctx, `
+	// Optional time window. Default (0) means all-time.
+	query := `
 		SELECT tx_type, count() as count
 		FROM p_chain_txs FINAL
 		GROUP BY tx_type
 		ORDER BY count DESC
-	`)
+	`
+	var args []interface{}
+	if d := r.URL.Query().Get("days"); d != "" {
+		if days, err := strconv.Atoi(d); err == nil && days > 0 {
+			query = `
+				SELECT tx_type, count() as count
+				FROM p_chain_txs FINAL
+				WHERE block_time >= now() - toIntervalDay(?)
+				GROUP BY tx_type
+				ORDER BY count DESC
+			`
+			args = append(args, days)
+		}
+	}
+
+	rows, err := s.conn.Query(ctx, query, args...)
 	if err != nil {
 		writeInternalError(w, err.Error())
 		return

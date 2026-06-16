@@ -157,7 +157,11 @@ expect_status "list stablecoins"  "/api/v1/data/evm/${CHAIN_ID}/stablecoins"    
 expect_status "stablecoin series" "/api/v1/data/evm/${CHAIN_ID}/stablecoins/timeseries?metric=supply" 200
 expect_status "list pchain txs"   "/api/v1/data/pchain/txs"                     200
 expect_status "pchain tx-types"   "/api/v1/data/pchain/tx-types"                200
+expect_status "pchain tx-types 30d" "/api/v1/data/pchain/tx-types?days=30"      200
 expect_status "list validators"   "/api/v1/data/validators"                     200
+expect_status "pchain stats"      "/api/v1/data/pchain/stats"                   200
+expect_status "subnet timeline"   "/api/v1/data/pchain/subnet-timeline"         200
+expect_status "list pchain blocks" "/api/v1/data/pchain/blocks"                 200
 
 # Derive real path params from the live data so the {param} routes get exercised.
 latest_block=$(fetch_body "/api/v1/data/evm/${CHAIN_ID}/blocks?limit=1" \
@@ -174,6 +178,16 @@ if [ -n "${tx_hash:-}" ]; then
   expect_status "get tx by hash" "/api/v1/data/evm/${CHAIN_ID}/txs/${tx_hash}" 200
 else
   echo "  SKIP  get tx by hash (no tx found in list)"
+fi
+
+# Derive a real P-Chain block number from the blocks list, then exercise the
+# single-block route (which pulls proposer/parent fields out of tx_data).
+pchain_block=$(fetch_body "/api/v1/data/pchain/blocks?limit=1" \
+  | grep -oE '"block_number"[: ]*[0-9]+' | grep -oE '[0-9]+' | head -1)
+if [ -n "${pchain_block:-}" ]; then
+  expect_status "get pchain block" "/api/v1/data/pchain/blocks/${pchain_block}" 200
+else
+  echo "  SKIP  get pchain block (no block found in list)"
 fi
 
 # ---- 4. Metrics API --------------------------------------------------------
@@ -193,6 +207,7 @@ expect_status "timeseries list" "/api/v1/metrics/evm/${CHAIN_ID}/timeseries"    
 expect_status "fees burned"     "/api/v1/metrics/evm/${CHAIN_ID}/fees/burned"       200
 expect_status "network burned"  "/api/v1/metrics/burned/total"                      200
 expect_status "indexer status"  "/api/v1/metrics/indexer/status"                    200
+expect_status "storage stats"   "/api/v1/metrics/storage"                           200
 
 # ---- 5. Input validation (should 4xx, never 5xx) ---------------------------
 

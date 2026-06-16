@@ -173,6 +173,12 @@ func (s *Server) registerRoutes(cfg Config) {
 	s.router.HandleFunc("GET /api/v1/data/pchain/txs/{txId}", s.handleGetPChainTx)
 	s.router.HandleFunc("GET /api/v1/data/pchain/tx-types", s.handlePChainTxTypes)
 
+	// P-Chain Overview, timeline & blocks
+	s.router.HandleFunc("GET /api/v1/data/pchain/stats", s.handlePChainStats)
+	s.router.HandleFunc("GET /api/v1/data/pchain/subnet-timeline", s.handleSubnetTimeline)
+	s.router.HandleFunc("GET /api/v1/data/pchain/blocks", s.handleListPChainBlocks)
+	s.router.HandleFunc("GET /api/v1/data/pchain/blocks/{number}", s.handleGetPChainBlock)
+
 	// Subnets
 	s.router.HandleFunc("GET /api/v1/data/subnets/{subnetId}", s.handleGetSubnet)
 
@@ -202,6 +208,9 @@ func (s *Server) registerRoutes(cfg Config) {
 
 	// Indexer Status
 	s.router.HandleFunc("GET /api/v1/metrics/indexer/status", s.handleIndexerStatus)
+
+	// Storage / ops stats
+	s.router.HandleFunc("GET /api/v1/metrics/storage", s.handleStorageStats)
 
 	// ==========================================
 	// WebSocket - /ws/*
