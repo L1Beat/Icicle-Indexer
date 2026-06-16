@@ -1,9 +1,8 @@
-import { useQuery } from '@tanstack/react-query';
-import { createClient } from '@clickhouse/client-web';
 import { useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import PageTransition from '../components/PageTransition';
-import { useClickhouseUrl } from '../hooks/useClickhouseUrl';
+import { usePChainBlock, usePChainTxs } from '../lib/hooks';
+import type { PChainTx } from '../lib/api';
 import {
   ArrowLeft,
   Clock,
@@ -12,92 +11,26 @@ import {
   Copy
 } from 'lucide-react';
 
-interface BlockDetails {
-  block_number: number;
-  block_time: string;
-  tx_count: number;
-  block_hash?: string;
-  parent_id?: string;
-  proposer_id?: string;
-  proposer_node_id?: string;
-  block_type?: string;
-}
-
-interface Transaction {
-  tx_id: string;
-  tx_type: string;
-  formatted_time: string;
-}
-
 function BlockDetailsPage() {
   const { blockNumber } = useParams<{ blockNumber: string }>();
-  const { url } = useClickhouseUrl();
-
-  const clickhouse = useMemo(() => createClient({
-    url,
-    username: "anonymous",
-  }), [url]);
-
-  // P-Chain ID from config.yaml
-  const pChainId = 0;
+  const blockNum = parseInt(blockNumber || '0', 10);
 
   // Block Details Query
-  const { data: blockDetails, isLoading: loadingBlock, error: blockError } = useQuery<BlockDetails>({
-    queryKey: ['block-details', blockNumber, url],
-    queryFn: async () => {
-      const blockNum = parseInt(blockNumber || '0', 10);
-      console.log('Querying for block number:', blockNum);
-      const result = await clickhouse.query({
-        query: `
-          SELECT
-            block_number,
-            count(*) as tx_count,
-            formatDateTime(max(block_time), '%Y-%m-%dT%H:%i:%sZ') as block_time,
-            any(tx_id) as block_hash,
-            any(tx_data.ParentID) as parent_id,
-            any(tx_data.ProposerID) as proposer_id,
-            any(tx_data.NodeID) as proposer_node_id,
-            any(tx_type) as block_type
-          FROM p_chain_txs
-          WHERE p_chain_id = ${pChainId}
-            AND block_number = toUInt64(${blockNum})
-          GROUP BY block_number
-          LIMIT 1
-        `,
-        format: 'JSONEachRow',
-      });
-      const data = await result.json<BlockDetails>();
-      console.log('Block query result:', data);
-      return (data as BlockDetails[])[0];
-    },
-  });
+  const { data: blockDetails, isLoading: loadingBlock, error: blockError } = usePChainBlock(blockNum);
 
-  // Transactions Query
-  const { data: transactions, isLoading: loadingTxs, error: txError } = useQuery<Transaction[]>({
-    queryKey: ['block-transactions', blockNumber, url],
-    queryFn: async () => {
-      const blockNum = parseInt(blockNumber || '0', 10);
-      console.log('Querying transactions for block:', blockNum);
-      const result = await clickhouse.query({
-        query: `
-          SELECT
-            tx_id,
-            tx_type,
-            formatDateTime(block_time, '%Y-%m-%dT%H:%i:%sZ') as formatted_time
-          FROM p_chain_txs
-          WHERE p_chain_id = ${pChainId}
-            AND block_number = toUInt64(${blockNum})
-          ORDER BY block_time ASC
-        `,
-        format: 'JSONEachRow',
-      });
-      const data = await result.json<Transaction>();
-      console.log('Transactions query result:', data);
-      console.log('Transaction count:', Array.isArray(data) ? data.length : 0);
-      return data as Transaction[];
-    },
-    enabled: !!blockDetails, // Only run after block details are loaded
-  });
+  // Transactions Query (only after block details are loaded)
+  const { data: txData, isLoading: loadingTxs, error: txError } = usePChainTxs(
+    { blockNumber: blockNum },
+    !!blockDetails,
+  );
+
+  // The old SQL ordered transactions ascending by block_time; preserve that order.
+  const transactions = useMemo<PChainTx[]>(() => {
+    if (!txData) return [];
+    return [...txData].sort(
+      (a, b) => new Date(a.block_time).getTime() - new Date(b.block_time).getTime(),
+    );
+  }, [txData]);
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -312,7 +245,7 @@ function BlockDetailsPage() {
             <div className="p-12 text-center">
               <p className="text-red-600">Error loading transactions: {String(txError)}</p>
             </div>
-          ) : transactions && transactions.length > 0 ? (
+          ) : transactions.length > 0 ? (
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead className="bg-gray-50 border-b border-gray-200">
@@ -346,7 +279,7 @@ function BlockDetailsPage() {
                       </td>
                       <td className="px-6 py-4">
                         <span className="text-sm text-gray-600">
-                          {new Date(tx.formatted_time).toLocaleTimeString()}
+                          {new Date(tx.block_time).toLocaleTimeString()}
                         </span>
                       </td>
                     </tr>

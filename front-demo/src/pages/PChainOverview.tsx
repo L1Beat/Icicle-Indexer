@@ -1,30 +1,16 @@
-import { useQuery } from '@tanstack/react-query';
-import { createClient } from '@clickhouse/client-web';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import PageTransition from '../components/PageTransition';
-import { useClickhouseUrl } from '../hooks/useClickhouseUrl';
 import { Network, Users, Copy, Search, Coins } from 'lucide-react';
 import MetricChart from '../components/MetricChart';
-
-interface GlobalStats {
-  active_chains: number;
-  active_legacy_subnets: number;
-  active_l1_subnets: number;
-  active_validators: number;
-  recent_transactions: number;
-  total_l1_fees_paid: number;
-}
-
-interface SubnetCreationTimeline {
-  period: string;
-  value: number;
-}
-
-interface PlatformActivity {
-  tx_type: string;
-  count: number;
-}
+import {
+  usePChainStats,
+  useSubnetTimeline,
+  usePChainTxTypes,
+  useChains,
+  usePChainBlocks,
+  usePChainTxs,
+} from '../lib/hooks';
 
 interface L1Subnet {
   subnet_id: string;
@@ -40,220 +26,66 @@ interface L1Subnet {
   total_fees_paid?: number;
 }
 
-interface PChainBlock {
-  block_number: number;
-  block_time: string;
-  tx_count: number;
-  block_hash?: string;
-}
-
-interface RecentTransaction {
-  tx_id: string;
-  tx_type: string;
-  formatted_time: string;
-  block_number: number;
-}
+const SUBNET_TYPE_RANK: Record<string, number> = {
+  primary: 0,
+  l1: 1,
+  elastic: 2,
+  legacy: 3,
+};
 
 function PChainOverview() {
-  const { url } = useClickhouseUrl();
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const [txBlockSearch, setTxBlockSearch] = useState('');
   const [showAllChains, setShowAllChains] = useState(false);
   const [typeFilter, setTypeFilter] = useState<'all' | 'l1' | 'legacy'>('all');
 
-  const clickhouse = useMemo(() => createClient({
-    url,
-    username: "anonymous",
-    max_open_connections: 10,
-    request_timeout: 30000,
-  }), [url]);
-
   // Global Statistics
-  const { data: stats, isLoading: loadingStats } = useQuery<GlobalStats>({
-    queryKey: ['pchain-stats', url],
-    queryFn: async () => {
-      const result = await clickhouse.query({
-        query: `
-          SELECT
-            -- Active L1 subnets: L1 subnets with at least 1 active validator
-            (SELECT count(DISTINCT v.subnet_id) FROM l1_validator_state v FINAL JOIN subnets s FINAL ON v.subnet_id = s.subnet_id WHERE v.active = true AND s.subnet_type = 'l1') as active_l1_subnets,
-            -- Active legacy subnets: regular subnets with at least 1 active validator
-            (SELECT count(DISTINCT v.subnet_id) FROM l1_validator_state v FINAL JOIN subnets s FINAL ON v.subnet_id = s.subnet_id WHERE v.active = true AND s.subnet_type = 'legacy') as active_legacy_subnets,
-            -- Total active chains: sum of active L1s, active legacy subnets, and Primary Network
-            (SELECT count(DISTINCT v.subnet_id) FROM l1_validator_state v FINAL JOIN subnets s FINAL ON v.subnet_id = s.subnet_id WHERE v.active = true AND s.subnet_type IN ('l1', 'legacy', 'primary')) as active_chains,
-            -- Count unique validators: Primary Network + L1 subnets only (legacy subnet validators are already Primary Network validators)
-            (SELECT count(DISTINCT node_id) FROM l1_validator_state v FINAL JOIN subnets s FINAL ON v.subnet_id = s.subnet_id WHERE v.active = true AND s.subnet_type IN ('primary', 'l1')) as active_validators,
-            (SELECT count(*) FROM p_chain_txs WHERE p_chain_id = 0 AND block_time >= now() - INTERVAL 7 DAY) as recent_transactions,
-            -- Total L1 validation fees paid (in nAVAX)
-            (SELECT sum(total_fees_paid) FROM l1_fee_stats FINAL WHERE p_chain_id = 0) as total_l1_fees_paid
-        `,
-        format: 'JSONEachRow',
-      });
-      const data = await result.json<GlobalStats>();
-      return (data as GlobalStats[])[0];
-    },
-    refetchInterval: 30000,
+  const { data: stats, isLoading: loadingStats } = usePChainStats();
+
+  // Subnet Creation Timeline (API returns per-month counts oldest-first;
+  // compute the running cumulative total the chart expects).
+  const { data: timelineRaw, isLoading: loadingTimeline } = useSubnetTimeline();
+  let cumulative = 0;
+  const timeline = timelineRaw?.map((item) => {
+    cumulative += item.value;
+    return { period: item.period, value: cumulative };
   });
 
-  // Subnet Creation Timeline
-  const { data: timeline, isLoading: loadingTimeline } = useQuery<SubnetCreationTimeline[]>({
-    queryKey: ['subnet-timeline', url],
-    queryFn: async () => {
-      const result = await clickhouse.query({
-        query: `
-          SELECT
-            formatDateTime(toStartOfMonth(converted_time), '%Y-%m-%d') as period,
-            count() as value
-          FROM subnets FINAL
-          WHERE subnet_type = 'l1' AND converted_time > toDateTime('1970-01-01 00:00:01')
-          GROUP BY period
-          ORDER BY period
-        `,
-        format: 'JSONEachRow',
-      });
-      const data = await result.json<SubnetCreationTimeline>();
+  // Recent Platform Activity (last 30 days, top 10 tx types)
+  const { data: platformActivityRaw, isLoading: loadingActivity } = usePChainTxTypes(30);
+  const platformActivity = platformActivityRaw?.slice(0, 10);
 
-      // Calculate cumulative sum
-      let cumulative = 0;
-      return data.map(item => {
-        cumulative += item.value;
-        return {
-          ...item,
-          value: cumulative
-        };
-      });
-    },
-    refetchInterval: 60000,
-  });
-
-  // Recent Platform Activity
-  const { data: platformActivity, isLoading: loadingActivity } = useQuery<PlatformActivity[]>({
-    queryKey: ['platform-activity', url],
-    queryFn: async () => {
-      const result = await clickhouse.query({
-        query: `
-          SELECT
-            tx_type,
-            count() as count
-          FROM p_chain_txs
-          WHERE p_chain_id = 0
-            AND block_time >= now() - INTERVAL 30 DAY
-          GROUP BY tx_type
-          ORDER BY count DESC
-          LIMIT 10
-        `,
-        format: 'JSONEachRow',
-      });
-      const data = await result.json<PlatformActivity>();
-      return data as PlatformActivity[];
-    },
-    refetchInterval: 30000,
-  });
-
-  // All Subnets Table
-  const { data: subnets, isLoading: loadingSubnets } = useQuery<L1Subnet[]>({
-    queryKey: ['all-subnets-v2', url],
-    queryFn: async () => {
-      const result = await clickhouse.query({
-        query: `
-          WITH validator_counts AS (
-            SELECT
-              subnet_id,
-              count(*) as validator_count
-            FROM l1_validator_state FINAL
-            WHERE active = true
-            GROUP BY subnet_id
-          )
-          SELECT
-            s.subnet_id as subnet_id,
-            s.subnet_type as subnet_type,
-            s.chain_id as chain_id,
-            s.created_block as created_block,
-            formatDateTime(s.created_time, '%Y-%m-%d %H:%i:%s') as created_time,
-            s.converted_block as conversion_block,
-            formatDateTime(s.converted_time, '%Y-%m-%d %H:%i:%s') as conversion_time,
-            COALESCE(v.validator_count, 0) as validator_count,
-            NULLIF(r.name, '') as name,
-            NULLIF(r.logo_url, '') as logo_url,
-            COALESCE(f.total_fees_paid, 0) as total_fees_paid
-          FROM subnets AS s FINAL
-          LEFT JOIN l1_registry AS r FINAL ON s.subnet_id = r.subnet_id
-          LEFT JOIN validator_counts AS v ON s.subnet_id = v.subnet_id
-          LEFT JOIN l1_fee_stats AS f FINAL ON s.subnet_id = f.subnet_id
-          ORDER BY
-            CASE s.subnet_type
-              WHEN 'primary' THEN 0
-              WHEN 'l1' THEN 1
-              WHEN 'elastic' THEN 2
-              WHEN 'legacy' THEN 3
-              ELSE 4
-            END,
-            validator_count DESC,
-            s.created_time DESC
-        `,
-        format: 'JSONEachRow',
-      });
-      const data = await result.json<L1Subnet>();
-      return data as L1Subnet[];
-    },
-    refetchInterval: 30000,
+  // All Chains Table
+  const { data: chains, isLoading: loadingSubnets } = useChains();
+  const subnets: L1Subnet[] | undefined = chains?.map((c) => {
+    // For L1 subnets the chain-creation fields are often 0/epoch; the
+    // meaningful "created" point is the L1 conversion. Fall back to it.
+    const hasCreated = c.created_block > 0;
+    return {
+      subnet_id: c.subnet_id,
+      subnet_type: c.chain_type,
+      chain_id: c.chain_id,
+      conversion_block: c.converted_block ?? 0,
+      conversion_time: c.converted_time ?? '',
+      created_block: hasCreated ? c.created_block : (c.converted_block ?? 0),
+      created_time: hasCreated ? c.created_time : (c.converted_time ?? c.created_time),
+      validator_count: c.validator_count ?? 0,
+      name: c.name,
+      logo_url: c.logo_url,
+      total_fees_paid: c.total_fees_paid,
+    };
   });
 
   // Recent P-Chain Blocks
-  const { data: recentBlocks, isLoading: loadingBlocks } = useQuery<PChainBlock[]>({
-    queryKey: ['recent-blocks', url],
-    queryFn: async () => {
-      const result = await clickhouse.query({
-        query: `
-          SELECT
-            block_number,
-            toUnixTimestamp(any(block_time)) as timestamp,
-            count(*) as tx_count,
-            substring(any(tx_id), 1, 12) as block_hash
-          FROM p_chain_txs
-          WHERE p_chain_id = 0
-            AND block_time >= now() - INTERVAL 1 DAY
-          GROUP BY block_number
-          ORDER BY block_number DESC
-          LIMIT 8
-        `,
-        format: 'JSONEachRow',
-      });
-      const data = await result.json<any>();
-      return data.map((item: any) => ({
-        ...item,
-        block_time: new Date(item.timestamp * 1000).toISOString()
-      })) as PChainBlock[];
-    },
-    refetchInterval: 15000,
-  });
+  const { data: recentBlocks, isLoading: loadingBlocks } = usePChainBlocks({ limit: 8 });
 
   // Recent P-Chain Transactions
-  const { data: recentTransactions, isLoading: loadingTransactions, error: txError } = useQuery<RecentTransaction[]>({
-    queryKey: ['recent-transactions', url],
-    queryFn: async () => {
-      const result = await clickhouse.query({
-        query: `
-          SELECT
-            tx_id,
-            tx_type,
-            formatDateTime(block_time, '%Y-%m-%dT%H:%i:%sZ') as formatted_time,
-            block_number
-          FROM p_chain_txs
-          WHERE p_chain_id = 0
-            AND block_time >= now() - INTERVAL 1 DAY
-          ORDER BY block_time DESC
-          LIMIT 8
-        `,
-        format: 'JSONEachRow',
-      });
-      const data = await result.json<RecentTransaction>();
-      console.log('Recent transactions:', data);
-      return data as RecentTransaction[];
-    },
-    refetchInterval: 15000,
-  });
+  const {
+    data: recentTransactions,
+    isLoading: loadingTransactions,
+    error: txError,
+  } = usePChainTxs({ limit: 8 });
 
   const formatTimestamp = (timestamp: string) => {
     const date = new Date(timestamp);
@@ -334,7 +166,14 @@ function PChainOverview() {
         subnet.chain_id?.toLowerCase().includes(searchTerm.toLowerCase())
       );
     })
-    .sort((a, b) => b.validator_count - a.validator_count); // Sort by validator count descending
+    .sort((a, b) => {
+      // Rank by subnet type first (primary, l1, elastic, legacy, then others),
+      // then by validator count descending.
+      const rankA = SUBNET_TYPE_RANK[a.subnet_type] ?? 4;
+      const rankB = SUBNET_TYPE_RANK[b.subnet_type] ?? 4;
+      if (rankA !== rankB) return rankA - rankB;
+      return b.validator_count - a.validator_count;
+    });
 
   const filteredSubnets = showAllChains ? allFilteredSubnets : allFilteredSubnets?.slice(0, 50);
   const totalChains = allFilteredSubnets?.length || 0;
@@ -602,7 +441,7 @@ function PChainOverview() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between mb-1">
                           <span className="text-white font-mono text-sm truncate">{tx.tx_id.substring(0, 12)}...{tx.tx_id.slice(-8)}</span>
-                          <span className="text-indigo-300 text-sm">{formatTimestamp(tx.formatted_time)}</span>
+                          <span className="text-indigo-300 text-sm">{formatTimestamp(tx.block_time)}</span>
                         </div>
                         <div className="flex items-center gap-2">
                           <span className="inline-flex items-center px-2.5 py-0.5 rounded text-xs font-medium bg-blue-500/20 text-blue-300 border border-blue-400/30">

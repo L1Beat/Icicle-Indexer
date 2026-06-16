@@ -1,77 +1,71 @@
-import { useQuery } from '@tanstack/react-query';
-import { createClient } from '@clickhouse/client-web';
 import PageTransition from '../components/PageTransition';
 import { RefreshCw } from 'lucide-react';
 import { useMemo } from 'react';
-import { useClickhouseUrl } from '../hooks/useClickhouseUrl';
-import { useSyncStatus } from '../hooks/useSyncStatus';
+import { useIndexerStatus, useStorageStats } from '../lib/hooks';
 
-interface TableSize {
-  table: string;
-  size_bytes: number;
-  rows: number;
-}
-
-interface ChainTxCount {
+/** Per-chain sync row, derived from the indexer status API. */
+interface ChainSyncData {
   chain_id: number;
-  tx_count: number;
+  name: string;
+  /** RFC3339 timestamp of the last sync. */
+  last_updated: string;
+  last_block_on_chain: number;
+  watermark_block: number | null;
+  syncPercentage: number;
+  blocksBehind: number | null;
 }
 
 function SyncStatus() {
-  const { url } = useClickhouseUrl();
+  const {
+    data: indexerStatus,
+    isLoading,
+    error,
+    refetch,
+    isFetching,
+  } = useIndexerStatus();
 
-  const clickhouse = useMemo(() => createClient({
-    url,
-    username: "anonymous",
-  }), [url]);
+  const {
+    data: tableSizes,
+    isLoading: isLoadingTables,
+    error: tableSizesError,
+    refetch: refetchStorage,
+  } = useStorageStats();
 
-  // Use shared sync status hook
-  const { chains, isLoading, error, refetch, isFetching } = useSyncStatus();
+  // Derive the per-chain sync rows from the EVM chain statuses (plus the
+  // optional P-Chain status). The API does not give the P-Chain a chain_id or
+  // name, so we synthesize them for display purposes only.
+  const chains = useMemo<ChainSyncData[] | undefined>(() => {
+    if (!indexerStatus) return undefined;
 
-  const { data: chainTxCounts } = useQuery<ChainTxCount[]>({
-    queryKey: ['chainTxCounts', url],
-    queryFn: async () => {
-      // Use system.parts to get row counts without scanning data
-      const result = await clickhouse.query({
-        query: `
-          SELECT
-            0 as chain_id,
-            sum(rows) as tx_count
-          FROM system.parts
-          WHERE active
-            AND database = currentDatabase()
-            AND table = 'p_chain_txs'
-        `,
-        format: 'JSONEachRow',
+    const evmChains: ChainSyncData[] = indexerStatus.evm.map((chain) => ({
+      chain_id: chain.chain_id,
+      name: chain.name,
+      last_updated: chain.last_sync,
+      last_block_on_chain: chain.latest_block,
+      watermark_block: chain.current_block,
+      syncPercentage:
+        chain.latest_block > 0
+          ? (chain.current_block / chain.latest_block) * 100
+          : 100,
+      blocksBehind: chain.blocks_behind,
+    }));
+
+    if (indexerStatus.pchain) {
+      const p = indexerStatus.pchain;
+      evmChains.push({
+        chain_id: 0,
+        name: 'P-Chain',
+        last_updated: p.last_sync,
+        last_block_on_chain: p.latest_block,
+        watermark_block: p.current_block,
+        syncPercentage:
+          p.latest_block > 0 ? (p.current_block / p.latest_block) * 100 : 100,
+        blocksBehind: p.blocks_behind,
       });
-      const data = await result.json<ChainTxCount>();
-      return data as ChainTxCount[];
-    },
-    refetchInterval: 60000,
-  });
+    }
 
-  const { data: tableSizes, isLoading: isLoadingTables, error: tableSizesError } = useQuery<TableSize[]>({
-    queryKey: ['tableSizes', url],
-    queryFn: async () => {
-      const result = await clickhouse.query({
-        query: `
-          SELECT 
-            table,
-            sum(bytes) as size_bytes,
-            sum(rows) as rows
-          FROM system.parts
-          WHERE active
-              AND database = currentDatabase()
-          GROUP BY table
-          ORDER BY sum(bytes) DESC
-        `,
-        format: 'JSONEachRow',
-      });
-      const data = await result.json<TableSize>();
-      return data as TableSize[];
-    },
-    refetchInterval: 60000,
-  });
+    return evmChains;
+  }, [indexerStatus]);
 
   const getBlocksBehindHealth = (blocksBehind: number | null) => {
     if (blocksBehind === null) return 'gray';
@@ -80,25 +74,24 @@ function SyncStatus() {
     return 'red';
   };
 
-  const getLastUpdatedHealth = (unixTimestamp: number) => {
-    const nowSec = Math.floor(Date.now() / 1000);
-    const diffSec = nowSec - unixTimestamp;
+  const getLastUpdatedHealth = (lastSync: string) => {
+    const diffSec = (Date.now() - new Date(lastSync).getTime()) / 1000;
 
     if (diffSec < 60) return 'green';  // < 1 minute
     if (diffSec < 3600) return 'yellow';  // < 1 hour
     return 'red';  // > 1 hour
   };
 
-  const formatTimestamp = (unixTimestamp: number) => {
-    const nowSec = Math.floor(Date.now() / 1000);
-    const diffSec = nowSec - unixTimestamp;
+  const formatTimestamp = (lastSync: string) => {
+    const date = new Date(lastSync);
+    const diffSec = Math.floor((Date.now() - date.getTime()) / 1000);
     const diffMin = Math.floor(diffSec / 60);
     const diffHour = Math.floor(diffMin / 60);
 
     if (diffSec < 60) return `${diffSec}s ago`;
     if (diffMin < 60) return `${diffMin}m ago`;
     if (diffHour < 24) return `${diffHour}h ago`;
-    return new Date(unixTimestamp * 1000).toLocaleString();
+    return date.toLocaleString();
   };
 
   const getHealthDot = (health: string) => {
@@ -134,11 +127,13 @@ function SyncStatus() {
     ? (totalBytes / rawTxsCount) * 1_000_000_000 / (1024 * 1024 * 1024)
     : 0;
 
-  // Create a map of chain_id to tx_count for quick lookup
-  const txCountMap = useMemo(() => {
-    if (!chainTxCounts) return new Map<number, number>();
-    return new Map(chainTxCounts.map(c => [c.chain_id, c.tx_count]));
-  }, [chainTxCounts]);
+  // P-Chain transaction count, derived from the storage stats.
+  const pChainTxCount = tableSizes?.find(table => table.table === 'p_chain_txs')?.rows || 0;
+
+  const handleRefresh = () => {
+    refetch();
+    refetchStorage();
+  };
 
   return (
     <PageTransition>
@@ -154,7 +149,7 @@ function SyncStatus() {
             )}
           </div>
           <button
-            onClick={() => refetch()}
+            onClick={handleRefresh}
             disabled={isFetching}
             className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50 cursor-pointer"
             title="Refresh"
@@ -241,7 +236,9 @@ function SyncStatus() {
                 {chains.map((chain, idx) => {
                   const blocksHealth = getBlocksBehindHealth(chain.blocksBehind);
                   const updatedHealth = getLastUpdatedHealth(chain.last_updated);
-                  const txCount = txCountMap.get(chain.chain_id) || 0;
+                  // P-Chain tx count comes from the storage list; EVM per-chain
+                  // counts are not provided by this endpoint.
+                  const txCount = chain.chain_id === 0 ? pChainTxCount : null;
 
                   return (
                     <tr
@@ -256,7 +253,7 @@ function SyncStatus() {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right">
                         <div className="text-sm font-medium text-gray-900">
-                          {txCount.toLocaleString()}
+                          {txCount !== null ? txCount.toLocaleString() : '—'}
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-right">
@@ -400,4 +397,3 @@ function SyncStatus() {
 }
 
 export default SyncStatus;
-

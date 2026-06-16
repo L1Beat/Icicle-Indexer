@@ -1,61 +1,19 @@
-import { useQuery } from '@tanstack/react-query';
-import { createClient } from '@clickhouse/client-web';
-import { useMemo } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import PageTransition from '../components/PageTransition';
-import { useClickhouseUrl } from '../hooks/useClickhouseUrl';
+import { usePChainTx } from '../lib/hooks';
 import {
   ArrowLeft,
   Clock,
   Hash,
   CheckCircle,
   Copy,
-  FileText
 } from 'lucide-react';
-
-interface TransactionDetails {
-  tx_id: string;
-  tx_type: string;
-  block_number: number;
-  formatted_time: string;
-  tx_data: any;
-}
 
 function TransactionDetailsPage() {
   const { txId } = useParams<{ txId: string }>();
-  const { url } = useClickhouseUrl();
-
-  const clickhouse = useMemo(() => createClient({
-    url,
-    username: "anonymous",
-  }), [url]);
-
-  const pChainId = 0;
 
   // Transaction Details Query
-  const { data: txDetails, isLoading: loadingTx, error: txError } = useQuery<TransactionDetails>({
-    queryKey: ['transaction-details', txId, url],
-    queryFn: async () => {
-      const result = await clickhouse.query({
-        query: `
-          SELECT
-            tx_id,
-            tx_type,
-            block_number,
-            formatDateTime(block_time, '%Y-%m-%dT%H:%i:%sZ') as formatted_time,
-            tx_data
-          FROM p_chain_txs
-          WHERE p_chain_id = ${pChainId}
-            AND tx_id = '${txId}'
-          LIMIT 1
-        `,
-        format: 'JSONEachRow',
-      });
-      const data = await result.json<TransactionDetails>();
-      console.log('Transaction query result:', data);
-      return (data as TransactionDetails[])[0];
-    },
-  });
+  const { data: txDetails, isLoading: loadingTx, error: txError } = usePChainTx(txId);
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -86,12 +44,12 @@ function TransactionDetailsPage() {
   };
 
   // Helper function to check if a value is a primitive that should be displayed directly
-  const isPrimitiveValue = (value: any): boolean => {
+  const isPrimitiveValue = (value: unknown): boolean => {
     return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean';
   };
 
   // Helper function to format AVAX amounts (if the value looks like nanoAVAX)
-  const formatIfAmount = (key: string, value: any): string => {
+  const formatIfAmount = (key: string, value: unknown): string => {
     const amountFields = ['balance', 'weight', 'wght', 'amt', 'amount', 'stake', 'delegationfee'];
     if (typeof value === 'string' && amountFields.some(field => key.toLowerCase().includes(field))) {
       const num = parseInt(value);
@@ -99,11 +57,11 @@ function TransactionDetailsPage() {
         return `${(num / 1e9).toLocaleString()} AVAX`;
       }
     }
-    return value;
+    return value as string;
   };
 
   // Helper function to format timestamps
-  const formatIfTimestamp = (key: string, value: any): string => {
+  const formatIfTimestamp = (key: string, value: unknown): string => {
     const timeFields = ['start', 'end', 'time', 'timestamp'];
     if (typeof value === 'string' && timeFields.some(field => key.toLowerCase().includes(field))) {
       const num = parseInt(value);
@@ -113,7 +71,7 @@ function TransactionDetailsPage() {
         return new Date(timestamp).toLocaleString();
       }
     }
-    return value;
+    return value as string;
   };
 
   if (loadingTx) {
@@ -227,10 +185,10 @@ function TransactionDetailsPage() {
                   <div>
                     <p className="text-xs text-gray-500 uppercase tracking-wide">Timestamp</p>
                     <p className="text-sm font-medium text-gray-900">
-                      {new Date(txDetails.formatted_time).toLocaleString()}
+                      {new Date(txDetails.block_time).toLocaleString()}
                     </p>
                     <p className="text-xs text-gray-500">
-                      ({formatTimestamp(txDetails.formatted_time)})
+                      ({formatTimestamp(txDetails.block_time)})
                     </p>
                   </div>
                 </div>

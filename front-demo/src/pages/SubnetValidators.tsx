@@ -1,9 +1,8 @@
-import { useQuery } from '@tanstack/react-query';
-import { createClient } from '@clickhouse/client-web';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import PageTransition from '../components/PageTransition';
-import { useClickhouseUrl } from '../hooks/useClickhouseUrl';
+import { useValidators, useChains } from '../lib/hooks';
+import type { Validator, ChainInfo } from '../lib/api';
 import {
   ArrowLeft,
   Search,
@@ -22,301 +21,55 @@ import {
   ChevronRight,
 } from 'lucide-react';
 
-interface Validator {
-  validation_id: string;
-  node_id: string;
-  weight: string;
-  balance: string;
-  start_time: string;
-  end_time: string;
-  uptime_percentage: number;
-  active: boolean;
-  last_updated: string;
-  // Historical fields
-  created_tx_type?: string;
-  created_tx_id?: string;
-  created_block?: number;
-  created_time?: string;
-  initial_balance?: string;
-  initial_weight?: string;
-  bls_public_key?: string;
-  // Fee tracking fields
-  initial_deposit?: string;
-  total_topups?: string;
-  refund_amount?: string;
-  fees_paid?: string;
-  daily_burn_rate?: number;
-  days_until_empty?: number;
-}
-
-interface SubnetDetails {
-  subnet_id: string;
-  subnet_type: string;
-  chain_id: string;
-  conversion_block: number;
-  conversion_time: string;
-  validator_count: number;
-  total_weight: string;
-  name?: string;
-  description?: string;
-  logo_url?: string;
-  website_url?: string;
+/**
+ * Resolve the value shown in the sortable amount column ("Stake" for
+ * Primary Network / legacy subnets, "Balance" for L1). All amounts are nAVAX.
+ *
+ * - L1 validators carry an explicit `balance`.
+ * - Primary Network validators have no `balance` — their stake is `weight`.
+ * - Legacy subnet validators carry the Primary Network stake in `primary_stake`.
+ */
+function amountForValidator(v: Validator, subnetType: string | undefined): number {
+  if (subnetType === 'primary') return v.weight;
+  if (subnetType === 'legacy') return v.primary_stake ?? 0;
+  return v.balance ?? 0;
 }
 
 function SubnetValidators() {
   const { subnetId } = useParams<{ subnetId: string }>();
-  const { url } = useClickhouseUrl();
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const [showAll, setShowAll] = useState(false);
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc' | null>('desc');
 
-  const clickhouse = useMemo(() => createClient({
-    url,
-    username: "anonymous",
-  }), [url]);
+  // Subnet header info. [0] is the requested subnet; the server enriches it
+  // with registry metadata + validator stats.
+  const { data: chains, isLoading: loadingDetails } = useChains(
+    { subnetId },
+    !!subnetId,
+  );
+  const subnetDetails: ChainInfo | undefined = chains?.[0];
+  const subnetType = subnetDetails?.chain_type;
 
-  // Subnet Details
-  const { data: subnetDetails, isLoading: loadingDetails } = useQuery<SubnetDetails>({
-    queryKey: ['subnet-details', subnetId, url],
-    queryFn: async () => {
-      const result = await clickhouse.query({
-        query: `
-          SELECT
-            s.subnet_id,
-            s.subnet_type,
-            s.chain_id,
-            s.converted_block as conversion_block,
-            formatDateTime(s.converted_time, '%Y-%m-%d %H:%i:%s') as conversion_time,
-            (SELECT count(*) FROM l1_validator_state FINAL WHERE subnet_id = {subnetId:String} AND active = true) as validator_count,
-            (SELECT toString(sum(weight)) FROM l1_validator_state FINAL WHERE subnet_id = {subnetId:String} AND active = true) as total_weight,
-            NULLIF(r.name, '') as name,
-            NULLIF(r.description, '') as description,
-            NULLIF(r.logo_url, '') as logo_url,
-            NULLIF(r.website_url, '') as website_url
-          FROM subnets AS s FINAL
-          LEFT JOIN l1_registry AS r FINAL ON s.subnet_id = r.subnet_id
-          WHERE s.subnet_id = {subnetId:String}
-          LIMIT 1
-        `,
-        format: 'JSONEachRow',
-        query_params: { subnetId },
-      });
-      const data = await result.json<SubnetDetails>();
-      return (data as SubnetDetails[])[0];
-    },
-  });
+  // Validators list. One call returns the correct rows for any subnet type;
+  // the server handles primary / legacy / l1 differences + Primary Network
+  // enrichment, and the hook polls every 30s.
+  const {
+    data: validators,
+    isLoading: loadingValidators,
+    error: validatorsError,
+  } = useValidators(subnetId, !!subnetDetails);
 
-  // Validators List with ALL available data
-  const { data: validators, isLoading: loadingValidators, error: validatorsError } = useQuery<Validator[]>({
-    queryKey: ['subnet-validators', subnetId, subnetDetails?.subnet_type, url],
-    queryFn: async () => {
-      try {
-        console.log('[Validators Query] Starting query for subnet:', subnetId, 'type:', subnetDetails?.subnet_type);
-        // For Primary Network, show directly from state
-        if (subnetDetails?.subnet_type === 'primary') {
-        const result = await clickhouse.query({
-          query: `
-            SELECT
-              validation_id,
-              node_id,
-              toString(weight) as weight,
-              toString(weight) as balance,
-              formatDateTime(start_time, '%Y-%m-%d %H:%i:%s') as start_time,
-              formatDateTime(end_time, '%Y-%m-%d %H:%i:%s') as end_time,
-              uptime_percentage,
-              if(active, true, false) as active,
-              formatDateTime(last_updated, '%Y-%m-%d %H:%i:%s') as last_updated
-            FROM l1_validator_state FINAL
-            WHERE subnet_id = {subnetId:String} AND active = true
-            ORDER BY weight DESC
-          `,
-          format: 'JSONEachRow',
-          query_params: { subnetId },
-        });
-        const data = await result.json<Validator[]>();
-        return data;
-      }
-
-        // For legacy subnets, JOIN with Primary Network to get real stake and uptime
-        if (subnetDetails?.subnet_type === 'legacy') {
-        const result = await clickhouse.query({
-          query: `
-            SELECT
-              v.validation_id,
-              v.node_id,
-              toString(v.weight) as weight,
-              toString(COALESCE(p.weight, 0)) as balance,
-              formatDateTime(v.start_time, '%Y-%m-%d %H:%i:%s') as start_time,
-              formatDateTime(v.end_time, '%Y-%m-%d %H:%i:%s') as end_time,
-              COALESCE(p.uptime_percentage, v.uptime_percentage) as uptime_percentage,
-              if(v.active, true, false) as active,
-              formatDateTime(v.last_updated, '%Y-%m-%d %H:%i:%s') as last_updated
-            FROM (SELECT * FROM l1_validator_state FINAL WHERE subnet_id = {subnetId:String}) v
-            LEFT JOIN (
-              SELECT node_id, weight, uptime_percentage
-              FROM l1_validator_state FINAL
-              WHERE subnet_id = '11111111111111111111111111111111LpoYY'
-            ) p ON v.node_id = p.node_id
-            ORDER BY p.weight DESC, v.weight DESC
-          `,
-          format: 'JSONEachRow',
-          query_params: { subnetId },
-        });
-        const data = await result.json<Validator[]>();
-        return data;
-      }
-
-      // For L1 subnets, show ALL validators with ALL available data
-      // Simplified query without expensive p_chain_txs join
-      console.log('[Validators Query] Running L1 query for subnet:', subnetId);
-      const result = await clickhouse.query({
-        query: `
-          WITH
-          -- Current validator state (from RPC getCurrentValidators)
-          current_state AS (
-            SELECT
-              node_id,
-              validation_id,
-              weight,
-              balance,
-              start_time,
-              end_time,
-              uptime_percentage,
-              active,
-              last_updated
-            FROM l1_validator_state FINAL
-            WHERE subnet_id = {subnetId:String}
-              AND length(node_id) > 0
-          ),
-          -- Historical validators (from transaction parsing)
-          history AS (
-            SELECT
-              node_id,
-              created_tx_type,
-              created_tx_id,
-              created_block,
-              created_time,
-              initial_balance,
-              initial_weight,
-              bls_public_key
-            FROM l1_validator_history FINAL
-            WHERE subnet_id = {subnetId:String}
-              AND length(node_id) > 0
-          ),
-          -- Current validators with their history (if available)
-          current_with_history AS (
-            SELECT
-              cs.validation_id as validation_id,
-              cs.node_id as node_id,
-              toString(cs.weight) as weight,
-              toString(cs.balance) as balance,
-              formatDateTime(cs.start_time, '%Y-%m-%d %H:%i:%s') as start_time,
-              formatDateTime(cs.end_time, '%Y-%m-%d %H:%i:%s') as end_time,
-              cs.uptime_percentage as uptime_percentage,
-              cs.active as active,
-              formatDateTime(cs.last_updated, '%Y-%m-%d %H:%i:%s') as last_updated,
-              h.created_tx_type as created_tx_type,
-              h.created_tx_id as created_tx_id,
-              h.created_block as created_block,
-              formatDateTime(h.created_time, '%Y-%m-%d %H:%i:%s') as created_time,
-              toString(h.initial_balance) as initial_balance,
-              toString(h.initial_weight) as initial_weight,
-              h.bls_public_key as bls_public_key,
-              -- Fee tracking: use initial_balance from history as initial_deposit
-              toString(COALESCE(h.initial_balance, 0)) as initial_deposit,
-              '0' as total_topups,
-              -- Refund amount is current balance (what would be returned)
-              toString(cs.balance) as refund_amount,
-              -- Fees paid = initial_deposit - current_balance (simplified without topups)
-              toString(
-                CASE
-                  WHEN COALESCE(h.initial_balance, 0) > cs.balance
-                  THEN COALESCE(h.initial_balance, 0) - cs.balance
-                  ELSE 0
-                END
-              ) as fees_paid,
-              -- Daily burn rate (approximate based on age)
-              CASE
-                WHEN dateDiff('day', cs.start_time, now()) > 0 AND COALESCE(h.initial_balance, 0) > cs.balance
-                THEN toFloat64(COALESCE(h.initial_balance, 0) - cs.balance) / dateDiff('day', cs.start_time, now())
-                ELSE 0
-              END as daily_burn_rate,
-              -- Days until empty
-              CASE
-                WHEN dateDiff('day', cs.start_time, now()) > 0 AND COALESCE(h.initial_balance, 0) > cs.balance
-                THEN cs.balance / (toFloat64(COALESCE(h.initial_balance, 0) - cs.balance) / dateDiff('day', cs.start_time, now()))
-                ELSE 0
-              END as days_until_empty
-            FROM current_state cs
-            LEFT JOIN history h ON cs.node_id = h.node_id
-          ),
-          -- Historical validators not in current state (inactive)
-          history_only AS (
-            SELECT
-              '' as validation_id,
-              h.node_id as node_id,
-              toString(h.initial_weight) as weight,
-              '0' as balance,
-              formatDateTime(h.created_time, '%Y-%m-%d %H:%i:%s') as start_time,
-              '1970-01-01 00:00:00' as end_time,
-              0 as uptime_percentage,
-              false as active,
-              formatDateTime(h.created_time, '%Y-%m-%d %H:%i:%s') as last_updated,
-              h.created_tx_type as created_tx_type,
-              h.created_tx_id as created_tx_id,
-              h.created_block as created_block,
-              formatDateTime(h.created_time, '%Y-%m-%d %H:%i:%s') as created_time,
-              toString(h.initial_balance) as initial_balance,
-              toString(h.initial_weight) as initial_weight,
-              h.bls_public_key as bls_public_key,
-              toString(h.initial_balance) as initial_deposit,
-              '0' as total_topups,
-              '0' as refund_amount,
-              toString(h.initial_balance) as fees_paid,
-              0 as daily_burn_rate,
-              0 as days_until_empty
-            FROM history h
-            WHERE h.node_id NOT IN (SELECT node_id FROM current_state)
-          )
-          -- Combine both sets
-          SELECT * FROM current_with_history
-          UNION ALL
-          SELECT * FROM history_only
-          ORDER BY active DESC, toUInt64OrZero(weight) DESC
-        `,
-        format: 'JSONEachRow',
-        query_params: { subnetId },
-      });
-      console.log('[Validators Query] Query executed, parsing JSON...');
-      const data = await result.json<Validator[]>();
-      console.log('[Validators Query] Parsed data:', data?.length, 'validators');
-      return data;
-      } catch (error) {
-        console.error('[Validators Query] Error:', error);
-        throw error;
-      }
-    },
-    refetchInterval: 30000,
-    enabled: !!subnetDetails,
-  });
-
-  // Debug logging for validators error
-  if (validatorsError) {
-    console.error('[Validators Query] Error:', validatorsError);
-  }
-
-  const formatWeight = (weight: string) => {
-    const num = parseFloat(weight);
+  const formatWeight = (weight: number) => {
+    const num = weight;
     if (num >= 1e9) return `${(num / 1e9).toFixed(2)}B`;
     if (num >= 1e6) return `${(num / 1e6).toFixed(2)}M`;
     if (num >= 1e3) return `${(num / 1e3).toFixed(2)}K`;
     return num.toFixed(0);
   };
 
-  const formatBalance = (balance: string) => {
-    const num = parseFloat(balance);
-    return (num / 1e9).toLocaleString(undefined, { maximumFractionDigits: 2 }) + ' AVAX';
+  const formatBalance = (balance: number) => {
+    return (balance / 1e9).toLocaleString(undefined, { maximumFractionDigits: 2 }) + ' AVAX';
   };
 
   const formatSubnetType = (type: string) => {
@@ -340,8 +93,8 @@ function SubnetValidators() {
 
   const sortedValidators = allFilteredValidators?.slice().sort((a, b) => {
     if (!sortOrder) return 0;
-    const aBalance = parseFloat(a.balance);
-    const bBalance = parseFloat(b.balance);
+    const aBalance = amountForValidator(a, subnetType);
+    const bBalance = amountForValidator(b, subnetType);
     return sortOrder === 'desc' ? bBalance - aBalance : aBalance - bBalance;
   });
 
@@ -403,14 +156,14 @@ function SubnetValidators() {
                   )}
                   <div className="flex-1">
                     <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-3">
-                      {subnetDetails.name || (subnetDetails.subnet_type === 'primary' ? 'Primary Network' : 'Subnet Details')}
+                      {subnetDetails.name || (subnetType === 'primary' ? 'Primary Network' : 'Subnet Details')}
                       <span className={`px-3 py-1 text-sm font-medium rounded-full ${
-                        subnetDetails.subnet_type === 'primary' ? 'bg-yellow-100 text-yellow-800 border border-yellow-300' :
-                        subnetDetails.subnet_type === 'l1' ? 'bg-blue-100 text-blue-800' :
-                        subnetDetails.subnet_type === 'elastic' ? 'bg-purple-100 text-purple-800' :
+                        subnetType === 'primary' ? 'bg-yellow-100 text-yellow-800 border border-yellow-300' :
+                        subnetType === 'l1' ? 'bg-blue-100 text-blue-800' :
+                        subnetType === 'elastic' ? 'bg-purple-100 text-purple-800' :
                         'bg-gray-100 text-gray-800'
                       }`}>
-                        {formatSubnetType(subnetDetails.subnet_type)}
+                        {formatSubnetType(subnetType ?? '')}
                       </span>
                     </h1>
                     {subnetDetails.description && (
@@ -441,24 +194,28 @@ function SubnetValidators() {
               <div className="flex gap-6 text-right ml-6">
                 <div>
                   <p className="text-sm text-gray-500 uppercase tracking-wide font-semibold">Validators</p>
-                  <p className="text-2xl font-bold text-gray-900">{subnetDetails.validator_count}</p>
+                  <p className="text-2xl font-bold text-gray-900">{subnetDetails.validator_count ?? 0}</p>
                 </div>
                 <div>
                   <p className="text-sm text-gray-500 uppercase tracking-wide font-semibold">Total Weight</p>
-                  <p className="text-2xl font-bold text-gray-900">{formatWeight(subnetDetails.total_weight)}</p>
+                  <p className="text-2xl font-bold text-gray-900">{formatWeight(subnetDetails.total_staked ?? 0)}</p>
                 </div>
               </div>
             </div>
 
             <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4 pt-6 border-t border-gray-100">
-              <div className="flex items-center gap-3 text-sm text-gray-600">
-                <Server size={18} className="text-gray-400" />
-                <span>Converted at block <strong>{subnetDetails.conversion_block.toLocaleString()}</strong></span>
-              </div>
-              <div className="flex items-center gap-3 text-sm text-gray-600">
-                <Clock size={18} className="text-gray-400" />
-                <span>Converted on <strong>{new Date(subnetDetails.conversion_time).toLocaleDateString()}</strong></span>
-              </div>
+              {subnetDetails.converted_block !== undefined && (
+                <div className="flex items-center gap-3 text-sm text-gray-600">
+                  <Server size={18} className="text-gray-400" />
+                  <span>Converted at block <strong>{subnetDetails.converted_block.toLocaleString()}</strong></span>
+                </div>
+              )}
+              {subnetDetails.converted_time && (
+                <div className="flex items-center gap-3 text-sm text-gray-600">
+                  <Clock size={18} className="text-gray-400" />
+                  <span>Converted on <strong>{new Date(subnetDetails.converted_time).toLocaleDateString()}</strong></span>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -507,7 +264,7 @@ function SubnetValidators() {
                       onClick={handleSortToggle}
                     >
                       <div className="flex items-center justify-end gap-1">
-                        {subnetDetails?.subnet_type === 'primary' || subnetDetails?.subnet_type === 'legacy' ? 'Stake' : 'Balance'}
+                        {subnetType === 'primary' || subnetType === 'legacy' ? 'Stake' : 'Balance'}
                         {sortOrder === 'desc' && <ArrowDown size={14} />}
                         {sortOrder === 'asc' && <ArrowUp size={14} />}
                         {!sortOrder && <ArrowUpDown size={14} className="text-gray-400" />}
@@ -578,7 +335,7 @@ function SubnetValidators() {
                       <td className="px-6 py-4 whitespace-nowrap text-right">
                         <div className="flex items-center justify-end gap-2">
                           <Wallet size={16} className="text-gray-400" />
-                          <span className={`text-sm ${validator.active ? 'text-gray-900' : 'text-gray-500'}`}>{formatBalance(validator.balance)}</span>
+                          <span className={`text-sm ${validator.active ? 'text-gray-900' : 'text-gray-500'}`}>{formatBalance(amountForValidator(validator, subnetType))}</span>
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
@@ -586,8 +343,8 @@ function SubnetValidators() {
                           {validator.created_time && (
                             <p>{new Date(validator.created_time).toLocaleDateString()}</p>
                           )}
-                          {validator.created_tx_type && (
-                            <p className="text-gray-400">{validator.created_tx_type}</p>
+                          {validator.tx_type && (
+                            <p className="text-gray-400">{validator.tx_type}</p>
                           )}
                         </div>
                       </td>
