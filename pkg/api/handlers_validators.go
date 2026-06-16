@@ -235,6 +235,10 @@ func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 		}
 		validators = append(validators, v)
 	}
+	if err := rows.Err(); err != nil {
+		writeInternalError(w, err.Error())
+		return
+	}
 
 	validators, hasMore := trimResults(validators, limit)
 
@@ -510,6 +514,10 @@ func (s *Server) handleValidatorDeposits(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		deposits = append(deposits, d)
+	}
+	if err := rows.Err(); err != nil {
+		writeInternalError(w, err.Error())
+		return
 	}
 
 	deposits, hasMore := trimResults(deposits, limit)

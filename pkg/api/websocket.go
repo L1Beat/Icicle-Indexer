@@ -353,6 +353,10 @@ func (h *WSHub) fetchBlocksWithBurn(ctx context.Context, chainID uint32, from, t
 		blocks = append(blocks, b)
 		highestReady = uint64(b.BlockNumber)
 	}
+	if err := rows.Err(); err != nil {
+		slog.Error("WS error fetching blocks", "error", err)
+		return nil, highestReady
+	}
 
 	return blocks, highestReady
 }

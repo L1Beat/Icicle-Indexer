@@ -112,6 +112,10 @@ func (s *Server) handleIndexerStatus(w http.ResponseWriter, r *http.Request) {
 			status.Healthy = false
 		}
 	}
+	if err := evmRows.Err(); err != nil {
+		writeInternalError(w, err.Error())
+		return
+	}
 
 	// Get P-Chain status. Highest indexed block comes from p_chain_txs;
 	// latest known tip + indexer activity timestamp come from chain_status.

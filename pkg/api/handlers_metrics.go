@@ -131,6 +131,10 @@ func (s *Server) handleFeeMetrics(w http.ResponseWriter, r *http.Request) {
 		}
 		stats = append(stats, f)
 	}
+	if err := rows.Err(); err != nil {
+		writeInternalError(w, err.Error())
+		return
+	}
 
 	stats, hasMore := trimResults(stats, limit)
 
@@ -285,6 +289,10 @@ func (s *Server) handleListMetrics(w http.ResponseWriter, r *http.Request) {
 		}
 		metrics = append(metrics, m)
 	}
+	if err := rows.Err(); err != nil {
+		writeInternalError(w, err.Error())
+		return
+	}
 
 	writeJSON(w, http.StatusOK, Response{Data: metrics})
 }
@@ -383,6 +391,10 @@ func (s *Server) handleGetMetric(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		data = append(data, dp)
+	}
+	if err := rows.Err(); err != nil {
+		writeInternalError(w, err.Error())
+		return
 	}
 
 	// Reverse to get chronological order
@@ -549,6 +561,10 @@ func (s *Server) handleDailyFeeBurn(w http.ResponseWriter, r *http.Request) {
 				ActiveSecs:   activeSecs,
 			})
 		}
+	}
+	if err := rows.Err(); err != nil {
+		writeInternalError(w, err.Error())
+		return
 	}
 
 	// Build ordered result

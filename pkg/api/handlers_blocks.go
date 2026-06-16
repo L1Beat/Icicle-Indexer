@@ -112,6 +112,10 @@ func (s *Server) handleListBlocks(w http.ResponseWriter, r *http.Request) {
 		b.Miner = "0x" + hex.EncodeToString(minerAddr[:])
 		blocks = append(blocks, b)
 	}
+	if err := rows.Err(); err != nil {
+		writeInternalError(w, err.Error())
+		return
+	}
 
 	blocks, hasMore := trimResults(blocks, limit)
 

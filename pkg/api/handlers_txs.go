@@ -158,6 +158,10 @@ func (s *Server) handleListTxs(w http.ResponseWriter, r *http.Request) {
 		tx.Value = valueBig.String()
 		txs = append(txs, tx)
 	}
+	if err := rows.Err(); err != nil {
+		writeInternalError(w, err.Error())
+		return
+	}
 
 	txs, hasMore := trimResults(txs, limit)
 
@@ -280,6 +284,9 @@ func (s *Server) handleGetTx(w http.ResponseWriter, r *http.Request) {
 				detail.InternalTxs = append(detail.InternalTxs, itx)
 			}
 		}
+		if err := traceRows.Err(); err != nil {
+			slog.Error("error iterating internal transactions", "error", err)
+		}
 	}
 
 	// Fetch ERC-20 token transfers (Transfer events)
@@ -341,6 +348,9 @@ func (s *Server) handleGetTx(w http.ResponseWriter, r *http.Request) {
 			}
 
 			detail.TokenTransfers = append(detail.TokenTransfers, tt)
+		}
+		if err := transferRows.Err(); err != nil {
+			slog.Error("error iterating token transfers", "error", err)
 		}
 	}
 
@@ -408,6 +418,9 @@ func (s *Server) handleGetTx(w http.ResponseWriter, r *http.Request) {
 			}
 
 			detail.Approvals = append(detail.Approvals, ta)
+		}
+		if err := approvalRows.Err(); err != nil {
+			slog.Error("error iterating token approvals", "error", err)
 		}
 	}
 
@@ -534,6 +547,10 @@ func (s *Server) handleAddressTxs(w http.ResponseWriter, r *http.Request) {
 		}
 		tx.Value = valueBig.String()
 		txs = append(txs, tx)
+	}
+	if err := rows.Err(); err != nil {
+		writeInternalError(w, err.Error())
+		return
 	}
 
 	txs, hasMore := trimResults(txs, limit)
@@ -696,6 +713,10 @@ func (s *Server) handleAddressInternalTxs(w http.ResponseWriter, r *http.Request
 		itx.TraceIndex = strings.Join(traceStrs, ",")
 
 		internalTxs = append(internalTxs, itx)
+	}
+	if err := rows.Err(); err != nil {
+		writeInternalError(w, err.Error())
+		return
 	}
 
 	internalTxs, hasMore := trimResults(internalTxs, limit)

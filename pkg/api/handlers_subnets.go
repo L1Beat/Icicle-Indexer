@@ -260,6 +260,10 @@ func (s *Server) handleGetSubnet(w http.ResponseWriter, r *http.Request) {
 		}
 		chains = append(chains, chain)
 	}
+	if err := rows.Err(); err != nil {
+		writeInternalError(w, err.Error())
+		return
+	}
 
 	// Get registry info if L1
 	var registry *L1Registry
@@ -499,6 +503,10 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 		}
 
 		chains = append(chains, ci)
+	}
+	if err := rows.Err(); err != nil {
+		writeInternalError(w, err.Error())
+		return
 	}
 
 	chains, hasMore := trimResults(chains, limit)

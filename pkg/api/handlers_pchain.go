@@ -258,6 +258,10 @@ func (s *Server) handlePChainTxTypes(w http.ResponseWriter, r *http.Request) {
 		}
 		types = append(types, t)
 	}
+	if err := rows.Err(); err != nil {
+		writeInternalError(w, err.Error())
+		return
+	}
 
 	writeJSON(w, http.StatusOK, Response{Data: types})
 }

@@ -123,6 +123,10 @@ func (s *Server) handleAddressBalances(w http.ResponseWriter, r *http.Request) {
 
 		balances = append(balances, tb)
 	}
+	if err := rows.Err(); err != nil {
+		writeInternalError(w, err.Error())
+		return
+	}
 
 	balances, hasMore := trimResults(balances, limit)
 

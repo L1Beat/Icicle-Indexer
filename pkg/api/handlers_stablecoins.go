@@ -78,6 +78,10 @@ func (s *Server) handleListStablecoins(w http.ResponseWriter, r *http.Request) {
 		byToken[e.Token] = &e
 		ordered = append(ordered, &e)
 	}
+	if err := rows.Err(); err != nil {
+		writeInternalError(w, err.Error())
+		return
+	}
 
 	if len(ordered) == 0 {
 		writeJSON(w, http.StatusOK, Response{Data: []Stablecoin{}})
@@ -121,6 +125,10 @@ func (s *Server) handleListStablecoins(w http.ResponseWriter, r *http.Request) {
 			e.Holders = holders
 		}
 	}
+	if err := supplyRows.Err(); err != nil {
+		writeInternalError(w, err.Error())
+		return
+	}
 
 	volumeQuery := `
 		SELECT
@@ -157,6 +165,10 @@ func (s *Server) handleListStablecoins(w http.ResponseWriter, r *http.Request) {
 			e.Volume24h = volume24h
 			e.Transfers24h = transfers24h
 		}
+	}
+	if err := volRows.Err(); err != nil {
+		writeInternalError(w, err.Error())
+		return
 	}
 
 	sort.Slice(ordered, func(i, j int) bool {
@@ -370,6 +382,10 @@ func (s *Server) handleStablecoinTimeseries(w http.ResponseWriter, r *http.Reque
 				Value:  value,
 			})
 		}
+	}
+	if err := rows.Err(); err != nil {
+		writeInternalError(w, err.Error())
+		return
 	}
 
 	for _, series := range seriesMap {
