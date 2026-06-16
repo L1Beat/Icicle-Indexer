@@ -156,11 +156,13 @@ func (s *Server) handleListPChainBlocks(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	// NB: don't alias max(block_time) as "block_time" — it collides with the
+	// real block_time column referenced in WHERE (ClickHouse error 184).
 	rows, err := s.conn.Query(ctx, `
 		SELECT
 			block_number,
 			toUInt64(count()) AS tx_count,
-			max(block_time)   AS block_time,
+			max(block_time)   AS last_block_time,
 			any(tx_id)        AS block_hash
 		FROM p_chain_txs
 		WHERE p_chain_id = 0 AND block_time >= now() - toIntervalDay(?)
