@@ -49,6 +49,10 @@ func (s *Server) handleStorageStats(w http.ResponseWriter, r *http.Request) {
 		}
 		tables = append(tables, t)
 	}
+	if err := rows.Err(); err != nil {
+		writeInternalError(w, err.Error())
+		return
+	}
 
 	writeJSON(w, http.StatusOK, Response{Data: tables})
 }

@@ -74,6 +74,11 @@ func (s *Server) handleListPChainTxs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// p_chain_txs is sorted by (p_chain_id, tx_id), so "ORDER BY block_number" is
+	// a full sort. Materializing the tx_data JSON column for all rows during that
+	// sort exceeds the query memory limit on a multi-million-row table. So first
+	// pick the page's tx_ids with a cheap sort that never reads tx_data, then
+	// fetch full rows (incl. tx_data) for just those ids.
 	var query string
 	var args []interface{}
 
@@ -81,18 +86,26 @@ func (s *Server) handleListPChainTxs(w http.ResponseWriter, r *http.Request) {
 		query = fmt.Sprintf(`
 			SELECT tx_id, tx_type, block_number, block_time, tx_data
 			FROM p_chain_txs FINAL
-			%s
+			WHERE tx_id IN (
+				SELECT tx_id FROM p_chain_txs FINAL
+				%s
+				ORDER BY block_number DESC
+				LIMIT ?
+			)
 			ORDER BY block_number DESC
-			LIMIT ?
 		`, whereClause)
 		args = append(whereArgs, fetchLimit)
 	} else {
 		query = fmt.Sprintf(`
 			SELECT tx_id, tx_type, block_number, block_time, tx_data
 			FROM p_chain_txs FINAL
-			%s
+			WHERE tx_id IN (
+				SELECT tx_id FROM p_chain_txs FINAL
+				%s
+				ORDER BY block_number DESC
+				LIMIT ? OFFSET ?
+			)
 			ORDER BY block_number DESC
-			LIMIT ? OFFSET ?
 		`, whereClause)
 		args = append(whereArgs, fetchLimit, offset)
 	}
@@ -112,6 +125,11 @@ func (s *Server) handleListPChainTxs(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		txs = append(txs, tx)
+	}
+	// Surface a mid-stream query failure instead of silently returning [].
+	if err := rows.Err(); err != nil {
+		writeInternalError(w, err.Error())
+		return
 	}
 
 	txs, hasMore := trimResults(txs, limit)

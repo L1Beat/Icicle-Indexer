@@ -106,6 +106,10 @@ func (s *Server) handleSubnetTimeline(w http.ResponseWriter, r *http.Request) {
 		}
 		points = append(points, p)
 	}
+	if err := rows.Err(); err != nil {
+		writeInternalError(w, err.Error())
+		return
+	}
 
 	writeJSON(w, http.StatusOK, Response{Data: points})
 }
@@ -127,10 +131,14 @@ type PChainBlock struct {
 }
 
 // handleListPChainBlocks returns recent P-Chain blocks (newest first).
+// Blocks are grouped from p_chain_txs. Because block_number isn't the table's
+// sort key, grouping the whole table would be prohibitively expensive, so the
+// listing is bounded to a recent window (default 7 days, ?days=N to widen).
 // @Summary List P-Chain blocks
-// @Description Recent P-Chain blocks (derived by grouping transactions on block_number), newest first.
+// @Description Recent P-Chain blocks (grouped from transactions), newest first. Bounded to the last N days (default 7).
 // @Tags Data - P-Chain
 // @Produce json
+// @Param days query int false "Look-back window in days" default(7)
 // @Param limit query int false "Number of results (max 100)" default(20)
 // @Param offset query int false "Pagination offset" default(0)
 // @Success 200 {object} Response{data=[]PChainBlock,meta=Meta}
@@ -141,18 +149,25 @@ func (s *Server) handleListPChainBlocks(w http.ResponseWriter, r *http.Request) 
 	limit, offset := getPagination(r)
 	fetchLimit := limit + 1
 
+	days := 7
+	if d := r.URL.Query().Get("days"); d != "" {
+		if parsed, err := strconv.Atoi(d); err == nil && parsed > 0 {
+			days = parsed
+		}
+	}
+
 	rows, err := s.conn.Query(ctx, `
 		SELECT
 			block_number,
 			toUInt64(count()) AS tx_count,
 			max(block_time)   AS block_time,
 			any(tx_id)        AS block_hash
-		FROM p_chain_txs FINAL
-		WHERE p_chain_id = 0
+		FROM p_chain_txs
+		WHERE p_chain_id = 0 AND block_time >= now() - toIntervalDay(?)
 		GROUP BY block_number
 		ORDER BY block_number DESC
 		LIMIT ? OFFSET ?
-	`, fetchLimit, offset)
+	`, days, fetchLimit, offset)
 	if err != nil {
 		writeInternalError(w, err.Error())
 		return
@@ -167,6 +182,10 @@ func (s *Server) handleListPChainBlocks(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		blocks = append(blocks, b)
+	}
+	if err := rows.Err(); err != nil {
+		writeInternalError(w, err.Error())
+		return
 	}
 
 	blocks, hasMore := trimResults(blocks, limit)
