@@ -247,9 +247,21 @@ CREATE TABLE IF NOT EXISTS l1_registry (
     network_token_decimals UInt8 DEFAULT 18,
     network_token_logo_uri String DEFAULT '',
 
+    -- Staking (PoS only): converts P-Chain validator weight to a whole-token
+    -- staked amount as staked = weight / staking_weight_factor. Curated in the
+    -- registry because the on-chain weightToValueFactor doesn't reconcile with
+    -- token decimals for several L1s. 0 = not staked / unset (PoA). The staked
+    -- token may differ from the gas token, so its symbol is stored explicitly.
+    staking_weight_factor UInt64 DEFAULT 0,
+    staking_token_symbol String DEFAULT '',
+
     last_updated DateTime64(3, 'UTC')
 ) ENGINE = ReplacingMergeTree(last_updated)
 PRIMARY KEY blockchain_id;
+
+-- Migrate existing l1_registry deployments to add staking fields (idempotent, no-op on fresh installs)
+ALTER TABLE l1_registry ADD COLUMN IF NOT EXISTS staking_weight_factor UInt64 DEFAULT 0;
+ALTER TABLE l1_registry ADD COLUMN IF NOT EXISTS staking_token_symbol String DEFAULT '';
 
 -- Unified Subnets table - tracks all subnets with their lifecycle status
 CREATE TABLE IF NOT EXISTS subnets (
@@ -455,11 +467,6 @@ CREATE TABLE IF NOT EXISTS chain_risk (
     churn_period_seconds Nullable(UInt64),  -- getChurnPeriodSeconds()
     max_churn_percentage Nullable(UInt8),  -- maximumChurnPercentage from getChurnTracker()
 
-    -- Stake conversion (PoS only): value_base_units = weight * weight_to_value_factor.
-    -- Read from the StakingManager's weightToValueFactor(); null for PoA / unresolved.
-    -- Stored as a decimal string since it can exceed UInt64 on some token configs.
-    weight_to_value_factor Nullable(String),
-
     -- Metadata
     last_updated DateTime64(3, 'UTC')
 ) ENGINE = ReplacingMergeTree(last_updated)
@@ -467,6 +474,3 @@ ORDER BY chain_id;
 
 -- Migrate existing chain_risk deployments to add manager_location (idempotent, no-op on fresh installs)
 ALTER TABLE chain_risk ADD COLUMN IF NOT EXISTS manager_location LowCardinality(String) DEFAULT 'unknown';
-
--- Migrate existing chain_risk deployments to add weight_to_value_factor (idempotent, no-op on fresh installs)
-ALTER TABLE chain_risk ADD COLUMN IF NOT EXISTS weight_to_value_factor Nullable(String);

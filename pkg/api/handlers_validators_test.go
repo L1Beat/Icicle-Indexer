@@ -378,44 +378,38 @@ func TestHandleGetValidator_MethodNotAllowed(t *testing.T) {
 	require.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
 
-func TestFormatBaseUnits(t *testing.T) {
+func TestFormatWeightDiv(t *testing.T) {
 	mustBig := func(s string) *big.Int {
 		n, ok := new(big.Int).SetString(s, 10)
 		require.True(t, ok)
 		return n
 	}
 	tests := []struct {
-		name     string
-		base     string
-		decimals int
-		want     string
+		name   string
+		weight string
+		factor string
+		want   string
 	}{
-		{"c-chain exact", "2999999000000000000000000", 18, "2999999"},
-		{"zero decimals", "9000000", 0, "9000000"},
-		{"trailing fraction trimmed", "2999999500000000000000000", 18, "2999999.5"},
-		{"sub-token padded", "1500000000000000", 18, "0.0015"},
-		{"exact zero", "0", 18, "0"},
+		{"c-chain exact", "2999999000000000", "1000000000", "2999999"},
+		{"c-chain fraction full precision", "2999998996260014", "1000000000", "2999998.996260014"},
+		{"beam exact", "9000000000", "1000", "9000000"},
+		{"beam fraction", "9000000500", "1000", "9000000.5"},
+		{"factor one", "9000000", "1", "9000000"},
+		{"zero weight", "0", "1000", "0"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, formatBaseUnits(mustBig(tt.base), tt.decimals))
+			assert.Equal(t, tt.want, formatWeightDiv(mustBig(tt.weight), mustBig(tt.factor)))
 		})
 	}
 }
 
 func TestWholeTokenString(t *testing.T) {
-	// C-Chain (Primary Network): weight is nAVAX, factor 1e9, AVAX 18 decimals.
-	cchain := stakeConv{factor: big.NewInt(1_000_000_000), decimals: 18, token: "AVAX"}
+	// Primary Network: weight is nAVAX, factor 1e9 -> AVAX.
+	cchain := stakeConv{factor: big.NewInt(1_000_000_000), token: "AVAX"}
 	assert.Equal(t, "2999999", wholeTokenString(2_999_999_000_000_000, cchain))
 
-	// Beam-style L1: contract factor 1e15, 18-decimal token -> 9,000,000 whole tokens.
-	beam := stakeConv{factor: mustBigInt(t, "1000000000000000"), decimals: 18, token: "BEAM"}
+	// Beam: curated registry factor 1e3 -> staked = weight / 1e3.
+	beam := stakeConv{factor: big.NewInt(1000), token: "BEAM"}
 	assert.Equal(t, "9000000", wholeTokenString(9_000_000_000, beam))
-}
-
-func mustBigInt(t *testing.T, s string) *big.Int {
-	t.Helper()
-	n, ok := new(big.Int).SetString(s, 10)
-	require.True(t, ok)
-	return n
 }

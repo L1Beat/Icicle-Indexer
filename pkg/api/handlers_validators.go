@@ -95,25 +95,27 @@ type ValidatorDeposit struct {
 const primaryNetworkSubnetID = "11111111111111111111111111111111LpoYY"
 
 // stakeConv converts a validator's raw P-Chain weight into a whole-token staked
-// amount: value_base_units = weight * factor, then whole_tokens = value / 10^decimals.
+// amount via staked = weight / factor. The factor (weight units per whole token)
+// is curated in the registry because the on-chain weightToValueFactor doesn't
+// reconcile with token decimals for several L1s.
 type stakeConv struct {
-	factor   *big.Int
-	decimals int
-	token    string
+	factor *big.Int
+	token  string
 }
 
 // stakeConverters resolves, per subnet, how to turn raw validator weight into a
 // staked token amount. Only PoS chains (and the Primary Network) get an entry —
-// PoA chains are absent, so the caller leaves staked_amount/staked_token unset.
+// PoA chains have no registry factor, so the caller leaves staked_amount/
+// staked_token unset.
 //
-// The Primary Network has no ValidatorManager, so its conversion is hardcoded:
-// weight is denominated in nAVAX (factor 1e9) and AVAX has 18 decimals.
+// The Primary Network has no registry entry, so its conversion is hardcoded:
+// weight is denominated in nAVAX (factor 1e9 -> AVAX).
 func (s *Server) stakeConverters(ctx context.Context, subnetIDs []string) map[string]stakeConv {
 	out := map[string]stakeConv{
-		primaryNetworkSubnetID: {factor: big.NewInt(1_000_000_000), decimals: 18, token: "AVAX"},
+		primaryNetworkSubnetID: {factor: big.NewInt(1_000_000_000), token: "AVAX"},
 	}
 
-	// L1 subnets only — the Primary Network is handled above and has no chain_risk row.
+	// L1 subnets only — the Primary Network is handled above and has no registry row.
 	var need []string
 	for _, id := range subnetIDs {
 		if id != "" && id != primaryNetworkSubnetID {
@@ -126,12 +128,10 @@ func (s *Server) stakeConverters(ctx context.Context, subnetIDs []string) map[st
 
 	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(need)), ",")
 	query := fmt.Sprintf(`
-		SELECT c.subnet_id, cr.manager_type, cr.weight_to_value_factor,
-			r.network_token_symbol, r.network_token_decimals
+		SELECT c.subnet_id, r.staking_weight_factor, r.staking_token_symbol, r.network_token_symbol
 		FROM (SELECT * FROM subnet_chains FINAL) c
-		INNER JOIN (SELECT * FROM chain_risk FINAL) cr ON c.chain_id = cr.chain_id
-		LEFT JOIN (SELECT * FROM l1_registry FINAL) r ON c.chain_id = r.blockchain_id
-		WHERE c.subnet_id IN (%s) AND cr.weight_to_value_factor IS NOT NULL
+		INNER JOIN (SELECT * FROM l1_registry FINAL) r ON c.chain_id = r.blockchain_id
+		WHERE c.subnet_id IN (%s) AND r.staking_weight_factor > 0
 	`, placeholders)
 	args := make([]interface{}, len(need))
 	for i, id := range need {
@@ -144,62 +144,58 @@ func (s *Server) stakeConverters(ctx context.Context, subnetIDs []string) map[st
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var subnetID, managerType string
-		var factorStr, token *string
-		var decimals *uint8
-		if err := rows.Scan(&subnetID, &managerType, &factorStr, &token, &decimals); err != nil {
+		var subnetID string
+		var factor uint64
+		var stakingToken, networkToken string
+		if err := rows.Scan(&subnetID, &factor, &stakingToken, &networkToken); err != nil {
 			continue
 		}
-		if managerType != "PoS-native" && managerType != "PoS-erc20" {
+		if factor == 0 {
 			continue
 		}
-		if factorStr == nil || *factorStr == "" {
-			continue
-		}
-		f, ok := new(big.Int).SetString(*factorStr, 10)
-		if !ok || f.Sign() <= 0 {
-			continue
-		}
-		sc := stakeConv{factor: f, decimals: 18}
-		if decimals != nil && *decimals > 0 {
-			sc.decimals = int(*decimals)
-		}
-		if token != nil {
-			sc.token = *token
+		// Staked token may differ from the gas token; fall back to it when unset.
+		token := stakingToken
+		if token == "" {
+			token = networkToken
 		}
 		// A subnet may have multiple chains; keep the first resolved factor.
 		if _, exists := out[subnetID]; !exists {
-			out[subnetID] = sc
+			out[subnetID] = stakeConv{factor: new(big.Int).SetUint64(factor), token: token}
 		}
 	}
 	_ = rows.Err()
 	return out
 }
 
-// wholeTokenString formats weight*factor (base units) as a whole-token decimal
-// string, including a trimmed fractional part only when the division isn't exact.
+// wholeTokenString renders weight / factor as a decimal string with a trimmed
+// fractional part (up to 18 digits) only when the division isn't exact.
 func wholeTokenString(weight uint64, sc stakeConv) string {
-	base := new(big.Int).Mul(new(big.Int).SetUint64(weight), sc.factor)
-	return formatBaseUnits(base, sc.decimals)
+	return formatWeightDiv(new(big.Int).SetUint64(weight), sc.factor)
 }
 
-// formatBaseUnits divides a base-unit integer by 10^decimals and renders it as a
-// decimal string, dropping trailing zeros (and the point) for whole values.
-func formatBaseUnits(base *big.Int, decimals int) string {
-	if decimals <= 0 {
-		return base.String()
+// formatWeightDiv divides weight by factor and renders the quotient as a decimal
+// string, dropping trailing zeros (and the point) for whole values.
+func formatWeightDiv(weight, factor *big.Int) string {
+	if factor == nil || factor.Sign() <= 0 {
+		return weight.String()
 	}
-	div := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)
-	q, r := new(big.Int).QuoRem(base, div, new(big.Int))
+	q, r := new(big.Int).QuoRem(weight, factor, new(big.Int))
 	if r.Sign() == 0 {
 		return q.String()
 	}
-	frac := r.String()
-	if len(frac) < decimals {
-		frac = strings.Repeat("0", decimals-len(frac)) + frac
+	var frac strings.Builder
+	ten := big.NewInt(10)
+	for i := 0; i < 18 && r.Sign() != 0; i++ {
+		r.Mul(r, ten)
+		d, rem := new(big.Int).QuoRem(r, factor, new(big.Int))
+		frac.WriteString(d.String())
+		r = rem
 	}
-	frac = strings.TrimRight(frac, "0")
-	return q.String() + "." + frac
+	s := strings.TrimRight(frac.String(), "0")
+	if s == "" {
+		return q.String()
+	}
+	return q.String() + "." + s
 }
 
 // handleListValidators returns a paginated list of validators

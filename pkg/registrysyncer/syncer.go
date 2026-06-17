@@ -148,6 +148,7 @@ func insertRegistryData(ctx context.Context, conn clickhouse.Conn, registries []
 		network, is_l1, categories, socials,
 		evm_chain_id, rpc_url, explorer_url, sybil_resistance_type,
 		network_token_name, network_token_symbol, network_token_decimals, network_token_logo_uri,
+		staking_weight_factor, staking_token_symbol,
 		last_updated
 	)`)
 	if err != nil {
@@ -193,6 +194,8 @@ func insertRegistryData(ctx context.Context, conn clickhouse.Conn, registries []
 				c.NativeToken.Symbol,
 				tokenDecimals,
 				c.NativeToken.LogoURI,
+				c.Staking.WeightFactor,
+				c.Staking.TokenSymbol,
 				now,
 			)
 			if err != nil {

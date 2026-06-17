@@ -32,6 +32,15 @@ type ChainEntry struct {
 	ExplorerURL         string      `json:"explorerUrl"`
 	SybilResistanceType string      `json:"sybilResistanceType"`
 	NativeToken         NativeToken `json:"nativeToken"`
+	Staking             Staking     `json:"staking"`
+}
+
+// Staking holds the curated weight->token conversion for PoS chains:
+// staked_whole_tokens = validator_weight / WeightFactor. Absent/zero for PoA.
+// TokenSymbol is the staked token (may differ from the gas token).
+type Staking struct {
+	WeightFactor uint64 `json:"weightFactor"`
+	TokenSymbol  string `json:"tokenSymbol"`
 }
 
 // NativeToken represents the native token of a chain

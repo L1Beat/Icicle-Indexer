@@ -65,9 +65,6 @@ type riskRow struct {
 	UpgradeDelaySeconds *uint64
 	ChurnPeriodSeconds  *uint64
 	MaxChurnPercentage  *uint8
-	// WeightToValueFactor converts P-Chain weight to token value (PoS only):
-	// value_base_units = weight * factor. Decimal string; nil for PoA/unresolved.
-	WeightToValueFactor *string
 }
 
 // SyncChainRisk reads each L1's ValidatorManager control & upgradeability state from
@@ -132,7 +129,7 @@ func SyncChainRisk(ctx context.Context, conn driver.Conn) error {
 		chain_id, validator_manager_address,
 		manager_type, manager_location, owner_address, owner_kind, multisig_threshold, multisig_owners,
 		is_proxy, proxy_implementation, proxy_admin, proxy_admin_owner, upgrade_delay_seconds,
-		churn_period_seconds, max_churn_percentage, weight_to_value_factor, last_updated
+		churn_period_seconds, max_churn_percentage, last_updated
 	)`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare chain_risk batch: %w", err)
@@ -145,7 +142,7 @@ func SyncChainRisk(ctx context.Context, conn driver.Conn) error {
 			r.ChainID, r.VMAddress,
 			r.ManagerType, r.ManagerLocation, r.OwnerAddress, r.OwnerKind, r.MultisigThreshold, r.MultisigOwners,
 			r.IsProxy, r.ProxyImplementation, r.ProxyAdmin, r.ProxyAdminOwner, r.UpgradeDelaySeconds,
-			r.ChurnPeriodSeconds, r.MaxChurnPercentage, r.WeightToValueFactor, now,
+			r.ChurnPeriodSeconds, r.MaxChurnPercentage, now,
 		); err != nil {
 			slog.Warn("Failed to append chain_risk row", "chain_id", r.ChainID, "error", err)
 			continue
@@ -250,36 +247,10 @@ func resolveChainRisk(client *http.Client, in riskInput) riskRow {
 			row.MultisigThreshold = threshold
 			row.MultisigOwners = count
 			row.ManagerType = classifyManagerType(client, rpc, owner, kind)
-
-			// For PoS managers, capture the weight->value factor from the StakingManager
-			// (the owner contract): value_base_units = weight * factor.
-			if row.ManagerType == "PoS-native" || row.ManagerType == "PoS-erc20" {
-				if f, ok := weightToValueFactor(client, rpc, owner); ok {
-					row.WeightToValueFactor = &f
-				}
-			}
 		}
 	}
 
 	return row
-}
-
-// weightToValueFactor reads weightToValueFactor() from a PoS StakingManager and
-// returns it as a decimal string. Returns false if the call reverts or yields zero.
-func weightToValueFactor(client *http.Client, rpc, addr string) (string, bool) {
-	res, err := ethCall(client, rpc, addr, weightToValueFactorSelector)
-	if err != nil || !hasResult(res) {
-		return "", false
-	}
-	w, ok := wordAt(res, 0)
-	if !ok {
-		return "", false
-	}
-	n := new(big.Int)
-	if _, ok := n.SetString(w, 16); !ok || n.Sign() <= 0 {
-		return "", false
-	}
-	return n.String(), true
 }
 
 // classifyOwner determines whether the owner is an EOA, a Gnosis Safe multisig, an
