@@ -22,6 +22,15 @@ import {
   listPChainBlocks,
   getPChainBlock,
   getStorageStats,
+  getChainStats,
+  listEvmBlocks,
+  getEvmBlock,
+  listEvmTxs,
+  getEvmTx,
+  getAddressTxs,
+  getAddressInternalTxs,
+  getAddressBalances,
+  getAddressNativeBalance,
   type AvailableMetric,
   type ChainInfo,
   type Granularity,
@@ -35,6 +44,13 @@ import {
   type StorageTable,
   type Validator,
   type ValidatorDeposit,
+  type ChainMetrics,
+  type EvmBlock,
+  type EvmTx,
+  type EvmTxDetail,
+  type EvmInternalTx,
+  type TokenBalance,
+  type NativeBalance,
 } from './api';
 
 /** Indexer health + per-chain sync status. Doubles as the chain list source. */
@@ -199,5 +215,102 @@ export function useStorageStats() {
     queryFn: ({ signal }) => getStorageStats(signal),
     staleTime: 60 * 1000,
     refetchInterval: 60 * 1000,
+  });
+}
+
+// ---- EVM explorer hooks ----
+
+/** Aggregate stats for a chain (block/tx totals, avg block time, gas). */
+export function useChainStats(chainId: number) {
+  return useQuery<ChainMetrics>({
+    queryKey: ['chain-stats', chainId],
+    queryFn: ({ signal }) => getChainStats(chainId, signal),
+    staleTime: 30 * 1000,
+    refetchInterval: 30 * 1000,
+  });
+}
+
+/** Recent EVM blocks (polls for new blocks). Kept at 15s to stay within the
+ *  API's per-IP rate limit when combined with the other dashboard polls. */
+export function useEvmBlocks(chainId: number, limit = 25) {
+  return useQuery<EvmBlock[]>({
+    queryKey: ['evm-blocks', chainId, limit],
+    queryFn: ({ signal }) => listEvmBlocks(chainId, { limit }, signal),
+    staleTime: 12 * 1000,
+    refetchInterval: 15 * 1000,
+  });
+}
+
+/** A single EVM block by number. */
+export function useEvmBlock(chainId: number, blockNumber: number | undefined, enabled = true) {
+  return useQuery<EvmBlock>({
+    queryKey: ['evm-block', chainId, blockNumber],
+    queryFn: ({ signal }) => getEvmBlock(chainId, blockNumber as number, signal),
+    enabled: enabled && blockNumber !== undefined && !Number.isNaN(blockNumber),
+    staleTime: 60 * 1000,
+  });
+}
+
+/** Recent EVM transactions, or one block's transactions when blockNumber is set. */
+export function useEvmTxs(
+  chainId: number,
+  params: { blockNumber?: number; limit?: number } = {},
+  enabled = true,
+) {
+  return useQuery<EvmTx[]>({
+    queryKey: ['evm-txs', chainId, params.blockNumber, params.limit],
+    queryFn: ({ signal }) => listEvmTxs(chainId, params, signal),
+    enabled,
+    staleTime: 5 * 1000,
+  });
+}
+
+/** A single EVM transaction with traces, token transfers, and approvals. */
+export function useEvmTx(chainId: number, hash: string | undefined, enabled = true) {
+  return useQuery<EvmTxDetail>({
+    queryKey: ['evm-tx', chainId, hash],
+    queryFn: ({ signal }) => getEvmTx(chainId, hash as string, signal),
+    enabled: enabled && !!hash,
+    staleTime: 60 * 1000,
+  });
+}
+
+/** Transactions for an address. */
+export function useAddressTxs(chainId: number, address: string | undefined, limit = 25) {
+  return useQuery<EvmTx[]>({
+    queryKey: ['address-txs', chainId, address, limit],
+    queryFn: ({ signal }) => getAddressTxs(chainId, address as string, { limit }, signal),
+    enabled: !!address,
+    staleTime: 10 * 1000,
+  });
+}
+
+/** Internal (trace) transactions for an address. */
+export function useAddressInternalTxs(chainId: number, address: string | undefined, limit = 25) {
+  return useQuery<EvmInternalTx[]>({
+    queryKey: ['address-internal-txs', chainId, address, limit],
+    queryFn: ({ signal }) => getAddressInternalTxs(chainId, address as string, { limit }, signal),
+    enabled: !!address,
+    staleTime: 10 * 1000,
+  });
+}
+
+/** ERC-20 token balances for an address. */
+export function useAddressBalances(chainId: number, address: string | undefined) {
+  return useQuery<TokenBalance[]>({
+    queryKey: ['address-balances', chainId, address],
+    queryFn: ({ signal }) => getAddressBalances(chainId, address as string, { limit: 100 }, signal),
+    enabled: !!address,
+    staleTime: 30 * 1000,
+  });
+}
+
+/** Native AVAX balance + activity summary for an address. */
+export function useAddressNativeBalance(chainId: number, address: string | undefined) {
+  return useQuery<NativeBalance>({
+    queryKey: ['address-native', chainId, address],
+    queryFn: ({ signal }) => getAddressNativeBalance(chainId, address as string, signal),
+    enabled: !!address,
+    staleTime: 30 * 1000,
   });
 }

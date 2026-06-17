@@ -200,6 +200,116 @@ export interface StorageTable {
   rows: number;
 }
 
+/** Aggregate stats for a chain (GET /metrics/evm/{id}/stats). */
+export interface ChainMetrics {
+  chain_id: number;
+  chain_name: string;
+  latest_block: number;
+  total_blocks: number;
+  total_txs: number;
+  last_block_time: string;
+  avg_block_time_seconds: number;
+  avg_gas_used: number;
+  total_gas_used: number;
+}
+
+// ---- EVM explorer types (mirror pkg/api Block / Transaction / balances) ----
+
+export interface EvmBlock {
+  chain_id: number;
+  block_number: number;
+  hash: string;
+  parent_hash: string;
+  block_time: string;
+  miner: string;
+  size: number;
+  gas_limit: number;
+  gas_used: number;
+  base_fee_per_gas: number;
+  tx_count: number;
+}
+
+export interface EvmTx {
+  chain_id: number;
+  hash: string;
+  block_number: number;
+  block_time: string;
+  transaction_index: number;
+  from: string;
+  to: string | null;
+  value: string;
+  gas_limit: number;
+  gas_price: number;
+  gas_used: number;
+  success: boolean;
+  type: number;
+}
+
+export interface EvmInternalTx {
+  tx_hash?: string;
+  block_number?: number;
+  block_time?: string;
+  trace_index: string;
+  from: string;
+  to: string | null;
+  value: string;
+  gas_used: number;
+  call_type: string;
+  success: boolean;
+}
+
+export interface EvmTokenTransfer {
+  token: string;
+  name?: string;
+  symbol?: string;
+  decimals?: number;
+  from: string;
+  to: string;
+  value: string;
+  log_index: number;
+}
+
+export interface EvmTokenApproval {
+  token: string;
+  name?: string;
+  symbol?: string;
+  decimals?: number;
+  owner: string;
+  spender: string;
+  amount: string;
+  is_unlimited: boolean;
+  log_index: number;
+}
+
+/** Full tx detail: the base tx fields plus traces / transfers / approvals. */
+export interface EvmTxDetail extends EvmTx {
+  internal_txs: EvmInternalTx[];
+  token_transfers: EvmTokenTransfer[];
+  approvals: EvmTokenApproval[];
+}
+
+export interface NativeBalance {
+  total_in: string;
+  total_out: string;
+  total_gas: string;
+  balance: string;
+  last_updated_block: number;
+  tx_count: number;
+  first_tx_time?: string;
+  last_tx_time?: string;
+}
+
+export interface TokenBalance {
+  token: string;
+  name?: string;
+  symbol?: string;
+  decimals?: number;
+  balance: string;
+  total_in: string;
+  total_out: string;
+  last_updated_block: number;
+}
+
 export interface SocialLink {
   name: string;
   url: string;
@@ -491,6 +601,109 @@ export function getPChainBlock(blockNumber: number, signal?: AbortSignal): Promi
 /** Per-table storage stats (size + row counts), largest first. */
 export function getStorageStats(signal?: AbortSignal): Promise<StorageTable[]> {
   return apiGetData<StorageTable[]>('/api/v1/metrics/storage', { signal });
+}
+
+// ---- EVM explorer endpoints ----
+
+/** Aggregate stats (block/tx totals, avg block time, gas) for a chain. */
+export function getChainStats(chainId: number, signal?: AbortSignal): Promise<ChainMetrics> {
+  return apiGetData<ChainMetrics>(`/api/v1/metrics/evm/${chainId}/stats`, { signal });
+}
+
+/** Recent EVM blocks (newest first). */
+export function listEvmBlocks(
+  chainId: number,
+  params: { limit?: number; offset?: number } = {},
+  signal?: AbortSignal,
+): Promise<EvmBlock[]> {
+  return apiGetData<EvmBlock[]>(`/api/v1/data/evm/${chainId}/blocks`, {
+    signal,
+    query: { limit: params.limit, offset: params.offset },
+  });
+}
+
+/** A single EVM block by number. */
+export function getEvmBlock(
+  chainId: number,
+  blockNumber: number,
+  signal?: AbortSignal,
+): Promise<EvmBlock> {
+  return apiGetData<EvmBlock>(`/api/v1/data/evm/${chainId}/blocks/${blockNumber}`, { signal });
+}
+
+/** List EVM transactions (newest first); pass blockNumber to list one block's txs. */
+export function listEvmTxs(
+  chainId: number,
+  params: { blockNumber?: number; limit?: number; offset?: number } = {},
+  signal?: AbortSignal,
+): Promise<EvmTx[]> {
+  return apiGetData<EvmTx[]>(`/api/v1/data/evm/${chainId}/txs`, {
+    signal,
+    query: { block_number: params.blockNumber, limit: params.limit, offset: params.offset },
+  });
+}
+
+/** A single EVM transaction with traces, token transfers, and approvals. */
+export function getEvmTx(
+  chainId: number,
+  hash: string,
+  signal?: AbortSignal,
+): Promise<EvmTxDetail> {
+  return apiGetData<EvmTxDetail>(
+    `/api/v1/data/evm/${chainId}/txs/${encodeURIComponent(hash)}`,
+    { signal },
+  );
+}
+
+/** Transactions for an address (from or to). */
+export function getAddressTxs(
+  chainId: number,
+  address: string,
+  params: { limit?: number; offset?: number } = {},
+  signal?: AbortSignal,
+): Promise<EvmTx[]> {
+  return apiGetData<EvmTx[]>(
+    `/api/v1/data/evm/${chainId}/address/${encodeURIComponent(address)}/txs`,
+    { signal, query: { limit: params.limit, offset: params.offset } },
+  );
+}
+
+/** Internal (trace) transactions touching an address. */
+export function getAddressInternalTxs(
+  chainId: number,
+  address: string,
+  params: { limit?: number; offset?: number } = {},
+  signal?: AbortSignal,
+): Promise<EvmInternalTx[]> {
+  return apiGetData<EvmInternalTx[]>(
+    `/api/v1/data/evm/${chainId}/address/${encodeURIComponent(address)}/internal-txs`,
+    { signal, query: { limit: params.limit, offset: params.offset } },
+  );
+}
+
+/** ERC-20 token balances for an address. */
+export function getAddressBalances(
+  chainId: number,
+  address: string,
+  params: { limit?: number; offset?: number } = {},
+  signal?: AbortSignal,
+): Promise<TokenBalance[]> {
+  return apiGetData<TokenBalance[]>(
+    `/api/v1/data/evm/${chainId}/address/${encodeURIComponent(address)}/balances`,
+    { signal, query: { limit: params.limit, offset: params.offset } },
+  );
+}
+
+/** Native (AVAX) balance + activity summary for an address. */
+export function getAddressNativeBalance(
+  chainId: number,
+  address: string,
+  signal?: AbortSignal,
+): Promise<NativeBalance> {
+  return apiGetData<NativeBalance>(
+    `/api/v1/data/evm/${chainId}/address/${encodeURIComponent(address)}/native`,
+    { signal },
+  );
 }
 
 /** List chains / subnets (unified registry + validator stats). */

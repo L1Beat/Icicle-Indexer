@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Play, Copy, Check } from 'lucide-react';
+import { API_BASE_URL } from '../lib/api';
 
 interface Endpoint {
   name: string;
@@ -168,7 +169,7 @@ const endpoints: Endpoint[] = [
 ];
 
 function ApiPlayground() {
-  const [baseUrl, setBaseUrl] = useState('http://localhost:8080');
+  const [baseUrl, setBaseUrl] = useState(API_BASE_URL);
   const [selectedEndpoint, setSelectedEndpoint] = useState<Endpoint>(endpoints[0]);
   const [paramValues, setParamValues] = useState<Record<string, string>>({});
   const [response, setResponse] = useState<string>('');
@@ -242,8 +243,8 @@ function ApiPlayground() {
             onChange={(e) => setBaseUrl(e.target.value)}
             className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
           >
+            <option value="https://api.l1beat.io">Production (api.l1beat.io)</option>
             <option value="http://localhost:8080">localhost:8080</option>
-            <option value="http://135.181.116.124:8080">Production (135.181.116.124)</option>
           </select>
           <input
             type="text"
