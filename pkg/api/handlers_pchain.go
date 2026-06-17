@@ -10,7 +10,7 @@ import (
 // PChainTx represents a P-Chain transaction
 type PChainTx struct {
 	TxID        string                 `json:"tx_id" example:"2ZW6HUePB..."`
-	TxType      string                 `json:"tx_type" example:"ConvertSubnetToL1Tx"`
+	TxType      string                 `json:"tx_type" example:"ConvertSubnetToL1"`
 	BlockNumber uint64                 `json:"block_number" example:"12345678"`
 	BlockTime   time.Time              `json:"block_time"`
 	TxData      map[string]interface{} `json:"tx_data"`
@@ -62,8 +62,12 @@ func (s *Server) handleListPChainTxs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if subnetID != "" {
-		whereParts = append(whereParts, "(tx_data.Subnet = ? OR tx_data.SubnetID = ? OR tx_data.SubnetValidator.Subnet = ?)")
-		whereArgs = append(whereArgs, subnetID, subnetID, subnetID)
+		// tx_data is a ClickHouse JSON column; its sub-fields are Dynamic and must be
+		// CAST to String to compare against a parameter (a bare `tx_data.subnetID = ?`
+		// silently matches nothing). The field is camelCase `subnetID` — the same path
+		// the P-Chain syncer uses to discover subnets (see pchainsyncer/ingest.go).
+		whereParts = append(whereParts, "CAST(tx_data.subnetID AS String) = ?")
+		whereArgs = append(whereArgs, subnetID)
 	}
 
 	whereClause := ""
@@ -149,7 +153,7 @@ func (s *Server) handleListPChainTxs(w http.ResponseWriter, r *http.Request) {
 				countParts = append(countParts, "tx_type = ?")
 			}
 			if subnetID != "" {
-				countParts = append(countParts, "(tx_data.Subnet = ? OR tx_data.SubnetID = ? OR tx_data.SubnetValidator.Subnet = ?)")
+				countParts = append(countParts, "CAST(tx_data.subnetID AS String) = ?")
 			}
 			countWhere := ""
 			if len(countParts) > 0 {

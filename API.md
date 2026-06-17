@@ -617,7 +617,7 @@ List P-Chain transactions.
   "data": [
     {
       "tx_id": "22FdhKfCTTW...xxNeV",
-      "tx_type": "RegisterL1ValidatorTx",
+      "tx_type": "RegisterL1Validator",
       "block_number": 12345678,
       "block_time": "2024-12-01T00:00:00Z",
       "tx_data": {
@@ -636,16 +636,18 @@ List P-Chain transactions.
 }
 ```
 
-**Common Transaction Types:**
-- `CreateSubnetTx` — Create a new subnet
-- `CreateChainTx` — Create a blockchain in a subnet
-- `AddValidatorTx` — Add validator to primary network
-- `AddDelegatorTx` — Add delegator to primary network
-- `ConvertSubnetToL1Tx` — Convert subnet to L1
-- `RegisterL1ValidatorTx` — Register L1 validator
-- `IncreaseL1ValidatorBalanceTx` — Top up validator balance
-- `DisableL1ValidatorTx` — Disable L1 validator
-- `SetL1ValidatorWeightTx` — Change validator weight
+**Common Transaction Types** (filter values for `?tx_type=`):
+- `CreateSubnet` — Create a new subnet
+- `CreateChain` — Create a blockchain in a subnet
+- `AddValidator` — Add validator to primary network
+- `AddDelegator` — Add delegator to primary network
+- `ConvertSubnetToL1` — Convert subnet to L1
+- `RegisterL1Validator` — Register L1 validator
+- `IncreaseL1ValidatorBalance` — Top up validator balance
+- `DisableL1Validator` — Disable L1 validator
+- `SetL1ValidatorWeight` — Change validator weight
+
+> **Note:** `tx_type` values have **no `Tx` suffix** (use `CreateSubnet`, not `CreateSubnetTx`). Filtering with a `…Tx` value returns `200` with `0` results. The authoritative, always-current list of types is `GET /api/v1/data/pchain/tx-types`.
 
 ---
 
@@ -675,9 +677,9 @@ Get P-Chain transaction types with counts.
 ```json
 {
   "data": [
-    { "tx_type": "AddDelegatorTx", "count": 150000 },
-    { "tx_type": "AddValidatorTx", "count": 50000 },
-    { "tx_type": "RegisterL1ValidatorTx", "count": 1200 }
+    { "tx_type": "AddDelegator", "count": 150000 },
+    { "tx_type": "AddValidator", "count": 50000 },
+    { "tx_type": "RegisterL1Validator", "count": 1200 }
   ]
 }
 ```
@@ -766,7 +768,7 @@ A single P-Chain block by number, including proposer/parent metadata.
     "parent_id": "2ABC...",
     "proposer_id": "...",
     "proposer_node_id": "NodeID-...",
-    "block_type": "AdvanceTimeTx"
+    "block_type": "AdvanceTime"
   }
 }
 ```
@@ -1047,7 +1049,7 @@ Get detailed validator info by validation ID or node ID.
     "refund_amount": 0,
     "fees_paid": 1500000000000,
     "tx_hash": "22FdhK...xxNeV",
-    "tx_type": "RegisterL1ValidatorTx",
+    "tx_type": "RegisterL1Validator",
     "created_block": 12345678,
     "created_time": "2024-12-01T00:00:00Z",
     "bls_public_key": "0x85abcd...",
@@ -1596,7 +1598,7 @@ curl "https://api.l1beat.io/api/v1/metrics/evm/43114/timeseries/active_addresses
 curl "https://api.l1beat.io/api/v1/data/pchain/txs?limit=20"
 
 # Filter by type
-curl "https://api.l1beat.io/api/v1/data/pchain/txs?tx_type=RegisterL1ValidatorTx"
+curl "https://api.l1beat.io/api/v1/data/pchain/txs?tx_type=RegisterL1Validator"
 
 # Get transaction by ID
 curl "https://api.l1beat.io/api/v1/data/pchain/txs/22FdhKfCTTW...xxNeV"

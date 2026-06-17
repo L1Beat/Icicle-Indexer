@@ -52,7 +52,10 @@ func TestHandleListPChainTxs_FilterByTxType(t *testing.T) {
 func TestHandleListPChainTxs_FilterBySubnetID(t *testing.T) {
 	mock := &MockConn{
 		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
-			require.Contains(t, query, "tx_data.Subnet = ?")
+			// Must CAST the JSON sub-field to String and use the camelCase `subnetID`
+			// path, else the filter silently matches nothing (see ingest.go).
+			require.Contains(t, query, "CAST(tx_data.subnetID AS String) = ?")
+			assert.Equal(t, "subnet123", args[0])
 			return NewMockRows([]string{"tx_id", "tx_type", "block_number", "block_time", "tx_data"}, [][]interface{}{}), nil
 		},
 	}
@@ -67,7 +70,7 @@ func TestHandleListPChainTxs_FilterBoth(t *testing.T) {
 	mock := &MockConn{
 		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
 			require.Contains(t, query, "tx_type = ?")
-			require.Contains(t, query, "tx_data.Subnet = ?")
+			require.Contains(t, query, "CAST(tx_data.subnetID AS String) = ?")
 			return NewMockRows([]string{"tx_id", "tx_type", "block_number", "block_time", "tx_data"}, [][]interface{}{}), nil
 		},
 	}

@@ -86,7 +86,7 @@ func formatBalanceOwner(addr string) string {
 // ValidatorDeposit represents a balance transaction for a validator
 type ValidatorDeposit struct {
 	TxID        string    `json:"tx_id" example:"2ZW6HUePB..."`
-	TxType      string    `json:"tx_type" example:"IncreaseL1ValidatorBalanceTx"`
+	TxType      string    `json:"tx_type" example:"IncreaseL1ValidatorBalance"`
 	BlockNumber uint64    `json:"block_number" example:"12345678"`
 	BlockTime   time.Time `json:"block_time"`
 	Amount      uint64    `json:"amount" example:"10000000000"`
