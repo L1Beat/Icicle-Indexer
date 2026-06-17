@@ -217,6 +217,12 @@ func (vs *ValidatorSyncer) syncOnce(ctx context.Context) error {
 		slog.Warn("Failed to sync L1 validator refunds", "error", err)
 	}
 
+	// Step 9b: Map SetL1ValidatorWeight txs to their validationID (decoded from the
+	// Warp message) so they resolve to a validator/subnet.
+	if err := SyncL1ValidatorWeightTxs(ctx, vs.conn, vs.config.PChainID); err != nil {
+		slog.Warn("Failed to sync L1 validator weight transactions", "error", err)
+	}
+
 	// Step 10: Calculate and update L1 fee statistics
 	feeStats, err := CalculateL1FeeStats(ctx, vs.conn, vs.config.PChainID)
 	if err != nil {

@@ -69,8 +69,8 @@ func (s *Server) handleListPChainTxs(w http.ResponseWriter, r *http.Request) {
 		// tx_data is a ClickHouse JSON column; sub-fields are Dynamic and must be CAST to
 		// String to compare (a bare `tx_data.subnetID = ?` silently matches nothing). The
 		// camelCase paths mirror what the P-Chain syncer uses (pchainsyncer/ingest.go).
-		// NOTE: SetL1ValidatorWeight carries its validationID only inside a warp message
-		// (tx_data.message), so it cannot be resolved to a subnet here.
+		// SetL1ValidatorWeight carries its validationID only inside a Warp message, so the
+		// indexer decodes it into l1_validator_weight_txs; we join through that here.
 		whereParts = append(whereParts, `(
 			CAST(tx_data.subnetID AS String) = ?
 			OR CAST(tx_data.validationID AS String) IN (
@@ -79,8 +79,12 @@ func (s *Server) handleListPChainTxs(w http.ResponseWriter, r *http.Request) {
 			OR tx_id IN (
 				SELECT created_tx_id FROM l1_validator_history FINAL WHERE subnet_id = ? AND created_tx_id != ''
 			)
+			OR tx_id IN (
+				SELECT tx_id FROM l1_validator_weight_txs FINAL
+				WHERE validation_id IN (SELECT validation_id FROM l1_validator_history FINAL WHERE subnet_id = ?)
+			)
 		)`)
-		whereArgs = append(whereArgs, subnetID, subnetID, subnetID)
+		whereArgs = append(whereArgs, subnetID, subnetID, subnetID, subnetID)
 	}
 
 	whereClause := ""
@@ -170,6 +174,7 @@ func (s *Server) handleListPChainTxs(w http.ResponseWriter, r *http.Request) {
 						CAST(tx_data.subnetID AS String) = ?
 						OR CAST(tx_data.validationID AS String) IN (SELECT validation_id FROM l1_validator_history FINAL WHERE subnet_id = ?)
 						OR tx_id IN (SELECT created_tx_id FROM l1_validator_history FINAL WHERE subnet_id = ? AND created_tx_id != '')
+						OR tx_id IN (SELECT tx_id FROM l1_validator_weight_txs FINAL WHERE validation_id IN (SELECT validation_id FROM l1_validator_history FINAL WHERE subnet_id = ?))
 					)`)
 			}
 			countWhere := ""

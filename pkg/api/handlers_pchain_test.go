@@ -58,6 +58,7 @@ func TestHandleListPChainTxs_FilterBySubnetID(t *testing.T) {
 			// Also resolves validationID-keyed and registration txs to the subnet.
 			require.Contains(t, query, "CAST(tx_data.validationID AS String) IN")
 			require.Contains(t, query, "created_tx_id FROM l1_validator_history")
+			require.Contains(t, query, "FROM l1_validator_weight_txs FINAL")
 			assert.Equal(t, "subnet123", args[0])
 			return NewMockRows([]string{"tx_id", "tx_type", "block_number", "block_time", "tx_data"}, [][]interface{}{}), nil
 		},

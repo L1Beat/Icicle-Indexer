@@ -2043,6 +2043,89 @@ func SyncL1ValidatorRefunds(ctx context.Context, conn clickhouse.Conn, fetcher *
 	return nil
 }
 
+// SyncL1ValidatorWeightTxs decodes every SetL1ValidatorWeight transaction's signed
+// Warp message (an L1ValidatorWeightMessage carried in tx_data.message) and persists
+// the extracted validationID, nonce, and new weight into l1_validator_weight_txs.
+// The validationID isn't a top-level JSON field, so this decode is the only way to
+// resolve these txs to a validator (and thus a subnet). Incremental: txs already
+// mapped are skipped, so the first run backfills all history.
+func SyncL1ValidatorWeightTxs(ctx context.Context, conn clickhouse.Conn, pchainID uint32) error {
+	rows, err := conn.Query(ctx, `
+		SELECT tx_id, toString(tx_data.message) AS message, block_number, block_time
+		FROM p_chain_txs
+		WHERE p_chain_id = ?
+		  AND tx_type = 'SetL1ValidatorWeight'
+		  AND tx_id NOT IN (SELECT tx_id FROM l1_validator_weight_txs WHERE p_chain_id = ?)
+		ORDER BY block_number ASC
+	`, pchainID, pchainID)
+	if err != nil {
+		return fmt.Errorf("failed to query SetL1ValidatorWeight txs: %w", err)
+	}
+	defer rows.Close()
+
+	type weightTx struct {
+		txID         string
+		validationID string
+		nonce        uint64
+		weight       uint64
+		blockNumber  uint64
+		blockTime    time.Time
+	}
+
+	var wtxs []weightTx
+	for rows.Next() {
+		var txID, messageHex string
+		var blockNumber uint64
+		var blockTime time.Time
+		if err := rows.Scan(&txID, &messageHex, &blockNumber, &blockTime); err != nil {
+			slog.Warn("Failed to scan SetL1ValidatorWeight row", "error", err)
+			continue
+		}
+		innerPayload, err := parseWarpPayload(messageHex)
+		if err != nil {
+			slog.Warn("Failed to parse Warp message for SetL1ValidatorWeight", "tx_id", txID, "error", err)
+			continue
+		}
+		weightMsg, err := message.ParseL1ValidatorWeight(innerPayload)
+		if err != nil {
+			slog.Warn("Failed to parse L1ValidatorWeight payload", "tx_id", txID, "error", err)
+			continue
+		}
+		wtxs = append(wtxs, weightTx{
+			txID:         txID,
+			validationID: weightMsg.ValidationID.String(),
+			nonce:        weightMsg.Nonce,
+			weight:       weightMsg.Weight,
+			blockNumber:  blockNumber,
+			blockTime:    blockTime,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("SetL1ValidatorWeight rows error: %w", err)
+	}
+
+	if len(wtxs) == 0 {
+		return nil
+	}
+
+	batch, err := conn.PrepareBatch(ctx, `INSERT INTO l1_validator_weight_txs (
+		tx_id, validation_id, nonce, weight, block_number, block_time, p_chain_id
+	)`)
+	if err != nil {
+		return fmt.Errorf("failed to prepare weight-txs batch: %w", err)
+	}
+	for _, w := range wtxs {
+		if err := batch.Append(w.txID, w.validationID, w.nonce, w.weight, w.blockNumber, w.blockTime, pchainID); err != nil {
+			return fmt.Errorf("failed to append weight tx %s: %w", w.txID, err)
+		}
+	}
+	if err := chwrapper.RetryableBatchSend(batch); err != nil {
+		return fmt.Errorf("failed to send weight-txs batch: %w", err)
+	}
+	slog.Info("Synced SetL1ValidatorWeight validations", "count", len(wtxs))
+	return nil
+}
+
 // calculateRefundFromDeposits calculates refund when UTXO has been spent
 // Uses: refund = total_deposits - fees_paid (based on time active and min fee rate)
 // disableTime is the block_time from the DisableL1Validator transaction

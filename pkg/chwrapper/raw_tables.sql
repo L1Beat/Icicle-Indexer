@@ -440,6 +440,24 @@ CREATE TABLE IF NOT EXISTS l1_validator_refunds (
 ) ENGINE = ReplacingMergeTree(block_time)
 ORDER BY (p_chain_id, validation_id, tx_id);
 
+-- L1 Validator Weight-change txs - maps each SetL1ValidatorWeight tx to the validationID
+-- decoded from its signed Warp message (tx_data.message, an L1ValidatorWeightMessage),
+-- which isn't a top-level JSON field. Lets these txs be resolved to a subnet (via
+-- l1_validator_history) and gives a weight-change timeline per validator.
+CREATE TABLE IF NOT EXISTS l1_validator_weight_txs (
+    tx_id String,  -- SetL1ValidatorWeight transaction ID
+    validation_id String,  -- validationID from the decoded Warp message (CB58)
+    nonce UInt64,  -- message nonce (monotonic per validator)
+    weight UInt64,  -- new weight (0 = removal)
+
+    block_number UInt64,
+    block_time DateTime64(3, 'UTC'),
+
+    p_chain_id UInt32,
+    inserted_at DateTime64(3, 'UTC') DEFAULT now64(3)
+) ENGINE = ReplacingMergeTree(inserted_at)
+ORDER BY (p_chain_id, validation_id, tx_id);
+
 -- Chain Risk table - ValidatorManager control & upgradeability, read from on-chain
 -- contract state (eth_call / eth_getCode / eth_getStorageAt) by the risk syncer.
 -- Keyed by chain_id (the blockchain ID used everywhere in the API). Nullable columns
