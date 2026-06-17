@@ -55,6 +55,9 @@ func TestHandleListPChainTxs_FilterBySubnetID(t *testing.T) {
 			// Must CAST the JSON sub-field to String and use the camelCase `subnetID`
 			// path, else the filter silently matches nothing (see ingest.go).
 			require.Contains(t, query, "CAST(tx_data.subnetID AS String) = ?")
+			// Also resolves validationID-keyed and registration txs to the subnet.
+			require.Contains(t, query, "CAST(tx_data.validationID AS String) IN")
+			require.Contains(t, query, "created_tx_id FROM l1_validator_history")
 			assert.Equal(t, "subnet123", args[0])
 			return NewMockRows([]string{"tx_id", "tx_type", "block_number", "block_time", "tx_data"}, [][]interface{}{}), nil
 		},

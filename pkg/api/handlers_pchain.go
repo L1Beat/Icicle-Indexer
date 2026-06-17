@@ -62,12 +62,25 @@ func (s *Server) handleListPChainTxs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if subnetID != "" {
-		// tx_data is a ClickHouse JSON column; its sub-fields are Dynamic and must be
-		// CAST to String to compare against a parameter (a bare `tx_data.subnetID = ?`
-		// silently matches nothing). The field is camelCase `subnetID` — the same path
-		// the P-Chain syncer uses to discover subnets (see pchainsyncer/ingest.go).
-		whereParts = append(whereParts, "CAST(tx_data.subnetID AS String) = ?")
-		whereArgs = append(whereArgs, subnetID)
+		// Match txs that belong to the subnet through any of:
+		//  - a direct subnetID in the tx body (Convert/CreateChain/AddSubnetValidator/…)
+		//  - a validationID that resolves to the subnet (IncreaseL1ValidatorBalance, DisableL1Validator)
+		//  - the validator's registration tx (RegisterL1Validator == l1_validator_history.created_tx_id)
+		// tx_data is a ClickHouse JSON column; sub-fields are Dynamic and must be CAST to
+		// String to compare (a bare `tx_data.subnetID = ?` silently matches nothing). The
+		// camelCase paths mirror what the P-Chain syncer uses (pchainsyncer/ingest.go).
+		// NOTE: SetL1ValidatorWeight carries its validationID only inside a warp message
+		// (tx_data.message), so it cannot be resolved to a subnet here.
+		whereParts = append(whereParts, `(
+			CAST(tx_data.subnetID AS String) = ?
+			OR CAST(tx_data.validationID AS String) IN (
+				SELECT validation_id FROM l1_validator_history FINAL WHERE subnet_id = ?
+			)
+			OR tx_id IN (
+				SELECT created_tx_id FROM l1_validator_history FINAL WHERE subnet_id = ? AND created_tx_id != ''
+			)
+		)`)
+		whereArgs = append(whereArgs, subnetID, subnetID, subnetID)
 	}
 
 	whereClause := ""
@@ -153,7 +166,11 @@ func (s *Server) handleListPChainTxs(w http.ResponseWriter, r *http.Request) {
 				countParts = append(countParts, "tx_type = ?")
 			}
 			if subnetID != "" {
-				countParts = append(countParts, "CAST(tx_data.subnetID AS String) = ?")
+				countParts = append(countParts, `(
+						CAST(tx_data.subnetID AS String) = ?
+						OR CAST(tx_data.validationID AS String) IN (SELECT validation_id FROM l1_validator_history FINAL WHERE subnet_id = ?)
+						OR tx_id IN (SELECT created_tx_id FROM l1_validator_history FINAL WHERE subnet_id = ? AND created_tx_id != '')
+					)`)
 			}
 			countWhere := ""
 			if len(countParts) > 0 {
