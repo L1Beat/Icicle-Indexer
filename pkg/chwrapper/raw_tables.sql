@@ -455,6 +455,11 @@ CREATE TABLE IF NOT EXISTS chain_risk (
     churn_period_seconds Nullable(UInt64),  -- getChurnPeriodSeconds()
     max_churn_percentage Nullable(UInt8),  -- maximumChurnPercentage from getChurnTracker()
 
+    -- Stake conversion (PoS only): value_base_units = weight * weight_to_value_factor.
+    -- Read from the StakingManager's weightToValueFactor(); null for PoA / unresolved.
+    -- Stored as a decimal string since it can exceed UInt64 on some token configs.
+    weight_to_value_factor Nullable(String),
+
     -- Metadata
     last_updated DateTime64(3, 'UTC')
 ) ENGINE = ReplacingMergeTree(last_updated)
@@ -462,3 +467,6 @@ ORDER BY chain_id;
 
 -- Migrate existing chain_risk deployments to add manager_location (idempotent, no-op on fresh installs)
 ALTER TABLE chain_risk ADD COLUMN IF NOT EXISTS manager_location LowCardinality(String) DEFAULT 'unknown';
+
+-- Migrate existing chain_risk deployments to add weight_to_value_factor (idempotent, no-op on fresh installs)
+ALTER TABLE chain_risk ADD COLUMN IF NOT EXISTS weight_to_value_factor Nullable(String);

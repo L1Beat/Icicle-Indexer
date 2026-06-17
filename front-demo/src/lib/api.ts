@@ -108,6 +108,11 @@ export interface Validator {
   end_time?: string;
   uptime_percentage?: number;
 
+  // Staked amount in WHOLE tokens (PoS chains only; absent for PoA). Decimal
+  // string with full precision — group + append staked_token for display.
+  staked_amount?: string;
+  staked_token?: string;
+
   // L1 validator fields (absent for Primary Network / legacy)
   balance?: number;
   initial_deposit?: number;
@@ -351,6 +356,9 @@ export interface ChainInfo {
   validator_count?: number;
   active_validators?: number;
   total_staked?: number;
+  // Total staked in WHOLE tokens (PoS chains only). Decimal string; pair with
+  // network_token.symbol for display.
+  total_staked_tokens?: string;
   total_fees_paid?: number;
 }
 

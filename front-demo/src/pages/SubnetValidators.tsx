@@ -35,6 +35,19 @@ function amountForValidator(v: Validator, subnetType: string | undefined): numbe
   return v.balance ?? 0;
 }
 
+/**
+ * Group a whole-token decimal string (e.g. "2999999.5") with thousands
+ * separators, keeping at most two fractional digits. Done via string ops so
+ * very large integer parts don't lose precision through Number().
+ */
+function formatTokenAmount(s: string | undefined): string {
+  if (!s) return '0';
+  const [intPart, fracPart = ''] = s.split('.');
+  const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const frac = fracPart.slice(0, 2).replace(/0+$/, '');
+  return frac ? `${grouped}.${frac}` : grouped;
+}
+
 function SubnetValidators() {
   const { subnetId } = useParams<{ subnetId: string }>();
   const navigate = useNavigate();
@@ -91,10 +104,17 @@ function SubnetValidators() {
     v.validation_id.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
+  // PoS chains return a real per-validator staked_amount (whole tokens). When
+  // present we show "Staked" + token symbol; otherwise we fall back to the raw
+  // weight / balance view used for PoA and legacy subnets.
+  const isPoS = validators?.some((v) => v.staked_amount != null) ?? false;
+  const stakeKey = (v: Validator) =>
+    isPoS ? parseFloat(v.staked_amount ?? '0') : amountForValidator(v, subnetType);
+
   const sortedValidators = allFilteredValidators?.slice().sort((a, b) => {
     if (!sortOrder) return 0;
-    const aBalance = amountForValidator(a, subnetType);
-    const bBalance = amountForValidator(b, subnetType);
+    const aBalance = stakeKey(a);
+    const bBalance = stakeKey(b);
     return sortOrder === 'desc' ? bBalance - aBalance : aBalance - bBalance;
   });
 
@@ -197,8 +217,14 @@ function SubnetValidators() {
                   <p className="text-2xl font-bold text-gray-900">{subnetDetails.validator_count ?? 0}</p>
                 </div>
                 <div>
-                  <p className="text-sm text-gray-500 uppercase tracking-wide font-semibold">Total Weight</p>
-                  <p className="text-2xl font-bold text-gray-900">{formatWeight(subnetDetails.total_staked ?? 0)}</p>
+                  <p className="text-sm text-gray-500 uppercase tracking-wide font-semibold">
+                    {subnetDetails.total_staked_tokens ? 'Total Staked' : 'Total Weight'}
+                  </p>
+                  <p className="text-2xl font-bold text-gray-900">
+                    {subnetDetails.total_staked_tokens
+                      ? `${formatTokenAmount(subnetDetails.total_staked_tokens)} ${subnetDetails.network_token?.symbol ?? ''}`.trim()
+                      : formatWeight(subnetDetails.total_staked ?? 0)}
+                  </p>
                 </div>
               </div>
             </div>
@@ -264,7 +290,7 @@ function SubnetValidators() {
                       onClick={handleSortToggle}
                     >
                       <div className="flex items-center justify-end gap-1">
-                        {subnetType === 'primary' || subnetType === 'legacy' ? 'Stake' : 'Balance'}
+                        {isPoS ? 'Staked' : subnetType === 'primary' || subnetType === 'legacy' ? 'Stake' : 'Balance'}
                         {sortOrder === 'desc' && <ArrowDown size={14} />}
                         {sortOrder === 'asc' && <ArrowUp size={14} />}
                         {!sortOrder && <ArrowUpDown size={14} className="text-gray-400" />}
@@ -335,7 +361,11 @@ function SubnetValidators() {
                       <td className="px-6 py-4 whitespace-nowrap text-right">
                         <div className="flex items-center justify-end gap-2">
                           <Wallet size={16} className="text-gray-400" />
-                          <span className={`text-sm ${validator.active ? 'text-gray-900' : 'text-gray-500'}`}>{formatBalance(amountForValidator(validator, subnetType))}</span>
+                          <span className={`text-sm ${validator.active ? 'text-gray-900' : 'text-gray-500'}`}>
+                            {validator.staked_amount != null
+                              ? `${formatTokenAmount(validator.staked_amount)} ${validator.staked_token ?? ''}`.trim()
+                              : formatBalance(amountForValidator(validator, subnetType))}
+                          </span>
                         </div>
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">

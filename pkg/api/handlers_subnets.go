@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"net/http"
 	"strconv"
 	"strings"
@@ -102,7 +103,10 @@ type ChainInfo struct {
 	ValidatorCount   *uint32 `json:"validator_count,omitempty"`
 	ActiveValidators *uint32 `json:"active_validators,omitempty"`
 	TotalStaked      *uint64 `json:"total_staked,omitempty"`
-	TotalFeesPaid    *uint64 `json:"total_fees_paid,omitempty"`
+	// TotalStakedTokens is total_staked converted to WHOLE tokens (PoS only;
+	// omitted for PoA / unresolved chains). Decimal string, full precision.
+	TotalStakedTokens *string `json:"total_staked_tokens,omitempty"`
+	TotalFeesPaid     *uint64 `json:"total_fees_paid,omitempty"`
 
 	// Decentralization summary (compact; only for chains with active L1 validators)
 	Decentralization *Decentralization `json:"decentralization,omitempty"`
@@ -356,12 +360,14 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 			r.network_token_name, r.network_token_symbol, r.network_token_decimals, r.network_token_logo_uri,
 			r.network,
 			f.validator_count, f.total_fees_paid,
-			v.active_validators, v.total_staked, v.active_weight, v.nakamoto_33, v.nakamoto_50
+			v.active_validators, v.total_staked, v.active_weight, v.nakamoto_33, v.nakamoto_50,
+			cr.manager_type, cr.weight_to_value_factor
 		FROM (SELECT * FROM subnet_chains FINAL) c
 		INNER JOIN (SELECT * FROM subnets FINAL) s ON c.subnet_id = s.subnet_id
 		LEFT JOIN (SELECT * FROM l1_registry FINAL) r ON c.chain_id = r.blockchain_id
 		LEFT JOIN (SELECT * FROM l1_fee_stats FINAL) f ON c.subnet_id = f.subnet_id
 		LEFT JOIN %s v ON c.subnet_id = v.subnet_id
+		LEFT JOIN (SELECT * FROM chain_risk FINAL) cr ON c.chain_id = cr.chain_id
 		%s
 		ORDER BY c.created_block DESC, c.chain_id ASC
 		LIMIT ?
@@ -397,6 +403,7 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 		var network *string
 		var validatorCount, activeValidators, nakamoto33, nakamoto50 *uint32
 		var totalFeesPaid, totalStaked, activeWeight *uint64
+		var crManagerType, crFactor *string
 
 		if err := rows.Scan(
 			&ci.ChainID, &ci.ChainName, &ci.VMID, &ci.CreatedBlock, &ci.CreatedTime,
@@ -408,6 +415,7 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 			&network,
 			&validatorCount, &totalFeesPaid,
 			&activeValidators, &totalStaked, &activeWeight, &nakamoto33, &nakamoto50,
+			&crManagerType, &crFactor,
 		); err != nil {
 			writeInternalError(w, err.Error())
 			return
@@ -482,6 +490,20 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 		}
 		if totalStaked != nil && *totalStaked > 0 {
 			ci.TotalStaked = totalStaked
+			// Convert the raw weight sum to whole tokens when this is a PoS chain
+			// with a resolved weight->value factor (PoA chains stay raw-only).
+			isPoS := crManagerType != nil && (*crManagerType == "PoS-native" || *crManagerType == "PoS-erc20")
+			if isPoS && crFactor != nil && *crFactor != "" {
+				if f, ok := new(big.Int).SetString(*crFactor, 10); ok && f.Sign() > 0 {
+					dec := 18
+					if tokenDecimals != nil && *tokenDecimals > 0 {
+						dec = int(*tokenDecimals)
+					}
+					base := new(big.Int).Mul(new(big.Int).SetUint64(*totalStaked), f)
+					ts := formatBaseUnits(base, dec)
+					ci.TotalStakedTokens = &ts
+				}
+			}
 		}
 		if totalFeesPaid != nil && *totalFeesPaid > 0 {
 			ci.TotalFeesPaid = totalFeesPaid

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"math/big"
 	"net/http"
 	"strings"
 	"testing"
@@ -375,4 +376,46 @@ func TestHandleGetValidator_MethodNotAllowed(t *testing.T) {
 
 	w := MakeRequest(t, server, "DELETE", "/api/v1/data/validators/123")
 	require.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+func TestFormatBaseUnits(t *testing.T) {
+	mustBig := func(s string) *big.Int {
+		n, ok := new(big.Int).SetString(s, 10)
+		require.True(t, ok)
+		return n
+	}
+	tests := []struct {
+		name     string
+		base     string
+		decimals int
+		want     string
+	}{
+		{"c-chain exact", "2999999000000000000000000", 18, "2999999"},
+		{"zero decimals", "9000000", 0, "9000000"},
+		{"trailing fraction trimmed", "2999999500000000000000000", 18, "2999999.5"},
+		{"sub-token padded", "1500000000000000", 18, "0.0015"},
+		{"exact zero", "0", 18, "0"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, formatBaseUnits(mustBig(tt.base), tt.decimals))
+		})
+	}
+}
+
+func TestWholeTokenString(t *testing.T) {
+	// C-Chain (Primary Network): weight is nAVAX, factor 1e9, AVAX 18 decimals.
+	cchain := stakeConv{factor: big.NewInt(1_000_000_000), decimals: 18, token: "AVAX"}
+	assert.Equal(t, "2999999", wholeTokenString(2_999_999_000_000_000, cchain))
+
+	// Beam-style L1: contract factor 1e15, 18-decimal token -> 9,000,000 whole tokens.
+	beam := stakeConv{factor: mustBigInt(t, "1000000000000000"), decimals: 18, token: "BEAM"}
+	assert.Equal(t, "9000000", wholeTokenString(9_000_000_000, beam))
+}
+
+func mustBigInt(t *testing.T, s string) *big.Int {
+	t.Helper()
+	n, ok := new(big.Int).SetString(s, 10)
+	require.True(t, ok)
+	return n
 }

@@ -1,8 +1,10 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"icicle/pkg/pchainrpc"
+	"math/big"
 	"net/http"
 	"strings"
 	"time"
@@ -17,6 +19,12 @@ type Validator struct {
 	Weight           uint64    `json:"weight"`
 	StartTime        time.Time `json:"start_time"`
 	Active           bool      `json:"active"`
+
+	// Staked amount in WHOLE tokens (PoS only; omitted for PoA / unresolved chains).
+	// Decimal string with full precision: weight * weight_to_value_factor / 10^decimals.
+	StakedAmount *string `json:"staked_amount,omitempty"`
+	// Symbol of the token actually staked (e.g. "AVAX", "BEAM"). PoS only.
+	StakedToken string `json:"staked_token,omitempty"`
 
 	// End time (omit if zero/epoch for L1 validators with no expiry)
 	EndTime *time.Time `json:"end_time,omitempty"`
@@ -85,6 +93,114 @@ type ValidatorDeposit struct {
 }
 
 const primaryNetworkSubnetID = "11111111111111111111111111111111LpoYY"
+
+// stakeConv converts a validator's raw P-Chain weight into a whole-token staked
+// amount: value_base_units = weight * factor, then whole_tokens = value / 10^decimals.
+type stakeConv struct {
+	factor   *big.Int
+	decimals int
+	token    string
+}
+
+// stakeConverters resolves, per subnet, how to turn raw validator weight into a
+// staked token amount. Only PoS chains (and the Primary Network) get an entry —
+// PoA chains are absent, so the caller leaves staked_amount/staked_token unset.
+//
+// The Primary Network has no ValidatorManager, so its conversion is hardcoded:
+// weight is denominated in nAVAX (factor 1e9) and AVAX has 18 decimals.
+func (s *Server) stakeConverters(ctx context.Context, subnetIDs []string) map[string]stakeConv {
+	out := map[string]stakeConv{
+		primaryNetworkSubnetID: {factor: big.NewInt(1_000_000_000), decimals: 18, token: "AVAX"},
+	}
+
+	// L1 subnets only — the Primary Network is handled above and has no chain_risk row.
+	var need []string
+	for _, id := range subnetIDs {
+		if id != "" && id != primaryNetworkSubnetID {
+			need = append(need, id)
+		}
+	}
+	if len(need) == 0 {
+		return out
+	}
+
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(need)), ",")
+	query := fmt.Sprintf(`
+		SELECT c.subnet_id, cr.manager_type, cr.weight_to_value_factor,
+			r.network_token_symbol, r.network_token_decimals
+		FROM (SELECT * FROM subnet_chains FINAL) c
+		INNER JOIN (SELECT * FROM chain_risk FINAL) cr ON c.chain_id = cr.chain_id
+		LEFT JOIN (SELECT * FROM l1_registry FINAL) r ON c.chain_id = r.blockchain_id
+		WHERE c.subnet_id IN (%s) AND cr.weight_to_value_factor IS NOT NULL
+	`, placeholders)
+	args := make([]interface{}, len(need))
+	for i, id := range need {
+		args[i] = id
+	}
+
+	rows, err := s.conn.Query(ctx, query, args...)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var subnetID, managerType string
+		var factorStr, token *string
+		var decimals *uint8
+		if err := rows.Scan(&subnetID, &managerType, &factorStr, &token, &decimals); err != nil {
+			continue
+		}
+		if managerType != "PoS-native" && managerType != "PoS-erc20" {
+			continue
+		}
+		if factorStr == nil || *factorStr == "" {
+			continue
+		}
+		f, ok := new(big.Int).SetString(*factorStr, 10)
+		if !ok || f.Sign() <= 0 {
+			continue
+		}
+		sc := stakeConv{factor: f, decimals: 18}
+		if decimals != nil && *decimals > 0 {
+			sc.decimals = int(*decimals)
+		}
+		if token != nil {
+			sc.token = *token
+		}
+		// A subnet may have multiple chains; keep the first resolved factor.
+		if _, exists := out[subnetID]; !exists {
+			out[subnetID] = sc
+		}
+	}
+	_ = rows.Err()
+	return out
+}
+
+// wholeTokenString formats weight*factor (base units) as a whole-token decimal
+// string, including a trimmed fractional part only when the division isn't exact.
+func wholeTokenString(weight uint64, sc stakeConv) string {
+	base := new(big.Int).Mul(new(big.Int).SetUint64(weight), sc.factor)
+	return formatBaseUnits(base, sc.decimals)
+}
+
+// formatBaseUnits divides a base-unit integer by 10^decimals and renders it as a
+// decimal string, dropping trailing zeros (and the point) for whole values.
+func formatBaseUnits(base *big.Int, decimals int) string {
+	if decimals <= 0 {
+		return base.String()
+	}
+	div := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(decimals)), nil)
+	q, r := new(big.Int).QuoRem(base, div, new(big.Int))
+	if r.Sign() == 0 {
+		return q.String()
+	}
+	frac := r.String()
+	if len(frac) < decimals {
+		frac = strings.Repeat("0", decimals-len(frac)) + frac
+	}
+	frac = strings.TrimRight(frac, "0")
+	return q.String() + "." + frac
+}
 
 // handleListValidators returns a paginated list of validators
 // @Summary List validators
@@ -241,6 +357,26 @@ func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 	}
 
 	validators, hasMore := trimResults(validators, limit)
+
+	// Enrich PoS validators with a whole-token staked amount. One lookup covers
+	// every subnet present in the page; PoA chains simply get no converter.
+	seen := map[string]struct{}{}
+	subnetIDs := make([]string, 0)
+	for _, v := range validators {
+		if _, ok := seen[v.SubnetID]; !ok {
+			seen[v.SubnetID] = struct{}{}
+			subnetIDs = append(subnetIDs, v.SubnetID)
+		}
+	}
+	if conv := s.stakeConverters(ctx, subnetIDs); len(conv) > 0 {
+		for i := range validators {
+			if sc, ok := conv[validators[i].SubnetID]; ok && sc.factor != nil {
+				amt := wholeTokenString(validators[i].Weight, sc)
+				validators[i].StakedAmount = &amt
+				validators[i].StakedToken = sc.token
+			}
+		}
+	}
 
 	meta := &Meta{Limit: limit, Offset: offset, HasMore: hasMore}
 
@@ -451,6 +587,13 @@ func (s *Server) handleGetValidator(w http.ResponseWriter, r *http.Request) {
 			share := (float64(v.Weight) / float64(totalNetworkStake)) * 100
 			v.NetworkSharePercent = &share
 		}
+	}
+
+	// Whole-token staked amount (PoS only; PoA validators get no converter).
+	if sc, ok := s.stakeConverters(ctx, []string{v.SubnetID})[v.SubnetID]; ok && sc.factor != nil {
+		amt := wholeTokenString(v.Weight, sc)
+		v.StakedAmount = &amt
+		v.StakedToken = sc.token
 	}
 
 	writeJSON(w, http.StatusOK, Response{Data: v})
