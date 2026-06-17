@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"math/big"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -102,7 +103,23 @@ func (s *Server) handleListTxs(w http.ResponseWriter, r *http.Request) {
 
 	var query string
 	var args []interface{}
-	if cursor != nil && cursor.HasTxIndex {
+	// Optional exact-block filter: list a single block's transactions in order.
+	// block_number is a sort-key column, so this is an indexed range read.
+	if bn := r.URL.Query().Get("block_number"); bn != "" {
+		if parsed, perr := strconv.ParseUint(bn, 10, 64); perr == nil {
+			query = `
+				SELECT
+					chain_id, hash, block_number, block_time, transaction_index,
+					from, to, value, gas_limit, gas_price, gas_used, success, type
+				FROM raw_txs
+				WHERE chain_id = ? AND block_number = ?
+				ORDER BY transaction_index ASC
+				LIMIT ? OFFSET ?
+			`
+			args = []interface{}{chainID, parsed, fetchLimit, offset}
+		}
+	}
+	if query == "" && cursor != nil && cursor.HasTxIndex {
 		query = `
 			SELECT
 				chain_id, hash, block_number, block_time, transaction_index,
@@ -113,7 +130,7 @@ func (s *Server) handleListTxs(w http.ResponseWriter, r *http.Request) {
 			LIMIT ?
 		`
 		args = []interface{}{chainID, cursor.BlockNumber, cursor.TxIndex, fetchLimit}
-	} else {
+	} else if query == "" {
 		query = `
 			SELECT
 				chain_id, hash, block_number, block_time, transaction_index,
