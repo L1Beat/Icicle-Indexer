@@ -3,6 +3,7 @@ package api
 import (
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -112,12 +113,32 @@ func (rl *RateLimiter) Stop() {
 	close(rl.stopCh)
 }
 
-// Middleware returns an HTTP middleware that applies rate limiting
+// Middleware returns an HTTP middleware that applies rate limiting and emits
+// X-RateLimit-* headers so clients can see their remaining quota. This is a
+// per-IP token bucket, so Limit is the burst capacity, Remaining is the tokens
+// currently left, and Reset is the epoch second at which the bucket refills to
+// full (sustained refill rate is RequestsPerMinute/min).
 func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ip := rl.ClientIP(r)
+		limiter := rl.getLimiter(ip)
+		allowed := limiter.Allow()
 
-		if !rl.Allow(ip) {
+		tokens := limiter.Tokens()
+		if tokens < 0 {
+			tokens = 0
+		}
+		var secsToFull float64
+		if rl.rate > 0 {
+			secsToFull = (float64(rl.burst) - tokens) / float64(rl.rate)
+		}
+		reset := time.Now().Add(time.Duration(secsToFull * float64(time.Second)))
+
+		w.Header().Set("X-RateLimit-Limit", strconv.Itoa(rl.burst))
+		w.Header().Set("X-RateLimit-Remaining", strconv.Itoa(int(tokens)))
+		w.Header().Set("X-RateLimit-Reset", strconv.FormatInt(reset.Unix(), 10))
+
+		if !allowed {
 			w.Header().Set("Retry-After", "1")
 			writeRateLimitError(w, 1)
 			return

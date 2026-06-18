@@ -29,6 +29,8 @@ func CORSMiddleware(allowedOrigins string) Middleware {
 			w.Header().Set("Access-Control-Allow-Origin", allowedOrigins)
 			w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			// Let cross-origin JS read rate-limit state and the 429 Retry-After.
+			w.Header().Set("Access-Control-Expose-Headers", "Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining, X-RateLimit-Reset")
 
 			if r.Method == "OPTIONS" {
 				w.WriteHeader(http.StatusOK)

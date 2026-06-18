@@ -67,10 +67,17 @@ All origins are allowed (`Access-Control-Allow-Origin: *`). No authentication is
 
 All endpoints are rate limited to 60 requests/minute per IP (burst of 10) by default.
 
+Every response carries the current quota (per-IP token bucket):
+- `X-RateLimit-Limit` — burst capacity (10 by default)
+- `X-RateLimit-Remaining` — tokens left right now
+- `X-RateLimit-Reset` — epoch seconds at which the bucket refills to full
+
 When rate limited, you'll receive:
 - HTTP 429 status
 - `Retry-After` header with seconds to wait
 - Error body with `retry_after` field
+
+These headers (and `Retry-After`) are listed in `Access-Control-Expose-Headers`, so cross-origin browser clients can read them.
 
 ## Prometheus Metrics
 

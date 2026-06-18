@@ -80,16 +80,18 @@ func TestRateLimiter_Middleware(t *testing.T) {
 	// Wrap with rate limiter middleware
 	wrapped := rl.Middleware(handler)
 
-	// First two requests should succeed
+	// First two requests should succeed and advertise the remaining quota.
 	for i := 0; i < 2; i++ {
 		req := httptest.NewRequest("GET", "/test", nil)
 		req.RemoteAddr = "192.168.1.1:12345"
 		w := httptest.NewRecorder()
 		wrapped.ServeHTTP(w, req)
 		assert.Equal(t, http.StatusOK, w.Code, "request %d should succeed", i)
+		assert.Equal(t, "2", w.Header().Get("X-RateLimit-Limit"), "limit = burst")
+		assert.NotEmpty(t, w.Header().Get("X-RateLimit-Reset"))
 	}
 
-	// Third request should be rate limited
+	// Third request should be rate limited — headers still present on the 429.
 	req := httptest.NewRequest("GET", "/test", nil)
 	req.RemoteAddr = "192.168.1.1:12345"
 	w := httptest.NewRecorder()
@@ -97,6 +99,8 @@ func TestRateLimiter_Middleware(t *testing.T) {
 
 	assert.Equal(t, http.StatusTooManyRequests, w.Code)
 	assert.Equal(t, "1", w.Header().Get("Retry-After"))
+	assert.Equal(t, "2", w.Header().Get("X-RateLimit-Limit"))
+	assert.Equal(t, "0", w.Header().Get("X-RateLimit-Remaining"))
 }
 
 func TestGetClientIP_RemoteAddr(t *testing.T) {
