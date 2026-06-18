@@ -207,7 +207,8 @@ expect_status "timeseries list" "/api/v1/metrics/evm/${CHAIN_ID}/timeseries"    
 expect_status "fees burned"     "/api/v1/metrics/evm/${CHAIN_ID}/fees/burned"       200
 expect_status "network burned"  "/api/v1/metrics/burned/total"                      200
 expect_status "indexer status"  "/api/v1/metrics/indexer/status"                    200
-expect_status "storage stats"   "/api/v1/metrics/storage"                           200
+# storage stats is operator-gated behind the metrics bearer token — unauthenticated must be rejected
+expect_status "storage gated"   "/api/v1/metrics/storage"                           401 404
 
 # ---- 5. Input validation (should 4xx, never 5xx) ---------------------------
 

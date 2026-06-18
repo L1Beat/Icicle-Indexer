@@ -210,7 +210,9 @@ func (s *Server) registerRoutes(cfg Config) {
 	s.router.HandleFunc("GET /api/v1/metrics/indexer/status", s.handleIndexerStatus)
 
 	// Storage / ops stats
-	s.router.HandleFunc("GET /api/v1/metrics/storage", s.handleStorageStats)
+	// Storage stats expose internal table names / sizes / row counts — operator
+	// metadata, not consumer data. Gate it behind the same bearer token as /metrics.
+	s.router.Handle("GET /api/v1/metrics/storage", MetricsAuthMiddleware(cfg.Metrics.Token)(http.HandlerFunc(s.handleStorageStats)))
 
 	// ==========================================
 	// WebSocket - /ws/*

@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import PageTransition from '../components/PageTransition';
-import { getIndexerStatus, type IndexerStatus, type EVMChainStatus } from '../lib/api';
+import { getIndexerStatus, hasMetricsToken, type IndexerStatus, type EVMChainStatus } from '../lib/api';
 import { useStorageStats, useEvmBlocks } from '../lib/hooks';
 import { timeAgo } from '../lib/format';
 
@@ -109,12 +109,14 @@ function OpsOverview() {
   const totalBytes = (storage ?? []).reduce((s, t) => s + t.size_bytes, 0);
   const maxBytes = storage && storage.length ? storage[0].size_bytes : 0;
 
-  // Coverage — raw_txs / raw_blocks are multi-chain, so their row counts ARE
-  // the cross-chain totals (free, from the storage stats we already loaded).
+  // Coverage / storage come from the operator-gated /metrics/storage endpoint.
+  // Without the metrics token (VITE_METRICS_TOKEN) it isn't fetched, so show "—".
+  const storageReady = hasMetricsToken && !!storage;
   const tableRows = (name: string) => storage?.find((t) => t.table === name)?.rows ?? 0;
   const txsIndexed = tableRows('raw_txs');
   const pchainTxs = tableRows('p_chain_txs');
   const blocksIndexed = tableRows('raw_blocks');
+  const coverage = (n: number) => (storageReady ? formatInt(n) : '—');
 
   // Live block & tx rates, both derived from the same C-Chain block feed so
   // they're mutually consistent: rate = (count over the window) / (time the
@@ -193,12 +195,16 @@ function OpsOverview() {
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard
             label="Transactions indexed"
-            value={formatInt(txsIndexed)}
-            sub={pchainTxs ? `+ ${formatInt(pchainTxs)} P-Chain` : 'EVM, all chains'}
+            value={coverage(txsIndexed)}
+            sub={storageReady && pchainTxs ? `+ ${formatInt(pchainTxs)} P-Chain` : 'EVM, all chains'}
           />
-          <StatCard label="Blocks indexed" value={formatInt(blocksIndexed)} sub="EVM, all chains" />
+          <StatCard label="Blocks indexed" value={coverage(blocksIndexed)} sub="EVM, all chains" />
           <StatCard label="Chains indexed" value={formatInt(total)} sub="incl. P-Chain" />
-          <StatCard label="Storage" value={formatBytes(totalBytes)} sub={`${formatInt(blocksIndexed + txsIndexed)}+ rows`} />
+          <StatCard
+            label="Storage"
+            value={storageReady ? formatBytes(totalBytes) : '—'}
+            sub={storageReady ? `${formatInt(blocksIndexed + txsIndexed)}+ rows` : 'operator token'}
+          />
         </div>
 
         {/* Per-chain health */}
@@ -285,9 +291,13 @@ function OpsOverview() {
                   </div>
                 </div>
               ))}
-              {(!storage || storage.length === 0) && (
+              {!hasMetricsToken ? (
+                <div className="text-sm text-gray-400">
+                  Operator-only. Set <code className="font-mono">VITE_METRICS_TOKEN</code> to view storage.
+                </div>
+              ) : (!storage || storage.length === 0) ? (
                 <div className="text-sm text-gray-400">Loading storage…</div>
-              )}
+              ) : null}
             </div>
           </div>
         </div>

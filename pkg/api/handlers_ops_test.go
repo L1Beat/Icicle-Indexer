@@ -24,13 +24,26 @@ func TestHandleStorageStats_Success(t *testing.T) {
 	}
 
 	server := NewTestServer(mock)
-	w := MakeRequest(t, server, "GET", "/api/v1/metrics/storage")
+	w := MakeAuthedRequest(t, server, "GET", "/api/v1/metrics/storage")
 
 	AssertJSONResponse(t, w, http.StatusOK)
 	AssertCORSHeaders(t, w)
 
 	resp := ParseResponse[Response](t, w)
 	require.NotNil(t, resp.Data)
+}
+
+func TestHandleStorageStats_RequiresToken(t *testing.T) {
+	mock := &MockConn{
+		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
+			t.Fatal("handler should not run without a valid bearer token")
+			return nil, nil
+		},
+	}
+	server := NewTestServer(mock)
+	// No Authorization header -> rejected before the handler runs.
+	w := MakeRequest(t, server, "GET", "/api/v1/metrics/storage")
+	require.Equal(t, http.StatusUnauthorized, w.Code)
 }
 
 func TestHandleStorageStats_DBError(t *testing.T) {
@@ -40,6 +53,6 @@ func TestHandleStorageStats_DBError(t *testing.T) {
 		},
 	}
 	server := NewTestServer(mock)
-	w := MakeRequest(t, server, "GET", "/api/v1/metrics/storage")
+	w := MakeAuthedRequest(t, server, "GET", "/api/v1/metrics/storage")
 	require.Equal(t, http.StatusInternalServerError, w.Code)
 }

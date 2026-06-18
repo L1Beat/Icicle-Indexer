@@ -22,6 +22,7 @@ import {
   listPChainBlocks,
   getPChainBlock,
   getStorageStats,
+  hasMetricsToken,
   getChainStats,
   listEvmBlocks,
   getEvmBlock,
@@ -208,11 +209,13 @@ export function usePChainBlock(blockNumber: number | undefined, enabled = true) 
   });
 }
 
-/** Per-table storage stats. */
+/** Per-table storage stats. Operator-only — only fires when the metrics token is
+ *  configured (VITE_METRICS_TOKEN); otherwise the endpoint is gated and would 401. */
 export function useStorageStats() {
   return useQuery<StorageTable[]>({
     queryKey: ['storage-stats'],
     queryFn: ({ signal }) => getStorageStats(signal),
+    enabled: hasMetricsToken,
     staleTime: 60 * 1000,
     refetchInterval: 60 * 1000,
   });

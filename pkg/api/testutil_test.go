@@ -206,8 +206,22 @@ func NewTestServer(mock *MockConn) *Server {
 			BurstSize:         100,
 			CleanupInterval:   time.Hour, // Long interval for tests
 		},
+		Metrics: MetricsConfig{Token: testMetricsToken},
 	}
 	return NewServer(mock, cfg)
+}
+
+// testMetricsToken is the bearer token the test server accepts for operator-gated
+// endpoints (/metrics, /api/v1/metrics/storage).
+const testMetricsToken = "test-metrics-token"
+
+// MakeAuthedRequest is MakeRequest with the operator bearer token attached.
+func MakeAuthedRequest(t *testing.T, server *Server, method, path string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(method, path, nil)
+	req.Header.Set("Authorization", "Bearer "+testMetricsToken)
+	w := httptest.NewRecorder()
+	server.ServeHTTP(w, req)
+	return w
 }
 
 // MakeRequest makes a test HTTP request and returns the response

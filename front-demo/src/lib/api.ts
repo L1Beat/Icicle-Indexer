@@ -11,6 +11,14 @@ export const API_BASE_URL = (
   import.meta.env.VITE_API_BASE_URL ?? 'https://api.l1beat.io'
 ).replace(/\/$/, '');
 
+/**
+ * Operator bearer token for the gated metrics endpoints (e.g. /metrics/storage).
+ * Optional — set VITE_METRICS_TOKEN locally to enable the storage/coverage panels
+ * in the ops console. It's the same value as the API's ICICLE_METRICS_TOKEN. Leave
+ * unset and those panels degrade gracefully. Never ship this token in a hosted build.
+ */
+export const METRICS_TOKEN = import.meta.env.VITE_METRICS_TOKEN ?? '';
+
 /** Error thrown for non-2xx API responses. */
 export class ApiError extends Error {
   readonly status: number;
@@ -378,6 +386,8 @@ interface RequestOptions {
   signal?: AbortSignal;
   /** Query params; undefined/null values are skipped. */
   query?: Record<string, string | number | boolean | undefined | null>;
+  /** Extra request headers (e.g. Authorization for gated endpoints). */
+  headers?: Record<string, string>;
 }
 
 function buildUrl(path: string, query?: RequestOptions['query']): string {
@@ -405,7 +415,7 @@ async function apiFetch<T>(path: string, opts: RequestOptions = {}): Promise<T> 
     let res: Response;
     try {
       res = await fetch(url, {
-        headers: { Accept: 'application/json' },
+        headers: { Accept: 'application/json', ...opts.headers },
         signal: opts.signal,
       });
     } catch (err) {
@@ -606,9 +616,19 @@ export function getPChainBlock(blockNumber: number, signal?: AbortSignal): Promi
   return apiGetData<PChainBlock>(`/api/v1/data/pchain/blocks/${blockNumber}`, { signal });
 }
 
-/** Per-table storage stats (size + row counts), largest first. */
+/** Whether the operator metrics token is configured (enables the storage panel). */
+export const hasMetricsToken = METRICS_TOKEN !== '';
+
+/**
+ * Per-table storage stats (size + row counts), largest first. Operator-only:
+ * requires the bearer token (VITE_METRICS_TOKEN). Without it the API returns
+ * 401/404 and callers should treat storage as unavailable.
+ */
 export function getStorageStats(signal?: AbortSignal): Promise<StorageTable[]> {
-  return apiGetData<StorageTable[]>('/api/v1/metrics/storage', { signal });
+  return apiGetData<StorageTable[]>('/api/v1/metrics/storage', {
+    signal,
+    headers: METRICS_TOKEN ? { Authorization: `Bearer ${METRICS_TOKEN}` } : undefined,
+  });
 }
 
 // ---- EVM explorer endpoints ----

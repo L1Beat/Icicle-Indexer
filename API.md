@@ -1288,6 +1288,8 @@ Network-wide all-time AVAX burned, split by chain (P / X / C). Only the C-Chain 
 
 ### GET /api/v1/metrics/storage
 
+> **Operator-only.** Exposes internal table names / sizes / row counts, so it's gated behind the same bearer token as `/metrics`. Send `Authorization: Bearer <ICICLE_METRICS_TOKEN>`. Without it: `401` (or `404` when no token is configured). Not part of the public consumer API.
+
 Per-table on-disk size (bytes) and row counts for the indexer's ClickHouse store, largest first. Operational metadata only — table names and sizes, no row contents.
 
 **Response:**
@@ -1508,7 +1510,7 @@ ws.onmessage = (event) => {
 |--------|------|-------------|
 | GET | `/health` | Health check |
 | GET | `/api/v1/metrics/indexer/status` | Indexer sync status |
-| GET | `/api/v1/metrics/storage` | Per-table storage size & row counts |
+| GET | `/api/v1/metrics/storage` | Per-table storage size & row counts (operator token) |
 | GET | `/api/v1/data/evm/{chainId}/blocks` | List blocks |
 | GET | `/api/v1/data/evm/{chainId}/blocks/{number}` | Get block by number |
 | GET | `/api/v1/data/evm/{chainId}/txs` | List transactions |
