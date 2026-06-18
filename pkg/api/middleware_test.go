@@ -22,7 +22,7 @@ func TestCORSMiddleware_SetsHeaders(t *testing.T) {
 
 	assert.Equal(t, "*", w.Header().Get("Access-Control-Allow-Origin"))
 	assert.Equal(t, "GET, OPTIONS", w.Header().Get("Access-Control-Allow-Methods"))
-	assert.Equal(t, "Content-Type", w.Header().Get("Access-Control-Allow-Headers"))
+	assert.Equal(t, "Content-Type, Authorization", w.Header().Get("Access-Control-Allow-Headers"))
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
