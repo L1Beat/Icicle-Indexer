@@ -16,17 +16,21 @@ import (
 // (e.g. issuer treasuries) are subtracted, so the number matches DeFiLlama-style methodology
 // rather than raw on-chain totalSupply.
 type Stablecoin struct {
-	Token        string `json:"token" example:"0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e"`
-	Symbol       string `json:"symbol" example:"USDC"`
-	Name         string `json:"name" example:"USD Coin"`
-	Decimals     uint8  `json:"decimals" example:"6"`
-	Peg          string `json:"peg" example:"USD"`
-	Issuer       string `json:"issuer,omitempty" example:"Circle"`
-	Bridged      bool   `json:"bridged" example:"false"`
-	Supply       string `json:"supply" example:"459300000000000"`
-	Holders      uint64 `json:"holders" example:"128453"`
-	Volume24h    string `json:"volume_24h" example:"32100000000000"`
-	Transfers24h uint64 `json:"transfers_24h" example:"58210"`
+	Token    string `json:"token" example:"0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e"`
+	Symbol   string `json:"symbol" example:"USDC"`
+	Name     string `json:"name" example:"USD Coin"`
+	Decimals uint8  `json:"decimals" example:"6"`
+	Peg      string `json:"peg" example:"USD"`
+	Issuer   string `json:"issuer,omitempty" example:"Circle"`
+	Bridged  bool   `json:"bridged" example:"false"`
+	// Doublecounted marks stablecoins whose reserves are themselves other counted
+	// stablecoins (e.g. avUSD, UTY, reUSD, FRXUSD). Sum all rows for the GROSS total;
+	// exclude doublecounted rows for the NET total (the DeFiLlama-style headline).
+	Doublecounted bool   `json:"doublecounted" example:"false"`
+	Supply        string `json:"supply" example:"459300000000000"`
+	Holders       uint64 `json:"holders" example:"128453"`
+	Volume24h     string `json:"volume_24h" example:"32100000000000"`
+	Transfers24h  uint64 `json:"transfers_24h" example:"58210"`
 }
 
 // handleListStablecoins returns curated stablecoins for a chain with circulating supply,
@@ -51,7 +55,7 @@ func (s *Server) handleListStablecoins(w http.ResponseWriter, r *http.Request) {
 	}
 
 	registryQuery := `
-		SELECT token, symbol, name, decimals, peg, issuer, bridged
+		SELECT token, symbol, name, decimals, peg, issuer, bridged, doublecounted
 		FROM stablecoins FINAL
 		WHERE chain_id = ?
 	`
@@ -70,7 +74,7 @@ func (s *Server) handleListStablecoins(w http.ResponseWriter, r *http.Request) {
 	var ordered []*entry
 	for rows.Next() {
 		var e entry
-		if err := rows.Scan(&e.tokenBytes, &e.Symbol, &e.Name, &e.Decimals, &e.Peg, &e.Issuer, &e.Bridged); err != nil {
+		if err := rows.Scan(&e.tokenBytes, &e.Symbol, &e.Name, &e.Decimals, &e.Peg, &e.Issuer, &e.Bridged, &e.Doublecounted); err != nil {
 			writeInternalError(w, err.Error())
 			return
 		}
@@ -152,9 +156,9 @@ func (s *Server) handleListStablecoins(w http.ResponseWriter, r *http.Request) {
 
 	for volRows.Next() {
 		var (
-			tokenBytes    []byte
-			volume24h     string
-			transfers24h  uint64
+			tokenBytes   []byte
+			volume24h    string
+			transfers24h uint64
 		)
 		if err := volRows.Scan(&tokenBytes, &volume24h, &transfers24h); err != nil {
 			writeInternalError(w, err.Error())

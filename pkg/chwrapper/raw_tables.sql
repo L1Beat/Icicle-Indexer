@@ -390,9 +390,14 @@ CREATE TABLE IF NOT EXISTS stablecoins (
     peg LowCardinality(String) DEFAULT 'USD',
     issuer String DEFAULT '',
     bridged Bool DEFAULT false,
+    -- doublecounted: reserves are themselves other counted stablecoins (e.g. avUSD,
+    -- UTY, reUSD, FRXUSD), so they inflate a naive sum. Excluded from the NET total;
+    -- still listed (GROSS). Frontend sources the exclusion set from this flag.
+    doublecounted Bool DEFAULT false,
     added_at DateTime64(3, 'UTC') DEFAULT now64(3)
 ) ENGINE = ReplacingMergeTree(added_at)
 ORDER BY (chain_id, token);
+ALTER TABLE stablecoins ADD COLUMN IF NOT EXISTS doublecounted Bool DEFAULT false;
 
 -- Stablecoin excluded holders - wallets to subtract when computing circulating supply.
 -- Used for treasury / issuance / bridge contracts that hold tokens which haven't been

@@ -549,6 +549,7 @@ Curated stablecoins on a chain with **circulating** supply (excludes issuer-trea
       "peg": "USD",
       "issuer": "Circle",
       "bridged": false,
+      "doublecounted": false,
       "supply": "459300000000000",
       "holders": 128453,
       "volume_24h": "32100000000000",
@@ -561,6 +562,7 @@ Curated stablecoins on a chain with **circulating** supply (excludes issuer-trea
 **Notes:**
 - Amount fields (`supply`, `volume_24h`) are strings in the token's smallest unit; scale by `decimals`.
 - `supply` is circulating (issuer treasuries in `stablecoin_excluded_holders` are subtracted), DeFiLlama-style.
+- `doublecounted` marks stablecoins whose reserves are themselves other counted stablecoins (e.g. `avUSD`, `UTY`, `reUSD`, `FRXUSD`). Summing every row gives the **gross** total; excluding `doublecounted` rows gives the **net** total (the DeFiLlama-style headline, which avoids counting the same dollars twice). Show all rows in a table, but compute the headline from the net set.
 
 ---
 
