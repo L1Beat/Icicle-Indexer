@@ -76,6 +76,16 @@ func (s *Server) handleLendingPositions(w http.ResponseWriter, r *http.Request) 
 	protocol := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("protocol")))
 	asset := normalizeHexAddr(r.URL.Query().Get("asset"))
 
+	// Opt-in dust filter: only positions whose debt in the oracle base currency is
+	// greater than this value. Validated as a base-10 integer so it is
+	// injection-safe. Defaults to 0, the existing debt > 0 behavior.
+	debtFloor := "0"
+	if v := strings.TrimSpace(r.URL.Query().Get("min_debt_base")); v != "" {
+		if _, ok := new(big.Int).SetString(v, 10); ok {
+			debtFloor = v
+		}
+	}
+
 	var conds []string
 	args := []interface{}{chainID}
 	conds = append(conds, "chain_id = ?")
@@ -102,10 +112,10 @@ func (s *Server) handleLendingPositions(w http.ResponseWriter, r *http.Request) 
 			FROM lending_positions
 			WHERE %s
 			GROUP BY account, protocol
-		) WHERE debt > 0
+		) WHERE debt > %s
 		ORDER BY liq DESC, hf ASC, debt DESC
 		LIMIT ? OFFSET ?
-	`, strings.Join(conds, " AND "))
+	`, strings.Join(conds, " AND "), debtFloor)
 	args = append(args, limit+1, offset)
 
 	rows, err := s.conn.Query(ctx, query, args...)
@@ -244,9 +254,12 @@ func (s *Server) handleLendingStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A position is open if it carries debt or is flagged liquidatable. Benqi cold
+	// sweeps are summary-only, so a liquidatable account can have debt_base 0 until
+	// a detail read lands; counting it as open keeps liquidatable a subset of open.
 	rows, err := s.conn.Query(ctx, `
 		SELECT protocol,
-			countIf(debt > 0) AS open_positions,
+			countIf(debt > 0 OR liq) AS open_positions,
 			countIf(liq) AS liquidatable
 		FROM (
 			SELECT account, protocol,
