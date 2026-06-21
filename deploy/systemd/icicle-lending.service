@@ -9,8 +9,10 @@ User=__USER__
 Group=__USER__
 WorkingDirectory=__HOME__/icicle
 
-# Secrets and the archive RPC URL live here. setup.sh writes this file with mode 600.
-EnvironmentFile=/etc/icicle/lending.env
+# Config (CLICKHOUSE_PASSWORD, ICICLE_ARCHIVE_RPC). On setup.sh-provisioned hosts
+# this file holds them. The leading - makes it optional so hosts that inject the
+# same vars via systemd drop-ins (Environment=) work without this file present.
+EnvironmentFile=-/etc/icicle/lending.env
 
 ExecStart=__HOME__/icicle/icicle lending --chain 43114 --metrics-port 9092
 
