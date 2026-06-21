@@ -91,9 +91,40 @@ func main() {
 	apiCmd.Flags().Int("ws-max-connections-per-ip", 20, "Maximum concurrent WebSocket connections per client IP")
 	apiCmd.Flags().Int("ws-max-connections-per-chain", 250, "Maximum concurrent WebSocket connections per chain")
 
+	lendingCmd := &cobra.Command{
+		Use:   "lending",
+		Short: "Start the lending liquidation-risk engine (Aave v3 + Benqi)",
+		Run: func(command *cobra.Command, args []string) {
+			opts := cmd.DefaultLendingOptions()
+			cid, _ := command.Flags().GetUint32("chain")
+			opts.ChainID = cid
+			if v, _ := command.Flags().GetString("archive-rpc"); v != "" {
+				opts.ArchiveRPC = v
+			}
+			if v, _ := command.Flags().GetString("fallback-rpc"); v != "" {
+				opts.FallbackRPC = v
+			}
+			opts.AaveProvider, _ = command.Flags().GetString("aave-provider")
+			opts.BenqiComptroller, _ = command.Flags().GetString("benqi-comptroller")
+			opts.DiscoveryBatch, _ = command.Flags().GetUint64("discovery-batch")
+			opts.ParamsRefreshHours, _ = command.Flags().GetInt("params-refresh-hours")
+			opts.MetricsPort, _ = command.Flags().GetInt("metrics-port")
+			cmd.RunLending(ctx, opts)
+		},
+	}
+	lendingCmd.Flags().Uint32("chain", 43114, "EVM chain ID to track")
+	lendingCmd.Flags().String("archive-rpc", os.Getenv("ICICLE_ARCHIVE_RPC"), "Archive node RPC URL (required)")
+	lendingCmd.Flags().String("fallback-rpc", os.Getenv("ICICLE_FALLBACK_RPC"), "Optional public RPC fallback")
+	lendingCmd.Flags().String("aave-provider", "", "Aave v3 PoolAddressesProvider (default: canonical Avalanche)")
+	lendingCmd.Flags().String("benqi-comptroller", "", "Benqi Comptroller (default: canonical Avalanche)")
+	lendingCmd.Flags().Uint64("discovery-batch", 5000, "Blocks per discovery batch")
+	lendingCmd.Flags().Int("params-refresh-hours", 6, "Hours between protocol parameter refreshes")
+	lendingCmd.Flags().Int("metrics-port", 9092, "Port for the Prometheus /metrics endpoint (0 to disable)")
+
 	root.AddCommand(
 		ingestCmd,
 		apiCmd,
+		lendingCmd,
 		&cobra.Command{
 			Use:   "cache",
 			Short: "Fill RPC cache at max speed (no ClickHouse)",

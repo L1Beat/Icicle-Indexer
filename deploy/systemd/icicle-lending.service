@@ -1,0 +1,29 @@
+[Unit]
+Description=Icicle Lending Liquidation-Risk Engine
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+Group=__USER__
+WorkingDirectory=__HOME__/icicle
+
+# Secrets and the archive RPC URL live here. setup.sh writes this file with mode 600.
+EnvironmentFile=/etc/icicle/lending.env
+
+ExecStart=__HOME__/icicle/icicle lending --chain 43114 --metrics-port 9092
+
+Restart=always
+RestartSec=10
+LimitNOFILE=524288
+
+# Mostly an in-memory account/state cache plus batched RPC reads. Modest caps.
+MemoryHigh=2G
+MemoryMax=4G
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

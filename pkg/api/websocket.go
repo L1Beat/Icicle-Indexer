@@ -62,7 +62,8 @@ type WSHub struct {
 	unregister chan *WSClient
 	mu         sync.RWMutex
 	conn       driver.Conn
-	lastBlock  map[uint32]uint64 // chain_id -> last seen block number
+	lastBlock  map[uint32]uint64    // chain_id -> last seen block number
+	lastAlert  map[uint32]time.Time // chain_id -> last broadcast lending alert time
 	config     WebSocketConfig
 	clientIP   clientIPFunc
 	ipCounts   map[string]int
@@ -77,6 +78,7 @@ type WSClient struct {
 	chainID  uint32
 	ip       string
 	reserved bool
+	feed     string // "blocks" or "lending"
 }
 
 // NewWSHub creates a new WebSocket hub
@@ -100,6 +102,7 @@ func NewWSHub(conn driver.Conn, cfg WebSocketConfig, clientIP clientIPFunc) *WSH
 		unregister: make(chan *WSClient),
 		conn:       conn,
 		lastBlock:  make(map[uint32]uint64),
+		lastAlert:  make(map[uint32]time.Time),
 		config:     cfg,
 		clientIP:   clientIP,
 		ipCounts:   make(map[string]int),
@@ -199,6 +202,7 @@ func (h *WSHub) StartPoller() {
 
 	for range ticker.C {
 		h.pollNewBlocks()
+		h.pollNewAlerts()
 	}
 }
 
@@ -378,6 +382,9 @@ func (h *WSHub) broadcastBlock(chainID uint32, block Block) {
 	h.mu.RUnlock()
 
 	for client := range clients {
+		if client.feed != "" && client.feed != "blocks" {
+			continue // block updates only go to block subscribers
+		}
 		select {
 		case client.send <- data:
 		default:
@@ -493,6 +500,7 @@ func (s *Server) handleWSBlocks(w http.ResponseWriter, r *http.Request) {
 		chainID:  chainID,
 		ip:       ip,
 		reserved: true,
+		feed:     "blocks",
 	}
 
 	// Send initial blocks

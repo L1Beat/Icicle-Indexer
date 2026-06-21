@@ -168,6 +168,12 @@ func (s *Server) registerRoutes(cfg Config) {
 	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/stablecoins", s.handleListStablecoins)
 	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/stablecoins/timeseries", s.handleStablecoinTimeseries)
 
+	// EVM Lending liquidation-risk feed
+	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/lending/positions", s.handleLendingPositions)
+	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/lending/positions/{account}", s.handleLendingAccount)
+	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/lending/stats", s.handleLendingStats)
+	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/lending/alerts", s.handleLendingAlerts)
+
 	// P-Chain Transactions
 	s.router.HandleFunc("GET /api/v1/data/pchain/txs", s.handleListPChainTxs)
 	s.router.HandleFunc("GET /api/v1/data/pchain/txs/{txId}", s.handleGetPChainTx)
@@ -218,6 +224,7 @@ func (s *Server) registerRoutes(cfg Config) {
 	// WebSocket - /ws/*
 	// ==========================================
 	s.router.HandleFunc("GET /ws/blocks/{chainId}", s.handleWSBlocks)
+	s.router.HandleFunc("GET /ws/lending/{chainId}", s.handleWSLending)
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {

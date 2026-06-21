@@ -1,0 +1,117 @@
+-- Lending liquidation-risk engine tables.
+-- Conventions match pkg/chwrapper/raw_tables.sql: FixedString(20) addresses,
+-- UInt256 amounts, DateTime64(3, 'UTC') timestamps. Do not put a semicolon inside
+-- an inline comment: the SQL splitter breaks statements on semicolons.
+
+-- Resolved and on-chain-verified protocol addresses. One row per role.
+CREATE TABLE IF NOT EXISTS lending_protocol_addresses (
+    chain_id UInt32,
+    protocol LowCardinality(String),       -- aave-v3 | benqi
+    role LowCardinality(String),           -- pool | oracle | provider | data_provider | comptroller | market | multicall
+    address FixedString(20),
+    verified Bool,                         -- on-chain check passed
+    note String,                           -- mismatch warning detail, empty when clean
+    updated_at DateTime64(3, 'UTC') DEFAULT now64(3)
+) ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (chain_id, protocol, role, address);
+
+-- Protocol-global parameters. Benqi close factor and liquidation incentive are
+-- Comptroller-global, so they live here rather than duplicated per asset (rule 6).
+CREATE TABLE IF NOT EXISTS lending_protocol_globals (
+    chain_id UInt32,
+    protocol LowCardinality(String),
+    close_factor_bps UInt16,               -- Benqi global close factor (5000 = 50%). 0 for Aave (rule-based)
+    liquidation_incentive_bps UInt16,      -- Benqi global incentive multiplier (10800 = collateral worth 108%). 0 for Aave
+    small_position_base UInt256,           -- Aave small-position close-factor threshold in base currency. 0 disables
+    base_currency_unit UInt256,            -- oracle base unit (Aave 1e8 USD base)
+    updated_at DateTime64(3, 'UTC') DEFAULT now64(3)
+) ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (chain_id, protocol);
+
+-- Per-asset risk parameters. Aave per-reserve, Benqi per-market.
+CREATE TABLE IF NOT EXISTS lending_protocol_params (
+    chain_id UInt32,
+    protocol LowCardinality(String),
+    asset FixedString(20),                 -- underlying reserve token
+    market FixedString(20),                -- Benqi qiToken or Aave aToken, zero when not applicable
+    symbol String,
+    decimals UInt8,
+    liquidation_threshold_bps UInt16,      -- Aave reserve LT, Benqi collateral factor mapped here
+    liquidation_bonus_bps UInt16,          -- Aave per-reserve multiplier (10500 = 105%). 0 for Benqi (global)
+    ltv_bps UInt16,
+    can_collateral Bool,
+    can_borrow Bool,
+    updated_at DateTime64(3, 'UTC') DEFAULT now64(3)
+) ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (chain_id, protocol, asset);
+
+-- Universe of accounts seen on each protocol. AggregatingMergeTree keeps the min
+-- first-seen and max last-event automatically, so discovery just appends.
+CREATE TABLE IF NOT EXISTS lending_accounts (
+    chain_id UInt32,
+    protocol LowCardinality(String),
+    account FixedString(20),
+    first_seen_block SimpleAggregateFunction(min, UInt32),
+    last_event_block SimpleAggregateFunction(max, UInt32),
+    updated_at SimpleAggregateFunction(max, DateTime64(3, 'UTC'))
+) ENGINE = AggregatingMergeTree
+ORDER BY (chain_id, protocol, account);
+
+-- Candidate asset exposure per account, from lending events. Over-inclusive on
+-- purpose: it bounds health reads and drives the price-trigger asset fan-out
+-- (rule 1). The authoritative current per-asset state is lending_position_assets.
+CREATE TABLE IF NOT EXISTS lending_exposure (
+    chain_id UInt32,
+    protocol LowCardinality(String),
+    account FixedString(20),
+    asset FixedString(20),
+    side LowCardinality(String),           -- collateral | borrow
+    last_block SimpleAggregateFunction(max, UInt32),
+    updated_at SimpleAggregateFunction(max, DateTime64(3, 'UTC'))
+) ENGINE = AggregatingMergeTree
+ORDER BY (chain_id, protocol, account, asset, side);
+
+-- Current health snapshot per (account, protocol). Serve with FINAL or argMax,
+-- never a plain SELECT, since pre-merge duplicates can return stale health (rule 2).
+CREATE TABLE IF NOT EXISTS lending_positions (
+    chain_id UInt32,
+    protocol LowCardinality(String),
+    account FixedString(20),
+    health_factor UInt256,                 -- 1e18-scaled. Benqi derived, for ranking and display only (rule 3)
+    collateral_base UInt256,               -- weighted collateral in oracle base currency
+    debt_base UInt256,
+    shortfall_base UInt256,                -- Benqi shortfall, 0 for Aave
+    liquidatable Bool,                     -- Aave HF<1e18, Benqi shortfall>0 (rule 3)
+    tier LowCardinality(String),           -- hot | warm | cold
+    block_number UInt32,                   -- chain head at read time
+    updated_at DateTime64(3, 'UTC') DEFAULT now64(3)
+) ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (chain_id, protocol, account);
+
+-- Per-asset breakdown for the feed. Assets that drop to zero are written with
+-- amount 0 on the next refresh so stale legs do not linger.
+CREATE TABLE IF NOT EXISTS lending_position_assets (
+    chain_id UInt32,
+    protocol LowCardinality(String),
+    account FixedString(20),
+    asset FixedString(20),
+    side LowCardinality(String),           -- collateral | debt
+    amount UInt256,                        -- token units
+    base_value UInt256,                    -- oracle base-currency value
+    updated_at DateTime64(3, 'UTC') DEFAULT now64(3)
+) ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (chain_id, protocol, account, asset, side);
+
+-- Append-only crossing events for the WebSocket tail.
+CREATE TABLE IF NOT EXISTS lending_alerts (
+    chain_id UInt32,
+    protocol LowCardinality(String),
+    account FixedString(20),
+    kind LowCardinality(String),           -- liquidatable | near_liquidatable | recovered
+    health_factor UInt256,
+    collateral_base UInt256,
+    debt_base UInt256,
+    block_number UInt32,
+    created_at DateTime64(3, 'UTC') DEFAULT now64(3)
+) ENGINE = MergeTree()
+ORDER BY (chain_id, created_at);

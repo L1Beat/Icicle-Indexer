@@ -36,7 +36,7 @@ require() {
     fi
   done
 }
-require API_DOMAIN ICICLE_USER CLICKHOUSE_PASSWORD CLICKHOUSE_PASSWORD_SHA256 ICICLE_METRICS_TOKEN
+require API_DOMAIN ICICLE_USER CLICKHOUSE_PASSWORD CLICKHOUSE_PASSWORD_SHA256 ICICLE_METRICS_TOKEN ICICLE_ARCHIVE_RPC
 
 ICICLE_HOME="/home/${ICICLE_USER}"
 CH_DATA_DIR="${CH_DATA_DIR:-${ICICLE_HOME}/clickhouse-data}"
@@ -103,8 +103,17 @@ chmod 600 /etc/icicle/api.env
 echo "CLICKHOUSE_PASSWORD=$CLICKHOUSE_PASSWORD" > /etc/icicle/indexer.env
 chmod 600 /etc/icicle/indexer.env
 
+# Lending engine reads health from the archive node via Multicall3. The fallback
+# RPC is optional and only used when the archive node fails.
+{
+  echo "CLICKHOUSE_PASSWORD=$CLICKHOUSE_PASSWORD"
+  echo "ICICLE_ARCHIVE_RPC=$ICICLE_ARCHIVE_RPC"
+  [ -n "${ICICLE_FALLBACK_RPC:-}" ] && echo "ICICLE_FALLBACK_RPC=$ICICLE_FALLBACK_RPC"
+} > /etc/icicle/lending.env
+chmod 600 /etc/icicle/lending.env
+
 echo "==> Installing systemd units"
-for unit in icicle-api.service icicle-indexer.service; do
+for unit in icicle-api.service icicle-indexer.service icicle-lending.service; do
   sed "s|__USER__|$ICICLE_USER|g; s|__HOME__|$ICICLE_HOME|g" "systemd/$unit" \
     > "/etc/systemd/system/$unit"
 done
@@ -124,6 +133,14 @@ if [ -n "${ICICLE_INDEXER_MEMORY_HIGH:-}" ] || [ -n "${ICICLE_INDEXER_MEMORY_MAX
     [ -n "${ICICLE_INDEXER_MEMORY_HIGH:-}" ] && echo "MemoryHigh=$ICICLE_INDEXER_MEMORY_HIGH"
     [ -n "${ICICLE_INDEXER_MEMORY_MAX:-}" ]  && echo "MemoryMax=$ICICLE_INDEXER_MEMORY_MAX"
   } > /etc/systemd/system/icicle-indexer.service.d/memory.conf
+fi
+if [ -n "${ICICLE_LENDING_MEMORY_HIGH:-}" ] || [ -n "${ICICLE_LENDING_MEMORY_MAX:-}" ]; then
+  install -d /etc/systemd/system/icicle-lending.service.d
+  {
+    echo "[Service]"
+    [ -n "${ICICLE_LENDING_MEMORY_HIGH:-}" ] && echo "MemoryHigh=$ICICLE_LENDING_MEMORY_HIGH"
+    [ -n "${ICICLE_LENDING_MEMORY_MAX:-}" ]  && echo "MemoryMax=$ICICLE_LENDING_MEMORY_MAX"
+  } > /etc/systemd/system/icicle-lending.service.d/memory.conf
 fi
 systemctl daemon-reload
 
@@ -151,11 +168,12 @@ cat <<EOF
        certbot --nginx -d $API_DOMAIN
 
   4. Start the services:
-       systemctl enable --now icicle-api icicle-indexer
+       systemctl enable --now icicle-api icicle-indexer icicle-lending
 
   5. Verify:
-       systemctl is-active icicle-api icicle-indexer
+       systemctl is-active icicle-api icicle-indexer icicle-lending
        curl -fsS https://$API_DOMAIN/health
        sudo journalctl -u icicle-api -n 20 --no-pager
+       sudo journalctl -u icicle-lending -n 20 --no-pager   # 'lending: engine running'
 ================================================================
 EOF

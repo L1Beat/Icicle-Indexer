@@ -12,7 +12,7 @@ Reproducible setup for an Icicle indexer + API server. Each new server is bootst
 | `clickhouse/users.d/default-user.xml.template` | Renders the `default` user with a sha256 password. |
 | `clickhouse/access-setup.sql` | Creates the read-only `anonymous` / `anonymous_heavy` users for dashboards. |
 | `nginx/api.conf` | Reverse-proxy vhost. Forwards `X-Forwarded-For` correctly. |
-| `systemd/icicle-api.service`, `icicle-indexer.service` | Service units (with memory caps). |
+| `systemd/icicle-api.service`, `icicle-indexer.service`, `icicle-lending.service` | Service units (with memory caps). |
 | `iptables/rules.v4` | Default-deny firewall. Allows 22/80/443/9651 only. |
 
 ## Bootstrap a new server (~20 minutes)
@@ -43,23 +43,25 @@ The installer:
 3. Creates the `icicle` OS user
 4. Renders the CH password into the bind-mounted users.d
 5. Starts ClickHouse via docker-compose
-6. Writes systemd env files (mode 600) and unit files
+6. Writes systemd env files (mode 600, including `lending.env` with the archive RPC) and unit files
 7. Installs the nginx vhost (HTTP only — TLS in step 4 below)
 
 After `setup.sh` finishes, do the four manual steps it prints:
 1. Clone the Icicle source and `go build -o icicle .`
 2. `clickhouse-client < clickhouse/access-setup.sql` to create the read-only users
 3. `certbot --nginx -d $API_DOMAIN` to get a TLS cert (rewrites the nginx vhost)
-4. `systemctl enable --now icicle-api icicle-indexer`
+4. `systemctl enable --now icicle-api icicle-indexer icicle-lending`
 
 ## Verifying a deploy
 
 After everything is up:
 
 ```bash
-systemctl is-active icicle-api icicle-indexer        # both 'active'
+systemctl is-active icicle-api icicle-indexer icicle-lending   # all 'active'
 curl -fsS https://${API_DOMAIN}/health                # 200
 sudo journalctl -u icicle-api -n 20 --no-pager        # 'ClickHouse connected successfully'
+sudo journalctl -u icicle-lending -n 30 --no-pager    # 'protocol ready' then 'engine running'
+curl -fsS http://127.0.0.1:9092/metrics | grep icicle_lending   # lending metrics present
 
 # DB should NOT be reachable from outside (run from your laptop):
 nc -zv <server-ip> 8123     # times out
@@ -73,7 +75,7 @@ docker exec icicle-clickhouse clickhouse-client \
 ## Updating the deployed app
 
 ```bash
-cd ~/icicle && git pull && go build -o icicle . && sudo systemctl restart icicle-api icicle-indexer
+cd ~/icicle && git pull && go build -o icicle . && sudo systemctl restart icicle-api icicle-indexer icicle-lending
 ```
 
 ## Rotating the ClickHouse password
@@ -91,10 +93,11 @@ sudo sed -i "s|<password_sha256_hex>.*</password_sha256_hex>|<password_sha256_he
 docker exec icicle-clickhouse clickhouse-client --user default --password "OLD_PW" --query "SELECT 1"
 
 # Update the env files
-sudo sed -i "s|^CLICKHOUSE_PASSWORD=.*|CLICKHOUSE_PASSWORD=$NEW_PW|" /etc/icicle/api.env /etc/icicle/indexer.env
+sudo sed -i "s|^CLICKHOUSE_PASSWORD=.*|CLICKHOUSE_PASSWORD=$NEW_PW|" \
+  /etc/icicle/api.env /etc/icicle/indexer.env /etc/icicle/lending.env
 
 # Restart services
-sudo systemctl restart icicle-api icicle-indexer
+sudo systemctl restart icicle-api icicle-indexer icicle-lending
 ```
 
 ## Things this deploy does NOT include (yet)
