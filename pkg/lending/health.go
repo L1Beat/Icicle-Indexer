@@ -286,51 +286,83 @@ func (e *HealthEngine) crossing(proto Protocol, h Health, near bool) (Alert, boo
 }
 
 // executeProbes batches probe calls into aggregate3 requests, keeping each
-// probe's calls within a single batch, and decodes results back per probe.
+// probe's calls within a single batch, and decodes results back per probe. Chunks
+// run concurrently bounded by SweepWorkers so large read sets stay fast without
+// overwhelming the archive node.
 func (e *HealthEngine) executeProbes(ctx context.Context, probes []HealthProbe, head uint64) []Health {
-	out := make([]Health, 0, len(probes))
 	batchSize := e.cfg.BatchSize
 	if batchSize <= 0 {
 		batchSize = 400
 	}
+	workers := e.cfg.SweepWorkers
+	if workers <= 0 {
+		workers = 8
+	}
 
+	// Pack probes into chunks, never splitting a single probe across chunks.
+	var chunks [][]HealthProbe
 	i := 0
 	for i < len(probes) {
 		var chunk []HealthProbe
-		var calls []Call
+		calls := 0
 		for i < len(probes) {
 			n := len(probes[i].Calls)
-			if len(calls) > 0 && len(calls)+n > batchSize {
+			if calls > 0 && calls+n > batchSize {
 				break
 			}
 			chunk = append(chunk, probes[i])
-			calls = append(calls, probes[i].Calls...)
+			calls += n
 			i++
 		}
 		if len(chunk) == 0 {
 			i++
 			continue
 		}
-
-		metricMulticallTotal.Inc()
-		res, err := e.rpc.EthCall(ctx, Multicall3Address, EncodeAggregate3(calls), "latest")
-		if err != nil {
-			slog.Warn("lending: multicall failed", "calls", len(calls), "error", err)
-			continue
-		}
-		results, err := DecodeAggregate3(decodeHex(res))
-		if err != nil || len(results) != len(calls) {
-			slog.Warn("lending: multicall decode mismatch", "want", len(calls), "got", len(results), "error", err)
-			continue
-		}
-
-		off := 0
-		for _, p := range chunk {
-			n := len(p.Calls)
-			out = append(out, p.Decode(results[off:off+n], head))
-			off += n
-		}
+		chunks = append(chunks, chunk)
 	}
+
+	var mu sync.Mutex
+	out := make([]Health, 0, len(probes))
+	sem := make(chan struct{}, workers)
+	var wg sync.WaitGroup
+
+	for _, chunk := range chunks {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(chunk []HealthProbe) {
+			defer wg.Done()
+			defer func() { <-sem }()
+
+			var calls []Call
+			for _, p := range chunk {
+				calls = append(calls, p.Calls...)
+			}
+
+			metricMulticallTotal.Inc()
+			res, err := e.rpc.EthCall(ctx, Multicall3Address, EncodeAggregate3(calls), "latest")
+			if err != nil {
+				slog.Warn("lending: multicall failed", "calls", len(calls), "error", err)
+				return
+			}
+			results, err := DecodeAggregate3(decodeHex(res))
+			if err != nil || len(results) != len(calls) {
+				slog.Warn("lending: multicall decode mismatch", "want", len(calls), "got", len(results), "error", err)
+				return
+			}
+
+			local := make([]Health, 0, len(chunk))
+			off := 0
+			for _, p := range chunk {
+				n := len(p.Calls)
+				local = append(local, p.Decode(results[off:off+n], head))
+				off += n
+			}
+			mu.Lock()
+			out = append(out, local...)
+			mu.Unlock()
+		}(chunk)
+	}
+	wg.Wait()
 	return out
 }
 

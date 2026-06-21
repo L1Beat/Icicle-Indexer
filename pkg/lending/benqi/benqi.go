@@ -169,15 +169,22 @@ func (a *Adapter) DecodeLog(l lending.LogRow) []lending.Exposure {
 	return nil
 }
 
-// BuildProbe reads getAccountLiquidity for the authoritative shortfall, plus
-// per-market snapshots and prices when exposure is provided.
-func (a *Adapter) BuildProbe(account string, exposure []lending.Exposure) lending.HealthProbe {
+// BuildProbe reads getAccountLiquidity for the authoritative shortfall, plus a
+// snapshot and price for every market so collateral and the derived health factor
+// are complete regardless of how much discovery has processed. The exposure
+// argument is unused: Benqi needs the full market set, not just seen markets.
+func (a *Adapter) BuildProbe(account string, _ []lending.Exposure) lending.HealthProbe {
 	account = lending.NormalizeAddr(account)
 	calls := []lending.Call{
 		{Target: a.comptroller, AllowFailure: true, Data: lending.EncodeCall1Addr(fnGetAccountLiquidity, account)},
 	}
 
-	markets := distinctMarkets(exposure)
+	// Read every market, not just discovered exposure. Benqi health is the sum of
+	// per-market snapshots, so a missing collateral market (exposure lags during
+	// backfill) would zero out collateral and wrongly drive the derived HF to 0.
+	// The authoritative liquidatable flag comes from getAccountLiquidity regardless,
+	// but HF, collateral, and tiering need the full market set to be correct.
+	markets := a.addrs.Markets
 	for _, m := range markets {
 		calls = append(calls,
 			lending.Call{Target: m, AllowFailure: true, Data: lending.EncodeCall1Addr(fnGetAccountSnapshot, account)},
@@ -337,20 +344,6 @@ func one(account, asset string, side lending.Side, block uint32) []lending.Expos
 		return nil
 	}
 	return []lending.Exposure{{Account: account, Asset: lending.NormalizeAddr(asset), Side: side, Block: block}}
-}
-
-func distinctMarkets(exposure []lending.Exposure) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, e := range exposure {
-		m := lending.NormalizeAddr(e.Asset)
-		if m == lending.ZeroAddress || seen[m] {
-			continue
-		}
-		seen[m] = true
-		out = append(out, m)
-	}
-	return out
 }
 
 func div1e18(x *big.Int) *big.Int { return new(big.Int).Div(x, lending.WAD) }
