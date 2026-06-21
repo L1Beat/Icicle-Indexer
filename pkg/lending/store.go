@@ -127,8 +127,16 @@ func (s *Store) ReadLogs(ctx context.Context, addresses, topics []string, fromBl
 	if len(addresses) == 0 || len(topics) == 0 {
 		return nil, nil
 	}
+	// Coalesce nullable topics to a zero FixedString so they scan into a fixed
+	// [32]byte. Scanning Nullable(FixedString) through a pointer-to-pointer is
+	// unsupported by the driver, and an all-zero topic maps to the zero address,
+	// which the adapters already treat as absent.
 	q := fmt.Sprintf(`
-		SELECT address, topic0, topic1, topic2, topic3, data, block_number
+		SELECT address, topic0,
+			ifNull(topic1, toFixedString('', 32)) AS topic1,
+			ifNull(topic2, toFixedString('', 32)) AS topic2,
+			ifNull(topic3, toFixedString('', 32)) AS topic3,
+			data, block_number
 		FROM raw_logs
 		WHERE chain_id = ? AND block_number >= ? AND block_number <= ?
 		  AND address IN (%s) AND topic0 IN (%s)
@@ -144,8 +152,7 @@ func (s *Store) ReadLogs(ctx context.Context, addresses, topics []string, fromBl
 	var out []LogRow
 	for rows.Next() {
 		var addr [20]byte
-		var t0 [32]byte
-		var t1, t2, t3 *[]byte
+		var t0, t1, t2, t3 [32]byte
 		var data []byte
 		var block uint32
 		if err := rows.Scan(&addr, &t0, &t1, &t2, &t3, &data, &block); err != nil {
@@ -154,9 +161,9 @@ func (s *Store) ReadLogs(ctx context.Context, addresses, topics []string, fromBl
 		out = append(out, LogRow{
 			Address: "0x" + hex.EncodeToString(addr[:]),
 			Topic0:  "0x" + hex.EncodeToString(t0[:]),
-			Topic1:  topicPtrHex(t1),
-			Topic2:  topicPtrHex(t2),
-			Topic3:  topicPtrHex(t3),
+			Topic1:  topicHex(t1),
+			Topic2:  topicHex(t2),
+			Topic3:  topicHex(t3),
 			Data:    data,
 			Block:   block,
 		})
@@ -507,11 +514,19 @@ func topicInList(topics []string) string {
 	return strings.Join(parts, ", ")
 }
 
-func topicPtrHex(b *[]byte) string {
-	if b == nil || len(*b) == 0 {
+// topicHex returns the 0x topic, or "" for an all-zero (absent) topic.
+func topicHex(b [32]byte) string {
+	zero := true
+	for _, c := range b {
+		if c != 0 {
+			zero = false
+			break
+		}
+	}
+	if zero {
 		return ""
 	}
-	return "0x" + hex.EncodeToString(*b)
+	return "0x" + hex.EncodeToString(b[:])
 }
 
 func orZero(n *big.Int) *big.Int {
