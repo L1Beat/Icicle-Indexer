@@ -116,8 +116,11 @@ func (e *HealthEngine) Run(ctx context.Context) {
 	}
 }
 
-// sweep refreshes every account summary-only (the cheap probe), reclassifies
-// tiers, and promotes anything that became liquidatable or near.
+// sweep refreshes every account with per-asset detail, reclassifies tiers, and
+// promotes anything that became liquidatable or near. Detail is needed so totals
+// land for both protocols: Aave's summary read carries collateral and debt, but
+// Benqi's getAccountLiquidity returns only net shortfall, so a healthy Benqi
+// position would otherwise never get its debt and collateral populated.
 func (e *HealthEngine) sweep(ctx context.Context) {
 	head, err := e.rpc.BlockNumber(ctx)
 	if err != nil {
@@ -130,8 +133,13 @@ func (e *HealthEngine) sweep(ctx context.Context) {
 			slog.Warn("lending: sweep read accounts failed", "protocol", proto, "error", err)
 			continue
 		}
+		exposure, err := e.store.ReadExposure(ctx, proto)
+		if err != nil {
+			slog.Warn("lending: sweep read exposure failed", "protocol", proto, "error", err)
+			continue
+		}
 		start := time.Now()
-		e.refresh(ctx, adapter, accounts, nil, head, "sweep")
+		e.refresh(ctx, adapter, accounts, exposure, head, "sweep")
 		metricRefreshSeconds.WithLabelValues("sweep").Observe(time.Since(start).Seconds())
 		slog.Info("lending: cold sweep complete", "protocol", proto, "accounts", len(accounts), "elapsed", time.Since(start))
 	}

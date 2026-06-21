@@ -191,6 +191,11 @@ func (a *Adapter) BuildProbe(account string, exposure []lending.Exposure) lendin
 	}
 
 	params := a.params
+	// Aave reports base-currency amounts in BASE_CURRENCY_UNIT (1e8 for USD on
+	// Avalanche). Normalize to 1e18 so collateral and debt values are comparable
+	// with Benqi's 1e18-scaled values in the unified feed and ranking. The health
+	// factor is already a 1e18 dimensionless ratio and is left untouched.
+	baseScale := a.baseScale()
 	return lending.HealthProbe{
 		Account: account,
 		Calls:   calls,
@@ -204,8 +209,8 @@ func (a *Adapter) BuildProbe(account string, exposure []lending.Exposure) lendin
 				return h // summary read reverted, skip this account (rule 5)
 			}
 			sum := results[0].ReturnData
-			h.CollateralBase = lending.Word(sum, 0)
-			h.DebtBase = lending.Word(sum, 1)
+			h.CollateralBase = new(big.Int).Mul(lending.Word(sum, 0), baseScale)
+			h.DebtBase = new(big.Int).Mul(lending.Word(sum, 1), baseScale)
 			h.HealthFactor = lending.Word(sum, 5)
 			h.OK = true
 			h.Liquidatable = h.DebtBase.Sign() > 0 && h.HealthFactor.Cmp(lending.WAD) < 0
@@ -229,19 +234,34 @@ func (a *Adapter) BuildProbe(account string, exposure []lending.Exposure) lendin
 				if aTokenBal.Sign() > 0 {
 					h.Assets = append(h.Assets, lending.AssetPosition{
 						Asset: asset, Side: lending.SideCollateral,
-						Amount: aTokenBal, BaseValue: baseValue(aTokenBal, price, p.Decimals),
+						Amount: aTokenBal, BaseValue: new(big.Int).Mul(baseValue(aTokenBal, price, p.Decimals), baseScale),
 					})
 				}
 				if debt.Sign() > 0 {
 					h.Assets = append(h.Assets, lending.AssetPosition{
 						Asset: asset, Side: lending.SideDebt,
-						Amount: debt, BaseValue: baseValue(debt, price, p.Decimals),
+						Amount: debt, BaseValue: new(big.Int).Mul(baseValue(debt, price, p.Decimals), baseScale),
 					})
 				}
 			}
 			return h
 		},
 	}
+}
+
+// baseScale returns the multiplier that converts Aave base-currency amounts
+// (BASE_CURRENCY_UNIT, typically 1e8) to the canonical 1e18 scale. Returns 1 when
+// the unit is unknown or already at or above 1e18.
+func (a *Adapter) baseScale() *big.Int {
+	unit := a.globals.BaseCurrencyUnit
+	if unit == nil || unit.Sign() == 0 {
+		return big.NewInt(1)
+	}
+	scale := new(big.Int).Div(lending.WAD, unit)
+	if scale.Sign() == 0 {
+		return big.NewInt(1)
+	}
+	return scale
 }
 
 // PriceSources exposes the oracle and the reserve assets the price watcher should

@@ -92,6 +92,11 @@ fills in as discovery and the first sweep complete.
 - `GET /api/v1/data/evm/{chainId}/lending/alerts` recent crossing events.
 - `GET /ws/lending/{chainId}` pushes `lending_alert` messages on crossings.
 
+Base-currency amounts (`collateral_base`, `debt_base`, per-asset `base_value`,
+`shortfall_base`) are normalized to USD scaled by 1e18 across both protocols, so
+they are directly comparable. Aave's native 1e8 base values are scaled up at read
+time. `min_debt_base` therefore takes a 1e18-scaled value (1e20 is ~$100).
+
 Each position carries the unified health factor, total and per-asset collateral
 and debt in the oracle base currency, and a gross liquidation estimate
 (close factor, liquidation bonus, seizable collateral, gross bonus). Slippage is
