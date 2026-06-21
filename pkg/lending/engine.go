@@ -68,6 +68,11 @@ func (e *Engine) Bootstrap(ctx context.Context, adapters []Adapter) error {
 			slog.Warn("lending: write addresses failed", "protocol", a.Protocol(), "error", err)
 		}
 
+		// Inject resolved addresses before reading params: RefreshParams reads
+		// per-asset config from the data provider / market list, which the adapter
+		// only knows once configured.
+		a.Configure(addrs, nil, GlobalParams{})
+
 		params, globals, err := a.RefreshParams(ctx, e.rpc)
 		if err != nil {
 			slog.Error("lending: initial params refresh failed, skipping protocol", "protocol", a.Protocol(), "error", err)
