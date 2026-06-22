@@ -56,6 +56,64 @@ func FindCrossing(candidates []uint64, takenBlock, floor uint64, liq Liquidatabl
 	return CrossingResult{CrossingBlock: crossing, Censored: false}, nil
 }
 
+// FindCrossingByScan locates the crossing without relying on oracle events (which
+// on Avalanche are OCR NewTransmission, not the legacy AnswerUpdated). It steps
+// backward from takenBlock by stride to bracket the boundary between a healthy and
+// a liquidatable block, then binary-searches the bracket for the exact first
+// liquidatable block. Block-precise and bounded to about lookback/stride coarse
+// probes plus log2(stride) refinement probes. Right-censors when the position was
+// already liquidatable at the floor.
+func FindCrossingByScan(takenBlock, floor, stride uint64, liq LiquidatableAt) (CrossingResult, error) {
+	if stride == 0 {
+		stride = 600
+	}
+	if floor >= takenBlock {
+		return CrossingResult{CrossingBlock: takenBlock, Censored: false}, nil
+	}
+
+	hi := takenBlock // known liquidatable: it was liquidated at takenBlock
+	lo := uint64(0)
+	b := takenBlock
+	for {
+		if b <= floor+stride {
+			ok, err := liq(floor)
+			if err != nil {
+				return CrossingResult{}, err
+			}
+			if ok {
+				return CrossingResult{CrossingBlock: floor, Censored: true}, nil
+			}
+			lo = floor
+			break
+		}
+		b -= stride
+		ok, err := liq(b)
+		if err != nil {
+			return CrossingResult{}, err
+		}
+		if !ok {
+			lo = b
+			break
+		}
+		hi = b
+	}
+
+	// lo is healthy, hi is liquidatable: binary-search the first liquidatable block.
+	for hi-lo > 1 {
+		mid := lo + (hi-lo)/2
+		ok, err := liq(mid)
+		if err != nil {
+			return CrossingResult{}, err
+		}
+		if ok {
+			hi = mid
+		} else {
+			lo = mid
+		}
+	}
+	return CrossingResult{CrossingBlock: hi, Censored: false}, nil
+}
+
 // StealTime returns taken - crossing in blocks.
 func StealTime(takenBlock uint64, c CrossingResult) uint64 {
 	if c.CrossingBlock > takenBlock {

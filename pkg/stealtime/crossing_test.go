@@ -46,6 +46,32 @@ func TestFindCrossingCensored(t *testing.T) {
 	}
 }
 
+func TestFindCrossingByScan(t *testing.T) {
+	// Liquidatable at and above 998, healthy below. Binary search must land on 998.
+	liq := func(b uint64) (bool, error) { return b >= 998, nil }
+	got, err := FindCrossingByScan(1000, 900, 10, liq)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if got.Censored || got.CrossingBlock != 998 {
+		t.Fatalf("crossing: got %+v want 998", got)
+	}
+	if s := StealTime(1000, got); s != 2 {
+		t.Fatalf("steal_time: got %d want 2", s)
+	}
+}
+
+func TestFindCrossingByScanCensored(t *testing.T) {
+	liq := func(uint64) (bool, error) { return true, nil }
+	got, err := FindCrossingByScan(1000, 900, 10, liq)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if !got.Censored || got.CrossingBlock != 900 {
+		t.Fatalf("expected censored at floor 900, got %+v", got)
+	}
+}
+
 func TestFindCrossingNoCandidates(t *testing.T) {
 	taken := uint64(1000)
 	got, err := FindCrossing(nil, taken, 900, func(uint64) (bool, error) { return true, nil })

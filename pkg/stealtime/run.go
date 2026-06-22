@@ -26,6 +26,7 @@ type Config struct {
 	FromBlock         uint64
 	ToBlock           uint64
 	MaxLookbackBlocks uint64
+	SampleStride      uint64
 	MinProfitUSD1e18  *big.Int
 	GasUnits          uint64
 	TopN              int
@@ -54,7 +55,6 @@ func Run(ctx context.Context, conn driver.Conn, cfg Config) error {
 	}
 
 	aavePool := common.HexToAddress(aaveAddrs.Pool)
-	aaveOracle := common.HexToAddress(aaveAddrs.Oracle)
 	aaveDataProvider := common.HexToAddress(aaveAddrs.DataProvider)
 	benqiComptroller := common.HexToAddress(benqiAddrs.Comptroller)
 
@@ -68,7 +68,6 @@ func Run(ctx context.Context, conn driver.Conn, cfg Config) error {
 	}
 	slog.Info("stealtime: enumerated liquidations", "count", len(liqs), "from", cfg.FromBlock, "to", cfg.ToBlock)
 
-	aggCache := map[common.Address]common.Address{}
 	reasons := map[prefilter.Reason]int{}
 	var obs []Observation
 	var scanned, profitable, quoterCalls, quoterFails int
@@ -82,22 +81,12 @@ func Run(ctx context.Context, conn driver.Conn, cfg Config) error {
 			poolOrComp = benqiComptroller
 		}
 
-		collInfo, _ := resolver.Resolve(ctx, liq.Protocol, liq.CollateralAsset)
-		debtInfo, _ := resolver.Resolve(ctx, liq.Protocol, liq.DebtAsset)
-		assets := []common.Address{collInfo.Underlying, debtInfo.Underlying}
-
 		floor := uint64(0)
 		if liq.TakenBlock > cfg.MaxLookbackBlocks {
 			floor = liq.TakenBlock - cfg.MaxLookbackBlocks
 		}
 
-		cands, err := gatherCandidates(ctx, conn, rpc, cfg.ChainID, aaveOracle, aavePool, liq.Account, liq.Protocol, assets, floor, liq.TakenBlock, aggCache)
-		if err != nil {
-			slog.Warn("stealtime: gather candidates failed", "account", liq.Account.Hex(), "error", err)
-			continue
-		}
-
-		crossing, err := FindCrossing(cands, liq.TakenBlock, floor, func(b uint64) (bool, error) {
+		crossing, err := FindCrossingByScan(liq.TakenBlock, floor, cfg.SampleStride, func(b uint64) (bool, error) {
 			return liquidatableAtBlock(ctx, rpc, liq.Protocol, liq.Account, poolOrComp, b)
 		})
 		if err != nil {

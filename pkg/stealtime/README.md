@@ -20,17 +20,16 @@ For each liquidation that actually happened in `raw_logs`:
 1. **Enumerate**: decode Aave `LiquidationCall` and Benqi `LiquidateBorrow` over
    the block window, keeping account, debt and collateral assets, the liquidator,
    and the block it landed (taken_block).
-2. **Candidates**: gather the exact blocks where the position's health could have
-   changed: `AnswerUpdated` on the Chainlink aggregators backing its assets
-   (resolved through the Aave oracle, which prices the underlyings both protocols
-   use), plus the account's own worsening Aave events. This makes the crossing
-   block-precise without scanning every block.
-3. **Crossing**: walk candidates backward from taken_block, checking the
-   authoritative on-chain liquidatable flag at each block (Aave healthFactor < 1e18,
-   Benqi shortfall > 0), and pin crossing_block to the first block that was
-   liquidatable and stayed so through taken. If the position was already
-   liquidatable at the lookback floor, the observation is right-censored at the cap.
-4. **Profitability**: at crossing_block, assemble the position's per-asset legs by
+2. **Crossing**: step backward from taken_block by a coarse stride to bracket the
+   boundary between a healthy and a liquidatable block, then binary-search the
+   bracket for the exact first liquidatable block, checking the authoritative
+   on-chain flag at each probe (Aave healthFactor < 1e18, Benqi shortfall > 0).
+   This is block-precise, oracle-event agnostic (Avalanche feeds are OCR
+   NewTransmission, not the legacy AnswerUpdated, so there are no AnswerUpdated logs
+   to key on), and bounded to about lookback/stride coarse probes plus log2(stride)
+   refinement probes. If the position was already liquidatable at the lookback
+   floor, the observation is right-censored at the cap.
+3. **Profitability**: at crossing_block, assemble the position's per-asset legs by
    reusing the live lending adapter's probe executed block-pinned, then run
    `pkg/prefilter.EvaluatePosition` with a block-pinned ParamsProvider (bonus and
    close factor as of the block), a block-pinned Quoter (Pangolin, TraderJoe, and
@@ -38,7 +37,7 @@ For each liquidation that actually happened in `raw_logs`:
    underlying), and a CostModel whose gas is the block's base fee, AVAX price the
    oracle at the block, and flash fee Aave's premium at the block. Keep only
    opportunities profitable at crossing_block.
-5. **Aggregate**: steal_time histogram (0, 1, 2, 3 to 5, 6 to 10, 11 to 20, 21+,
+4. **Aggregate**: steal_time histogram (0, 1, 2, 3 to 5, 6 to 10, 11 to 20, 21+,
    censored), median and p90, the fraction taken within 0 to 2 blocks versus beyond
    10, split by protocol and size bucket, total realized profit, and incumbent
    concentration (top-N liquidator share).
@@ -85,6 +84,9 @@ re-aggregate or compare windows without re-running the archive reads.
   demonstrated.
 - The LFJ Liquidity Book quoter address must be verified on-chain. A wrong
   `LBQuoter` address makes LB quotes fail and fall back to the V2 routers, which
-  would understate profitability for LB-only pairs. Benqi price-driven candidates
-  rely on the Aave oracle pricing the same underlyings; assets Aave does not list
-  fall back to position-change candidates only.
+  would understate profitability for LB-only pairs.
+- The crossing scan assumes health crosses once and stays liquidatable through
+  taken (the common case). A position that oscillated healthy and liquidatable
+  within the bracket gets the binary-search boundary, which is block-precise but
+  may not be the earliest of several liquidatable runs. The stride trades probe
+  count against how wide a bracket the binary search must resolve, both bounded.
