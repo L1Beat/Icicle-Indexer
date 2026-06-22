@@ -5,6 +5,7 @@ go 1.24.9
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.40.3
 	github.com/ava-labs/avalanchego v1.14.1-0.20251106202910-8ebe57a20bba
+	github.com/ava-labs/libevm v1.13.15-0.20251016142715-1bccf4f2ddb2
 	github.com/cockroachdb/pebble/v2 v2.1.1
 	github.com/dustin/go-humanize v1.0.1
 	github.com/fatih/color v1.13.0
@@ -32,7 +33,6 @@ require (
 	github.com/RaduBerinde/btreemap v0.0.0-20250419174037-3d62b7205d54 // indirect
 	github.com/StephenButtolph/canoto v0.17.3 // indirect
 	github.com/andybalholm/brotli v1.2.0 // indirect
-	github.com/ava-labs/libevm v1.13.15-0.20251016142715-1bccf4f2ddb2 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/btcsuite/btcd/btcec/v2 v2.3.5 // indirect
 	github.com/btcsuite/btcd/btcutil v1.1.3 // indirect
