@@ -45,18 +45,18 @@ func Run(ctx context.Context, conn driver.Conn, cfg Config) error {
 
 	aaveAd := aave.New("")
 	benqiAd := benqi.New("")
-	aaveAddrs, err := bootstrap(ctx, rpc, aaveAd)
+	aaveAddrs, aaveParams, aaveGlobals, err := bootstrap(ctx, rpc, aaveAd)
 	if err != nil {
 		return fmt.Errorf("bootstrap aave: %w", err)
 	}
-	benqiAddrs, err := bootstrap(ctx, rpc, benqiAd)
+	benqiAddrs, benqiParams, benqiGlobals, err := bootstrap(ctx, rpc, benqiAd)
 	if err != nil {
 		return fmt.Errorf("bootstrap benqi: %w", err)
 	}
 
 	aavePool := common.HexToAddress(aaveAddrs.Pool)
-	aaveDataProvider := common.HexToAddress(aaveAddrs.DataProvider)
 	benqiComptroller := common.HexToAddress(benqiAddrs.Comptroller)
+	addrRes := newAddrResolver(rpc, benqiComptroller, 0)
 
 	if err := ensureSchema(ctx, conn); err != nil {
 		return err
@@ -92,6 +92,16 @@ func Run(ctx context.Context, conn driver.Conn, cfg Config) error {
 		if err != nil {
 			slog.Warn("stealtime: find crossing failed", "account", liq.Account.Hex(), "error", err)
 			continue
+		}
+
+		// Reconfigure the adapter to the addresses as of the crossing block, so the
+		// oracle and market list match the historical state we read against.
+		blockAddrs := addrRes.at(ctx, liq.Protocol, crossing.CrossingBlock)
+		aaveDataProvider := common.HexToAddress(blockAddrs.DataProvider)
+		if liq.Protocol == "benqi" {
+			benqiAd.Configure(blockAddrs, benqiParams, benqiGlobals)
+		} else {
+			aaveAd.Configure(blockAddrs, aaveParams, aaveGlobals)
 		}
 
 		pos, ok := assemblePosition(ctx, rpc, adapter, resolver, liq.Protocol, liq, crossing.CrossingBlock)
@@ -137,20 +147,21 @@ func Run(ctx context.Context, conn driver.Conn, cfg Config) error {
 	return nil
 }
 
-// bootstrap resolves and configures an adapter at head. Addresses are injected
-// before RefreshParams, which reads per-asset config from them.
-func bootstrap(ctx context.Context, rpc *lending.Client, a lending.Adapter) (lending.Addresses, error) {
+// bootstrap resolves an adapter at head and returns its addresses and parameters.
+// Decimals and risk params are effectively static, so head values are reused for
+// historical blocks; only the addresses are re-resolved block-pinned per position.
+func bootstrap(ctx context.Context, rpc *lending.Client, a lending.Adapter) (lending.Addresses, []lending.AssetParam, lending.GlobalParams, error) {
 	addrs, _, err := a.Resolve(ctx, rpc)
 	if err != nil {
-		return lending.Addresses{}, err
+		return lending.Addresses{}, nil, lending.GlobalParams{}, err
 	}
 	a.Configure(addrs, nil, lending.GlobalParams{})
 	params, globals, err := a.RefreshParams(ctx, rpc)
 	if err != nil {
-		return lending.Addresses{}, err
+		return lending.Addresses{}, nil, lending.GlobalParams{}, err
 	}
 	a.Configure(addrs, params, globals)
-	return addrs, nil
+	return addrs, params, globals, nil
 }
 
 func ensureSchema(ctx context.Context, conn driver.Conn) error {
