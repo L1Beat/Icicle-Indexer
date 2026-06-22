@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/big"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 )
@@ -60,6 +62,23 @@ func (c *Client) EthCall(ctx context.Context, to, data, block string) (string, e
 		map[string]string{"to": to, "data": ensure0x(data)}, block,
 	}, &result)
 	return result, err
+}
+
+// GasPrice returns the current network gas price in wei.
+func (c *Client) GasPrice(ctx context.Context) (*big.Int, error) {
+	var h string
+	if err := c.call(ctx, "eth_gasPrice", []interface{}{}, &h); err != nil {
+		return nil, err
+	}
+	s := strings.TrimPrefix(strings.TrimPrefix(h, "0x"), "0X")
+	if s == "" {
+		return big.NewInt(0), nil
+	}
+	n, ok := new(big.Int).SetString(s, 16)
+	if !ok {
+		return nil, fmt.Errorf("invalid gas price %q", h)
+	}
+	return n, nil
 }
 
 // BlockNumber returns the current chain head.

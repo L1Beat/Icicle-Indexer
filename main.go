@@ -121,10 +121,47 @@ func main() {
 	lendingCmd.Flags().Int("params-refresh-hours", 6, "Hours between protocol parameter refreshes")
 	lendingCmd.Flags().Int("metrics-port", 9092, "Port for the Prometheus /metrics endpoint (0 to disable)")
 
+	kmeasureCmd := &cobra.Command{
+		Use:   "kmeasure",
+		Short: "Read-only Stage 1 K-measurement: profitable liquidations after costs",
+		Run: func(command *cobra.Command, args []string) {
+			opts := cmd.DefaultKMeasureOptions()
+			cid, _ := command.Flags().GetUint32("chain")
+			opts.ChainID = cid
+			if v, _ := command.Flags().GetString("feed-url"); v != "" {
+				opts.FeedBaseURL = v
+			}
+			if v, _ := command.Flags().GetString("archive-rpc"); v != "" {
+				opts.ArchiveRPC = v
+			}
+			if v, _ := command.Flags().GetString("fallback-rpc"); v != "" {
+				opts.FallbackRPC = v
+			}
+			opts.IntervalMinutes, _ = command.Flags().GetInt("interval-min")
+			opts.GasUnits, _ = command.Flags().GetUint64("gas-units")
+			opts.MinProfitUSD, _ = command.Flags().GetFloat64("min-profit-usd")
+			opts.FlashFeeBps, _ = command.Flags().GetUint64("flash-fee-bps")
+			opts.MinDebtBase, _ = command.Flags().GetString("min-debt-base")
+			opts.Persist, _ = command.Flags().GetBool("persist")
+			cmd.RunKMeasure(ctx, opts)
+		},
+	}
+	kmeasureCmd.Flags().Uint32("chain", 43114, "EVM chain ID")
+	kmeasureCmd.Flags().String("feed-url", "https://api.l1beat.io/api/v1/data/evm/43114/lending", "Lending feed base URL")
+	kmeasureCmd.Flags().String("archive-rpc", os.Getenv("ICICLE_ARCHIVE_RPC"), "Archive node RPC URL (required)")
+	kmeasureCmd.Flags().String("fallback-rpc", os.Getenv("ICICLE_FALLBACK_RPC"), "Optional public RPC fallback")
+	kmeasureCmd.Flags().Int("interval-min", 0, "Repeat every N minutes (0 = one-shot)")
+	kmeasureCmd.Flags().Uint64("gas-units", 700000, "Estimated full-bundle gas units")
+	kmeasureCmd.Flags().Float64("min-profit-usd", 25, "Minimum net profit in USD to count as profitable")
+	kmeasureCmd.Flags().Uint64("flash-fee-bps", 5, "Flash-loan fee in bps, fallback if on-chain read fails")
+	kmeasureCmd.Flags().String("min-debt-base", "", "Optional feed-side dust pre-cut, 1e18 USD (default off)")
+	kmeasureCmd.Flags().Bool("persist", true, "Persist each run summary to kmeasure_runs")
+
 	root.AddCommand(
 		ingestCmd,
 		apiCmd,
 		lendingCmd,
+		kmeasureCmd,
 		&cobra.Command{
 			Use:   "cache",
 			Short: "Fill RPC cache at max speed (no ClickHouse)",
