@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 )
 
@@ -107,22 +108,74 @@ func (f *FeedClient) FetchLiquidatable(ctx context.Context, minDebtBase string) 
 		if env.Meta == nil || !env.Meta.HasMore {
 			break
 		}
+		// Gentle pace to stay under the public API rate limit (60/min, burst 10).
+		if !sleepCtx(ctx, 250*time.Millisecond) {
+			return out, ctx.Err()
+		}
 	}
 	return out, nil
 }
 
+// getJSON fetches and decodes, retrying on 429 with the server's Retry-After (the
+// same limit an external searcher faces), and on transient transport errors.
 func (f *FeedClient) getJSON(ctx context.Context, fullURL string, out interface{}) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fullURL, nil)
-	if err != nil {
+	backoff := 500 * time.Millisecond
+	var lastErr error
+	for attempt := 0; attempt < 6; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, fullURL, nil)
+		if err != nil {
+			return err
+		}
+		resp, err := f.http.Do(req)
+		if err != nil {
+			lastErr = err
+			if !sleepCtx(ctx, backoff) {
+				return ctx.Err()
+			}
+			backoff *= 2
+			continue
+		}
+		if resp.StatusCode == http.StatusTooManyRequests {
+			wait := parseRetryAfter(resp.Header.Get("Retry-After"))
+			resp.Body.Close()
+			if wait <= 0 {
+				wait = backoff
+			}
+			lastErr = fmt.Errorf("feed %s: rate limited (429)", fullURL)
+			if !sleepCtx(ctx, wait) {
+				return ctx.Err()
+			}
+			backoff *= 2
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return fmt.Errorf("feed %s: status %d", fullURL, resp.StatusCode)
+		}
+		err = json.NewDecoder(resp.Body).Decode(out)
+		resp.Body.Close()
 		return err
 	}
-	resp, err := f.http.Do(req)
-	if err != nil {
-		return err
+	return lastErr
+}
+
+func parseRetryAfter(h string) time.Duration {
+	if h == "" {
+		return 0
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("feed %s: status %d", fullURL, resp.StatusCode)
+	if secs, err := strconv.Atoi(h); err == nil && secs >= 0 {
+		return time.Duration(secs) * time.Second
 	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	return 0
+}
+
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
 }
