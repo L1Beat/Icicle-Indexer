@@ -81,6 +81,27 @@ func (c *Client) GasPrice(ctx context.Context) (*big.Int, error) {
 	return n, nil
 }
 
+// BlockBaseFee returns the EIP-1559 base fee from a historical block header, the
+// block-pinned gas price for backtests.
+func (c *Client) BlockBaseFee(ctx context.Context, block uint64) (*big.Int, error) {
+	blk := "0x" + strconv.FormatUint(block, 16)
+	var res struct {
+		BaseFeePerGas string `json:"baseFeePerGas"`
+	}
+	if err := c.call(ctx, "eth_getBlockByNumber", []interface{}{blk, false}, &res); err != nil {
+		return nil, err
+	}
+	s := strings.TrimPrefix(strings.TrimPrefix(res.BaseFeePerGas, "0x"), "0X")
+	if s == "" {
+		return big.NewInt(0), nil
+	}
+	n, ok := new(big.Int).SetString(s, 16)
+	if !ok {
+		return nil, fmt.Errorf("invalid base fee %q", res.BaseFeePerGas)
+	}
+	return n, nil
+}
+
 // BlockNumber returns the current chain head.
 func (c *Client) BlockNumber(ctx context.Context) (uint64, error) {
 	var hexNum string

@@ -157,11 +157,46 @@ func main() {
 	kmeasureCmd.Flags().String("min-debt-base", "", "Optional feed-side dust pre-cut, 1e18 USD (default off)")
 	kmeasureCmd.Flags().Bool("persist", true, "Persist each run summary to kmeasure_runs")
 
+	stealtimeCmd := &cobra.Command{
+		Use:   "stealtime",
+		Short: "Offline backtest: how long profitable liquidations sat before being taken",
+		Run: func(command *cobra.Command, args []string) {
+			opts := cmd.DefaultStealtimeOptions()
+			cid, _ := command.Flags().GetUint32("chain")
+			opts.ChainID = cid
+			if v, _ := command.Flags().GetString("archive-rpc"); v != "" {
+				opts.ArchiveRPC = v
+			}
+			if v, _ := command.Flags().GetString("fallback-rpc"); v != "" {
+				opts.FallbackRPC = v
+			}
+			opts.FromBlock, _ = command.Flags().GetUint64("from-block")
+			opts.ToBlock, _ = command.Flags().GetUint64("to-block")
+			opts.MaxLookbackBlocks, _ = command.Flags().GetUint64("max-lookback-blocks")
+			opts.MinProfitUSD, _ = command.Flags().GetFloat64("min-profit-usd")
+			opts.GasUnits, _ = command.Flags().GetUint64("gas-units")
+			opts.TopN, _ = command.Flags().GetInt("top-n")
+			opts.Persist, _ = command.Flags().GetBool("persist")
+			cmd.RunStealtime(ctx, opts)
+		},
+	}
+	stealtimeCmd.Flags().Uint32("chain", 43114, "EVM chain ID")
+	stealtimeCmd.Flags().String("archive-rpc", os.Getenv("ICICLE_ARCHIVE_RPC"), "Archive node RPC URL (required)")
+	stealtimeCmd.Flags().String("fallback-rpc", os.Getenv("ICICLE_FALLBACK_RPC"), "Optional public RPC fallback")
+	stealtimeCmd.Flags().Uint64("from-block", 0, "Start block of the liquidation scan window")
+	stealtimeCmd.Flags().Uint64("to-block", 0, "End block of the liquidation scan window")
+	stealtimeCmd.Flags().Uint64("max-lookback-blocks", 43200, "Backward search cap; older crossings are right-censored")
+	stealtimeCmd.Flags().Float64("min-profit-usd", 25, "Minimum net profit in USD to count an opportunity")
+	stealtimeCmd.Flags().Uint64("gas-units", 700000, "Estimated full-bundle gas units")
+	stealtimeCmd.Flags().Int("top-n", 10, "Top-N liquidators to report for incumbent concentration")
+	stealtimeCmd.Flags().Bool("persist", true, "Persist per-liquidation rows to stealtime_results")
+
 	root.AddCommand(
 		ingestCmd,
 		apiCmd,
 		lendingCmd,
 		kmeasureCmd,
+		stealtimeCmd,
 		&cobra.Command{
 			Use:   "cache",
 			Short: "Fill RPC cache at max speed (no ClickHouse)",
