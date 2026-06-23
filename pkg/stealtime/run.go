@@ -77,6 +77,10 @@ func Run(ctx context.Context, conn driver.Conn, cfg Config) error {
 
 	for _, liq := range liqs {
 		scanned++
+		if scanned%2000 == 0 {
+			slog.Info("stealtime: progress", "scanned", scanned, "of", len(liqs),
+				"dust_prefiltered", dustSkipped, "evaluated", scanned-dustSkipped, "profitable", profitable)
+		}
 		adapter := lending.Adapter(aaveAd)
 		poolOrComp := aavePool
 		if liq.Protocol == "benqi" {
