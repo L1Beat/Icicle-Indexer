@@ -178,6 +178,7 @@ func main() {
 			opts.GasUnits, _ = command.Flags().GetUint64("gas-units")
 			opts.TopN, _ = command.Flags().GetInt("top-n")
 			opts.Persist, _ = command.Flags().GetBool("persist")
+			opts.Debug, _ = command.Flags().GetBool("debug")
 			cmd.RunStealtime(ctx, opts)
 		},
 	}
@@ -192,6 +193,7 @@ func main() {
 	stealtimeCmd.Flags().Uint64("gas-units", 700000, "Estimated full-bundle gas units")
 	stealtimeCmd.Flags().Int("top-n", 10, "Top-N liquidators to report for incumbent concentration")
 	stealtimeCmd.Flags().Bool("persist", true, "Persist per-liquidation rows to stealtime_results")
+	stealtimeCmd.Flags().Bool("debug", false, "Log per-position legs and result for the first evaluated liquidations")
 
 	root.AddCommand(
 		ingestCmd,

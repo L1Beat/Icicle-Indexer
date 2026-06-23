@@ -24,6 +24,7 @@ type StealtimeOptions struct {
 	GasUnits          uint64
 	TopN              int
 	Persist           bool
+	Debug             bool
 }
 
 // DefaultStealtimeOptions returns backtest defaults for Avalanche C-Chain.
@@ -73,6 +74,8 @@ func RunStealtime(ctx context.Context, opts StealtimeOptions) {
 		GasUnits:          opts.GasUnits,
 		TopN:              opts.TopN,
 		Persist:           opts.Persist,
+		Debug:             opts.Debug,
+		DebugN:            25,
 	}
 
 	if err := stealtime.Run(ctx, conn, cfg); err != nil {

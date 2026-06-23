@@ -31,6 +31,8 @@ type Config struct {
 	GasUnits          uint64
 	TopN              int
 	Persist           bool
+	Debug             bool // log per-position legs and result for the first DebugN evaluated
+	DebugN            int
 }
 
 // Run executes the backtest over the configured block range.
@@ -70,7 +72,7 @@ func Run(ctx context.Context, conn driver.Conn, cfg Config) error {
 
 	reasons := map[prefilter.Reason]int{}
 	var obs []Observation
-	var scanned, profitable, quoterCalls, quoterFails int
+	var scanned, profitable, quoterCalls, quoterFails, debugged int
 
 	for _, liq := range liqs {
 		scanned++
@@ -121,6 +123,20 @@ func Run(ctx context.Context, conn driver.Conn, cfg Config) error {
 			continue
 		}
 		reasons[res.Reason]++
+
+		if cfg.Debug && debugged < cfg.DebugN {
+			debugged++
+			slog.Info("stealtime: debug eval",
+				"account", liq.Account.Hex(), "protocol", liq.Protocol, "reason", string(res.Reason),
+				"crossing", crossing.CrossingBlock, "taken", liq.TakenBlock,
+				"net_usd", usdFloat(res.NetProfitUSD), "repay_usd", usdFloat(res.RepayUSD),
+				"hf", usdFloat(pos.HealthFactor), "legs", len(pos.Legs))
+			for _, l := range pos.Legs {
+				slog.Info("stealtime: debug leg",
+					"side", sideName(l.Side), "asset", l.Asset.Hex(), "decimals", l.Decimals,
+					"amount", l.Amount.String(), "base_usd", usdFloat(l.BaseValue))
+			}
+		}
 
 		steal := StealTime(liq.TakenBlock, crossing)
 		if res.Profitable {
@@ -234,6 +250,13 @@ func report(d Distribution, reasons map[prefilter.Reason]int, scanned, profitabl
 		fmt.Fprintf(&b, "  %s  %d liquidations\n", it.Liquidator.Hex(), it.Count)
 	}
 	fmt.Print(b.String())
+}
+
+func sideName(s prefilter.Side) string {
+	if s == prefilter.SideDebt {
+		return "debt"
+	}
+	return "collateral"
 }
 
 func usdFloat(n *big.Int) float64 {
