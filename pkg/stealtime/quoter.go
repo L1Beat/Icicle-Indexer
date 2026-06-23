@@ -166,23 +166,35 @@ func encodeFindBestPath(route []common.Address, amountIn *big.Int) string {
 }
 
 // decodeLBAmountsLast reads the last element of the amounts array (member index 4)
-// from a returned LFJ Quote tuple. Returns nil on any decode issue.
+// from a returned LFJ Quote struct. The return is a single dynamic struct, so word
+// 0 is the offset to the tuple and every member offset is relative to that base.
+// Returns nil on any decode issue.
 func decodeLBAmountsLast(b []byte) *big.Int {
 	const amountsMemberIndex = 4
-	if len(b) < (amountsMemberIndex+1)*32 {
+	if len(b) < 64 {
 		return nil
 	}
-	off := int(lending.Word(b, amountsMemberIndex).Uint64())
-	if off < 0 || off+32 > len(b) {
+	base := int(lending.Word(b, 0).Uint64())
+	headWord := base + amountsMemberIndex*32
+	if base < 0 || headWord+32 > len(b) {
 		return nil
 	}
-	n := int(new(big.Int).SetBytes(b[off : off+32]).Uint64())
+	amountsOff := base + int(new(big.Int).SetBytes(b[headWord:headWord+32]).Uint64())
+	if amountsOff < 0 || amountsOff+32 > len(b) {
+		return nil
+	}
+	n := int(new(big.Int).SetBytes(b[amountsOff : amountsOff+32]).Uint64())
 	if n == 0 {
 		return nil
 	}
-	last := off + 32 + (n-1)*32
+	last := amountsOff + 32 + (n-1)*32
 	if last+32 > len(b) {
 		return nil
 	}
-	return new(big.Int).SetBytes(b[last : last+32])
+	out := new(big.Int).SetBytes(b[last : last+32])
+	// amounts are uint128; reject anything wider as a decode-misalignment guard.
+	if out.BitLen() > 128 {
+		return nil
+	}
+	return out
 }
