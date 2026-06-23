@@ -27,6 +27,7 @@ type Config struct {
 	ToBlock           uint64
 	MaxLookbackBlocks uint64
 	SampleStride      uint64
+	MinDebtUSD1e18    *big.Int // skip liquidations whose repaid debt is below this, before the heavy work
 	MinProfitUSD1e18  *big.Int
 	GasUnits          uint64
 	TopN              int
@@ -72,7 +73,7 @@ func Run(ctx context.Context, conn driver.Conn, cfg Config) error {
 
 	reasons := map[prefilter.Reason]int{}
 	var obs []Observation
-	var scanned, profitable, quoterCalls, quoterFails, debugged int
+	var scanned, profitable, quoterCalls, quoterFails, debugged, dustSkipped int
 
 	for _, liq := range liqs {
 		scanned++
@@ -81,6 +82,17 @@ func Run(ctx context.Context, conn driver.Conn, cfg Config) error {
 		if liq.Protocol == "benqi" {
 			adapter = benqiAd
 			poolOrComp = benqiComptroller
+		}
+
+		// Cheap dust pre-filter: value the repaid debt at the liquidation block and
+		// skip sub-threshold liquidations before any crossing or quote work.
+		if cfg.MinDebtUSD1e18 != nil && cfg.MinDebtUSD1e18.Sign() > 0 {
+			oracleAtTaken := common.HexToAddress(addrRes.at(ctx, liq.Protocol, liq.TakenBlock).Oracle)
+			debtInfo, _ := resolver.Resolve(ctx, liq.Protocol, liq.DebtAsset)
+			if valueRepaidUSD(ctx, rpc, oracleAtTaken, liq.Protocol, liq, debtInfo.Decimals, liq.TakenBlock).Cmp(cfg.MinDebtUSD1e18) < 0 {
+				dustSkipped++
+				continue
+			}
 		}
 
 		floor := uint64(0)
@@ -155,10 +167,10 @@ func Run(ctx context.Context, conn driver.Conn, cfg Config) error {
 	}
 
 	dist := Aggregate(obs, cfg.TopN)
-	report(dist, reasons, scanned, profitable, quoterCalls, quoterFails, time.Since(start))
+	report(dist, reasons, scanned, dustSkipped, profitable, quoterCalls, quoterFails, time.Since(start))
 
 	slog.Info("stealtime: run complete",
-		"liquidations_scanned", scanned, "profitable", profitable,
+		"liquidations_scanned", scanned, "dust_prefiltered", dustSkipped, "profitable", profitable,
 		"quoter_calls", quoterCalls, "quoter_failures", quoterFails, "duration", time.Since(start))
 	return nil
 }
@@ -220,11 +232,11 @@ func persistRow(ctx context.Context, conn driver.Conn, chainID uint32, liq Liqui
 	return batch.Send()
 }
 
-func report(d Distribution, reasons map[prefilter.Reason]int, scanned, profitable, qCalls, qFails int, dur time.Duration) {
+func report(d Distribution, reasons map[prefilter.Reason]int, scanned, dustSkipped, profitable, qCalls, qFails int, dur time.Duration) {
 	var b strings.Builder
 	fmt.Fprintf(&b, "\n=== steal-time backtest ===\n")
-	fmt.Fprintf(&b, "scanned=%d profitable=%d quoter_calls=%d quoter_failures=%d duration=%s\n",
-		scanned, profitable, qCalls, qFails, dur.Round(time.Millisecond))
+	fmt.Fprintf(&b, "scanned=%d dust_prefiltered=%d evaluated=%d profitable=%d quoter_calls=%d quoter_failures=%d duration=%s\n",
+		scanned, dustSkipped, scanned-dustSkipped, profitable, qCalls, qFails, dur.Round(time.Millisecond))
 	fmt.Fprintf(&b, "reasons: profitable=%d dust=%d illiquid=%d bad_debt=%d no_pair=%d unprofitable=%d\n",
 		reasons[prefilter.ReasonProfitable], reasons[prefilter.ReasonDust], reasons[prefilter.ReasonIlliquid],
 		reasons[prefilter.ReasonBadDebt], reasons[prefilter.ReasonNoPair], reasons[prefilter.ReasonUnprofit])

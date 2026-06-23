@@ -20,6 +20,7 @@ type StealtimeOptions struct {
 	ToBlock           uint64
 	MaxLookbackBlocks uint64
 	SampleStride      uint64
+	MinDebtUSD        float64
 	MinProfitUSD      float64
 	GasUnits          uint64
 	TopN              int
@@ -35,6 +36,7 @@ func DefaultStealtimeOptions() StealtimeOptions {
 		FallbackRPC:       os.Getenv("ICICLE_FALLBACK_RPC"),
 		MaxLookbackBlocks: 43200, // about one day at 2s blocks
 		SampleStride:      600,   // coarse backward step before binary search
+		MinDebtUSD:        50,    // skip sub-threshold dust liquidations cheaply
 		MinProfitUSD:      25,
 		GasUnits:          700000,
 		TopN:              10,
@@ -61,6 +63,8 @@ func RunStealtime(ctx context.Context, opts StealtimeOptions) {
 
 	minProfit := new(big.Int)
 	new(big.Float).Mul(big.NewFloat(opts.MinProfitUSD), new(big.Float).SetInt(bigPow10(18))).Int(minProfit)
+	minDebt := new(big.Int)
+	new(big.Float).Mul(big.NewFloat(opts.MinDebtUSD), new(big.Float).SetInt(bigPow10(18))).Int(minDebt)
 
 	cfg := stealtime.Config{
 		ChainID:           opts.ChainID,
@@ -70,6 +74,7 @@ func RunStealtime(ctx context.Context, opts StealtimeOptions) {
 		ToBlock:           opts.ToBlock,
 		MaxLookbackBlocks: opts.MaxLookbackBlocks,
 		SampleStride:      opts.SampleStride,
+		MinDebtUSD1e18:    minDebt,
 		MinProfitUSD1e18:  minProfit,
 		GasUnits:          opts.GasUnits,
 		TopN:              opts.TopN,

@@ -12,6 +12,7 @@ package stealtime
 
 import (
 	"context"
+	"math/big"
 
 	"github.com/ava-labs/libevm/common"
 
@@ -33,6 +34,7 @@ type Liquidation struct {
 	Liquidator      common.Address
 	DebtAsset       common.Address
 	CollateralAsset common.Address
+	RepayAmount     *big.Int // debt repaid by the liquidation, debt-asset native units
 	TakenBlock      uint64
 }
 
@@ -53,6 +55,7 @@ func decodeAave(l lending.LogRow) (Liquidation, bool) {
 		CollateralAsset: common.HexToAddress(lending.AddrFromTopic(l.Topic1)),
 		DebtAsset:       common.HexToAddress(lending.AddrFromTopic(l.Topic2)),
 		Liquidator:      common.HexToAddress(lending.Addr(l.Data, 2)),
+		RepayAmount:     lending.Word(l.Data, 0), // debtToCover
 		TakenBlock:      uint64(l.Block),
 	}, true
 }
@@ -74,6 +77,7 @@ func decodeBenqi(l lending.LogRow) (Liquidation, bool) {
 		Liquidator:      common.HexToAddress(lending.Addr(l.Data, 0)),
 		DebtAsset:       common.HexToAddress(l.Address),
 		CollateralAsset: common.HexToAddress(lending.Addr(l.Data, 3)),
+		RepayAmount:     lending.Word(l.Data, 2), // repayAmount
 		TakenBlock:      uint64(l.Block),
 	}, true
 }
