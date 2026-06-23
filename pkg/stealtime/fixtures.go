@@ -50,6 +50,7 @@ type fixtureRow struct {
 	stealTime        uint64
 	sizeBucket       string
 	netReal          *big.Int
+	repaidUSD        *big.Int
 	storedVenue      string
 }
 
@@ -100,7 +101,7 @@ func Fixtures(ctx context.Context, conn driver.Conn, cfg FixturesConfig) error {
 		}
 
 		// Re-confirm the winning venue live at the fork block.
-		confirmed := confirmVenue(ctx, rpc, resolver, addrRes, row,
+		confirmed, _, _ := confirmVenue(ctx, rpc, resolver, addrRes, row,
 			aaveAd, benqiAd, aaveParams, aaveGlobals, benqiParams, benqiGlobals,
 			benqiComptroller, aavePool, minProfit)
 
@@ -126,44 +127,65 @@ func Fixtures(ctx context.Context, conn driver.Conn, cfg FixturesConfig) error {
 		fmt.Fprintf(&out, "# verify: https://snowtrace.io/tx/0x%s\n\n", txHash)
 	}
 
-	// Optional protocol-scoped fixture (e.g. Benqi), to exercise a path the
-	// venue-chosen fixtures miss (Benqi liquidateBorrow + seizeTokens + redeem).
-	// Requires a fork-replayable mid-band case: crossing strictly before the taken
-	// block AND shortfall > 0 at the crossing block on-chain (verified below), so a
-	// same-block 0-steal liquidation never slips through. Prefers a CL-routed
-	// candidate so the redeem-then-CL-swap path is covered.
+	// Optional protocol-scoped fixture (e.g. Benqi), to exercise the full path the
+	// venue-chosen fixtures miss: liquidateBorrow + seizeTokens + redeem + CL swap +
+	// positive profit. A candidate qualifies only if it is fork-replayable (crossing
+	// strictly before taken AND shortfall > 0 at the crossing block on-chain) AND its
+	// collateral unwind routes a real CL venue AND is profitable after gas at that
+	// block. Candidates are ranked by repaid size; the qiAVAX/qiUSDC redeem shape is
+	// tried first, then widened to any qiToken collateral if none qualifies.
 	if cfg.Protocol != "" {
 		prefix := "FIX_" + strings.ToUpper(cfg.Protocol)
-		cands, err := selectProtocolCandidates(ctx, conn, cfg)
+
+		pick := func(cands []fixtureRow) (fixtureRow, string, *big.Int, *big.Int, bool) {
+			for _, row := range cands {
+				if row.crossing >= row.taken {
+					continue // crossing must precede the liquidation tx
+				}
+				shortfall := benqiShortfallAt(ctx, rpc, benqiComptroller, row.account, row.crossing)
+				if shortfall == nil || shortfall.Sign() <= 0 {
+					continue // borrower not in shortfall at the fork block
+				}
+				venue, net, profitable := confirmVenue(ctx, rpc, resolver, addrRes, row,
+					aaveAd, benqiAd, aaveParams, aaveGlobals, benqiParams, benqiGlobals,
+					benqiComptroller, aavePool, minProfit)
+				if !isCLVenue(venue) || !profitable {
+					continue // must route a real CL venue and clear gas
+				}
+				return row, venue, net, shortfall, true
+			}
+			return fixtureRow{}, "", nil, nil, false
+		}
+
+		shaped, err := selectProtocolCandidates(ctx, conn, cfg, true)
 		if err != nil {
 			return fmt.Errorf("select %s: %w", prefix, err)
 		}
-		emitted := false
-		for _, row := range cands {
-			if row.crossing >= row.taken {
-				continue // not fork-replayable: crossing must precede the liquidation tx
+		row, venue, net, shortfall, ok := pick(shaped)
+		widened := false
+		if !ok {
+			any, err := selectProtocolCandidates(ctx, conn, cfg, false)
+			if err != nil {
+				return fmt.Errorf("select %s (widened): %w", prefix, err)
 			}
-			shortfall := benqiShortfallAt(ctx, rpc, benqiComptroller, row.account, row.crossing)
-			if shortfall == nil || shortfall.Sign() <= 0 {
-				continue // borrower not in shortfall at the fork block; skip
-			}
-			txHash, repay, seized, ok := fetchLiquidationEvent(ctx, conn, cfg.ChainID, aavePool, row)
-			if !ok {
-				continue
-			}
-			confirmed := confirmVenue(ctx, rpc, resolver, addrRes, row,
-				aaveAd, benqiAd, aaveParams, aaveGlobals, benqiParams, benqiGlobals,
-				benqiComptroller, aavePool, minProfit)
+			row, venue, net, shortfall, ok = pick(any)
+			widened = true
+		}
+
+		if !ok {
+			fmt.Fprintf(&out, "# %s: no Benqi liquidation is fork-replayable AND CL-routable AND profitable at size (steal_time >= %d). Tried qiAVAX/qiUSDC then any qiToken collateral.\n\n", prefix, cfg.MinSteal)
+		} else if txHash, repay, seized, found := fetchLiquidationEvent(ctx, conn, cfg.ChainID, aavePool, row); !found {
+			fmt.Fprintf(&out, "# %s: raw liquidation event not found for %s @ block %d.\n\n", prefix, row.account.Hex(), row.taken)
+		} else {
 			collNative := row.collateral.Hex()
 			if info, rerr := resolver.Resolve(ctx, row.protocol, row.collateral); rerr == nil {
 				collNative = info.Underlying.Hex()
 			}
-			clNote := "routes a CL venue (redeem + CL swap exercised)"
-			if !isCLVenue(confirmed) {
-				clNote = "routes " + confirmed + " (redeem path still exercised)"
+			if widened {
+				fmt.Fprintf(&out, "# %s: NOTE: no qiAVAX/qiUSDC case qualified at size; WIDENED to any qiToken collateral. Redeem-into-profitable-CL-swap is exercised, but not the exact qiAVAX shape.\n", prefix)
 			}
-			fmt.Fprintf(&out, "# %s  protocol=%s  size=%s  steal_time=%d blocks  shortfall_at_fork=%s (>0, replayable)  route=%s  (%s)\n",
-				prefix, row.protocol, row.sizeBucket, row.stealTime, shortfall.String(), confirmed, clNote)
+			fmt.Fprintf(&out, "# %s  protocol=%s  size=%s  repaid=$%.2f  steal_time=%d blocks  shortfall_at_fork=%s (>0, replayable)  route=%s  net=$%.2f (profitable after gas)\n",
+				prefix, row.protocol, row.sizeBucket, usdFloat(row.repaidUSD), row.stealTime, shortfall.String(), venue, usdFloat(net))
 			fmt.Fprintf(&out, "# fork block %d is strictly before taken block %d. DEBT_MARKET/COLL_MARKET are qiToken markets; COLL_NATIVE is the resolved underlying. SEIZE is qiToken units (seizeTokens), DEBT_TO_COVER is underlying debt units.\n", row.crossing, row.taken)
 			fmt.Fprintf(&out, "%s_FORK_BLOCK=%d\n", prefix, row.crossing)
 			fmt.Fprintf(&out, "%s_ACCOUNT=%s\n", prefix, row.account.Hex())
@@ -173,14 +195,9 @@ func Fixtures(ctx context.Context, conn driver.Conn, cfg FixturesConfig) error {
 			fmt.Fprintf(&out, "%s_COLL_NATIVE=%s\n", prefix, collNative)
 			fmt.Fprintf(&out, "%s_DEBT_TO_COVER=%s\n", prefix, repay.String())
 			fmt.Fprintf(&out, "%s_SEIZE=%s\n", prefix, seized.String())
+			fmt.Fprintf(&out, "%s_WIN_VENUE=%s\n", prefix, venue)
 			fmt.Fprintf(&out, "%s_TX_HASH=0x%s\n", prefix, txHash)
 			fmt.Fprintf(&out, "# verify: https://snowtrace.io/tx/0x%s\n\n", txHash)
-			emitted = true
-			break
-		}
-		if !emitted {
-			fmt.Fprintf(&out, "# %s: no fork-replayable %s liquidation found (need steal_time >= %d and shortfall>0 at crossing). Widen --min-steal or window.\n\n",
-				prefix, cfg.Protocol, cfg.MinSteal)
 		}
 	}
 
@@ -241,28 +258,29 @@ func selectFixture(ctx context.Context, conn driver.Conn, cfg FixturesConfig, t 
 }
 
 // selectProtocolCandidates returns fork-replayable candidates for one protocol,
-// ordered to prefer the qiAVAX-collateral / qiUSDC-debt shape (the native-AVAX
-// redeem path worth testing, since qiAVAX has no underlying() view), then a longer
-// steal-time, then size. Sourced from stealtime_results (the full evaluated set,
-// which carries steal_time) rather than the crash-day-sized replay_results, for a
-// much larger Benqi pool. The caller verifies shortfall>0 at the crossing block
-// on-chain before emitting, so only genuinely replayable cases survive.
-func selectProtocolCandidates(ctx context.Context, conn driver.Conn, cfg FixturesConfig) ([]fixtureRow, error) {
+// ranked by repaid size (largest first) so the caller can pick the biggest case
+// that also routes a CL venue and clears gas. When shapeOnly is set it restricts to
+// the qiAVAX-collateral / qiUSDC-debt redeem shape (the native-AVAX path worth
+// testing, since qiAVAX has no underlying() view); otherwise it spans any
+// collateral for that protocol. Sourced from stealtime_results (the full evaluated
+// set, which carries steal_time) for a large pool. The caller verifies shortfall>0
+// at the crossing block on-chain, so only genuinely replayable cases survive.
+func selectProtocolCandidates(ctx context.Context, conn driver.Conn, cfg FixturesConfig, shapeOnly bool) ([]fixtureRow, error) {
 	const (
 		qiAVAX = "5c0401e81bc07ca70fad469b451682c0d747ef1c"
 		qiUSDC = "b715808a78f6041e46d61cb123c9b4a27056ae9c"
 	)
+	shapeClause := ""
+	if shapeOnly {
+		shapeClause = fmt.Sprintf(" AND collateral_asset = unhex('%s') AND debt_asset = unhex('%s')", qiAVAX, qiUSDC)
+	}
 	q := fmt.Sprintf(`
 		SELECT protocol, account, collateral_asset, debt_asset,
-			crossing_block, taken_block, steal_time, size_bucket, net_profit_usd
+			crossing_block, taken_block, steal_time, size_bucket, net_profit_usd, repaid_usd
 		FROM stealtime_results
-		WHERE chain_id = ? AND protocol = ? AND evaluated AND steal_time >= ?
-		ORDER BY
-			(collateral_asset = unhex('%s') AND debt_asset = unhex('%s')) DESC,
-			(steal_time >= 2) DESC,
-			steal_time DESC,
-			repaid_usd DESC
-		LIMIT 25`, qiAVAX, qiUSDC)
+		WHERE chain_id = ? AND protocol = ? AND evaluated AND steal_time >= ?%s
+		ORDER BY repaid_usd DESC, steal_time DESC
+		LIMIT 40`, shapeClause)
 
 	rows, err := conn.Query(ctx, q, cfg.ChainID, cfg.Protocol, cfg.MinSteal)
 	if err != nil {
@@ -274,7 +292,7 @@ func selectProtocolCandidates(ctx context.Context, conn driver.Conn, cfg Fixture
 	for rows.Next() {
 		var r fixtureRow
 		var acc, coll, debt [20]byte
-		if err := rows.Scan(&r.protocol, &acc, &coll, &debt, &r.crossing, &r.taken, &r.stealTime, &r.sizeBucket, &r.netReal); err != nil {
+		if err := rows.Scan(&r.protocol, &acc, &coll, &debt, &r.crossing, &r.taken, &r.stealTime, &r.sizeBucket, &r.netReal, &r.repaidUSD); err != nil {
 			return nil, err
 		}
 		r.account = common.BytesToAddress(acc[:])
@@ -345,12 +363,13 @@ func fetchLiquidationEvent(ctx context.Context, conn driver.Conn, chainID uint32
 }
 
 // confirmVenue re-assembles the position at the fork block and re-quotes it on the
-// real venue set, returning the venue that wins the chosen route. This reproduces
-// the recorded win_venue from live state, so each fixture is verified, not trusted.
+// real venue set, returning the venue that wins the chosen route, its net profit
+// (USD 1e18), and whether it clears the profit threshold after gas. This reproduces
+// the recorded result from live state, so each fixture is verified, not trusted.
 func confirmVenue(ctx context.Context, rpc *lending.Client, resolver kmeasure.Resolver, addrRes *addrResolver, r fixtureRow,
 	aaveAd *aave.Adapter, benqiAd *benqi.Adapter, aaveParams []lending.AssetParam, aaveGlobals lending.GlobalParams,
 	benqiParams []lending.AssetParam, benqiGlobals lending.GlobalParams,
-	benqiComptroller, aavePool common.Address, minProfit *big.Int) string {
+	benqiComptroller, aavePool common.Address, minProfit *big.Int) (string, *big.Int, bool) {
 
 	liq := Liquidation{Protocol: r.protocol, Account: r.account, CollateralAsset: r.collateral, DebtAsset: r.debt, TakenBlock: r.taken}
 	blockAddrs := addrRes.at(ctx, r.protocol, r.crossing)
@@ -365,16 +384,16 @@ func confirmVenue(ctx context.Context, rpc *lending.Client, resolver kmeasure.Re
 
 	pos, ok := assemblePosition(ctx, rpc, adapter, resolver, r.protocol, liq, r.crossing)
 	if !ok {
-		return "none"
+		return "none", big.NewInt(0), false
 	}
 	params := newBlockParams(ctx, rpc, r.crossing, aaveDataProvider, benqiComptroller)
 	cost := buildBlockCost(ctx, rpc, r.crossing, aavePool, 700000, minProfit)
 	realQ := newRealVenueQuoter(rpc, r.crossing)
 	res, err := prefilter.EvaluatePosition(ctx, pos, params, realQ, cost)
 	if err != nil {
-		return "none"
+		return "none", big.NewInt(0), false
 	}
-	return realQ.WinningVenue(res.CollateralAsset, res.DebtAsset)
+	return realQ.WinningVenue(res.CollateralAsset, res.DebtAsset), res.NetProfitUSD, res.Profitable
 }
 
 func codeStatus(ctx context.Context, rpc *lending.Client, addr common.Address) string {
