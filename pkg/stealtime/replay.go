@@ -129,23 +129,29 @@ func loadCrashDayLiquidations(ctx context.Context, conn driver.Conn, cfg ReplayC
 	windowDays := float64(maxB-minB) * 2 / 86400
 
 	size := cfg.MinSizeUSD1e18.String()
+	// Restrict raw_blocks to the backtest block range so the join builds a small
+	// right side (a few million rows) instead of the whole chain (88M, OOM).
 	q := fmt.Sprintf(`
-		WITH crash AS (
+		WITH blk AS (
+			SELECT block_number, block_time FROM raw_blocks
+			WHERE chain_id = %d AND block_number >= %d AND block_number <= %d
+		),
+		crash AS (
 			SELECT toDate(b.block_time) AS day
 			FROM stealtime_results s
-			INNER JOIN raw_blocks b ON b.chain_id = s.chain_id AND b.block_number = toUInt32(s.taken_block)
-			WHERE s.chain_id = ? AND s.repaid_usd > %s
+			INNER JOIN blk b ON b.block_number = toUInt32(s.taken_block)
+			WHERE s.chain_id = %d AND s.repaid_usd > %s
 			GROUP BY day ORDER BY count() DESC LIMIT %d
 		)
 		SELECT s.protocol, s.account, s.liquidator, s.collateral_asset, s.debt_asset,
 			s.taken_block, s.crossing_block, s.steal_time, toString(toDate(b.block_time))
 		FROM stealtime_results s
-		INNER JOIN raw_blocks b ON b.chain_id = s.chain_id AND b.block_number = toUInt32(s.taken_block)
-		WHERE s.chain_id = ? AND s.evaluated AND s.repaid_usd > %s
+		INNER JOIN blk b ON b.block_number = toUInt32(s.taken_block)
+		WHERE s.chain_id = %d AND s.evaluated AND s.repaid_usd > %s
 			AND toDate(b.block_time) IN (SELECT day FROM crash)
-	`, size, cfg.TopDays, size)
+	`, cfg.ChainID, minB, maxB, cfg.ChainID, size, cfg.TopDays, cfg.ChainID, size)
 
-	rows, err := conn.Query(ctx, q, cfg.ChainID, cfg.ChainID)
+	rows, err := conn.Query(ctx, q)
 	if err != nil {
 		return nil, 0, err
 	}
