@@ -73,6 +73,7 @@ func Run(ctx context.Context, conn driver.Conn, cfg Config) error {
 
 	reasons := map[prefilter.Reason]int{}
 	var obs []Observation
+	var rows []resultRow
 	var scanned, profitable, quoterCalls, quoterFails, debugged, dustSkipped int
 
 	for _, liq := range liqs {
@@ -89,12 +90,17 @@ func Run(ctx context.Context, conn driver.Conn, cfg Config) error {
 		}
 
 		// Cheap dust pre-filter: value the repaid debt at the liquidation block and
-		// skip sub-threshold liquidations before any crossing or quote work.
+		// skip sub-threshold liquidations before any crossing or quote work. Every
+		// liquidation is still persisted (with an evaluated flag) so the full field
+		// is visible for taker-composition and in-window presence analysis.
+		repaid := big.NewInt(0)
 		if cfg.MinDebtUSD1e18 != nil && cfg.MinDebtUSD1e18.Sign() > 0 {
 			oracleAtTaken := common.HexToAddress(addrRes.at(ctx, liq.Protocol, liq.TakenBlock).Oracle)
 			debtInfo, _ := resolver.Resolve(ctx, liq.Protocol, liq.DebtAsset)
-			if valueRepaidUSD(ctx, rpc, oracleAtTaken, liq.Protocol, liq, debtInfo.Decimals, liq.TakenBlock).Cmp(cfg.MinDebtUSD1e18) < 0 {
+			repaid = valueRepaidUSD(ctx, rpc, oracleAtTaken, liq.Protocol, liq, debtInfo.Decimals, liq.TakenBlock)
+			if repaid.Cmp(cfg.MinDebtUSD1e18) < 0 {
 				dustSkipped++
+				rows = append(rows, newResultRow(liq, repaid, false, 0, 0, false, false, "dust_prefiltered", nil))
 				continue
 			}
 		}
@@ -109,8 +115,10 @@ func Run(ctx context.Context, conn driver.Conn, cfg Config) error {
 		})
 		if err != nil {
 			slog.Warn("stealtime: find crossing failed", "account", liq.Account.Hex(), "error", err)
+			rows = append(rows, newResultRow(liq, repaid, false, 0, 0, false, false, "crossing_failed", nil))
 			continue
 		}
+		steal := StealTime(liq.TakenBlock, crossing)
 
 		// Reconfigure the adapter to the addresses as of the crossing block, so the
 		// oracle and market list match the historical state we read against.
@@ -124,6 +132,7 @@ func Run(ctx context.Context, conn driver.Conn, cfg Config) error {
 
 		pos, ok := assemblePosition(ctx, rpc, adapter, resolver, liq.Protocol, liq, crossing.CrossingBlock)
 		if !ok {
+			rows = append(rows, newResultRow(liq, repaid, false, crossing.CrossingBlock, steal, crossing.Censored, false, "assemble_failed", nil))
 			continue
 		}
 		params := newBlockParams(ctx, rpc, crossing.CrossingBlock, aaveDataProvider, benqiComptroller)
@@ -136,6 +145,7 @@ func Run(ctx context.Context, conn driver.Conn, cfg Config) error {
 		quoterFails += qf
 		if err != nil {
 			slog.Warn("stealtime: evaluate failed", "account", liq.Account.Hex(), "error", err)
+			rows = append(rows, newResultRow(liq, repaid, false, crossing.CrossingBlock, steal, crossing.Censored, false, "evaluate_failed", nil))
 			continue
 		}
 		reasons[res.Reason]++
@@ -154,7 +164,6 @@ func Run(ctx context.Context, conn driver.Conn, cfg Config) error {
 			}
 		}
 
-		steal := StealTime(liq.TakenBlock, crossing)
 		if res.Profitable {
 			profitable++
 			obs = append(obs, Observation{
@@ -163,10 +172,12 @@ func Run(ctx context.Context, conn driver.Conn, cfg Config) error {
 				SizeBucket: SizeBucketFor(res.NetProfitUSD), TakenBlock: liq.TakenBlock,
 			})
 		}
-		if cfg.Persist {
-			if err := persistRow(ctx, conn, cfg.ChainID, liq, crossing, steal, res); err != nil {
-				slog.Warn("stealtime: persist failed", "error", err)
-			}
+		rows = append(rows, newResultRow(liq, repaid, true, crossing.CrossingBlock, steal, crossing.Censored, res.Profitable, string(res.Reason), res.NetProfitUSD))
+	}
+
+	if cfg.Persist {
+		if err := persistAll(ctx, conn, cfg.ChainID, rows); err != nil {
+			slog.Warn("stealtime: persist failed", "error", err)
 		}
 	}
 
@@ -203,35 +214,71 @@ func ensureSchema(ctx context.Context, conn driver.Conn) error {
 		protocol LowCardinality(String),
 		account FixedString(20),
 		liquidator FixedString(20),
+		collateral_asset FixedString(20),
+		debt_asset FixedString(20),
 		taken_block UInt64,
 		crossing_block UInt64,
 		steal_time UInt64,
 		censored Bool,
+		evaluated Bool,
 		profitable Bool,
 		reason LowCardinality(String),
 		net_profit_usd UInt256,
+		repaid_usd UInt256,
 		size_bucket LowCardinality(String)
 	) ENGINE = MergeTree ORDER BY (chain_id, taken_block)`)
 }
 
-func persistRow(ctx context.Context, conn driver.Conn, chainID uint32, liq Liquidation, c CrossingResult, steal uint64, res prefilter.Result) error {
+// resultRow is one persisted liquidation: every enumerated liquidation, evaluated
+// or dust-skipped, so the full field is visible for analysis.
+type resultRow struct {
+	protocol                                        string
+	account, liquidator, collateralAsset, debtAsset common.Address
+	takenBlock, crossingBlock, stealTime            uint64
+	censored, evaluated, profitable                 bool
+	reason                                          string
+	netProfitUSD, repaidUSD                         *big.Int
+	sizeBucket                                      string
+}
+
+func newResultRow(liq Liquidation, repaid *big.Int, evaluated bool, crossingBlock, steal uint64, censored, profitable bool, reason string, net *big.Int) resultRow {
+	if net == nil || net.Sign() < 0 {
+		net = big.NewInt(0) // net_profit_usd is UInt256; rejected rows can be negative
+	}
+	if repaid == nil || repaid.Sign() < 0 {
+		repaid = big.NewInt(0)
+	}
+	return resultRow{
+		protocol: liq.Protocol, account: liq.Account, liquidator: liq.Liquidator,
+		collateralAsset: liq.CollateralAsset, debtAsset: liq.DebtAsset,
+		takenBlock: liq.TakenBlock, crossingBlock: crossingBlock, stealTime: steal,
+		censored: censored, evaluated: evaluated, profitable: profitable, reason: reason,
+		netProfitUSD: net, repaidUSD: repaid, sizeBucket: SizeBucketFor(net),
+	}
+}
+
+func persistAll(ctx context.Context, conn driver.Conn, chainID uint32, rows []resultRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
 	batch, err := conn.PrepareBatch(ctx, `INSERT INTO stealtime_results (
-		run_at, chain_id, protocol, account, liquidator, taken_block, crossing_block,
-		steal_time, censored, profitable, reason, net_profit_usd, size_bucket
+		run_at, chain_id, protocol, account, liquidator, collateral_asset, debt_asset,
+		taken_block, crossing_block, steal_time, censored, evaluated, profitable, reason,
+		net_profit_usd, repaid_usd, size_bucket
 	)`)
 	if err != nil {
 		return err
 	}
-	net := res.NetProfitUSD
-	if net == nil {
-		net = big.NewInt(0)
-	}
-	if err := batch.Append(
-		time.Now().UTC(), chainID, liq.Protocol, liq.Account.Bytes(), liq.Liquidator.Bytes(),
-		liq.TakenBlock, c.CrossingBlock, steal, c.Censored, res.Profitable, string(res.Reason),
-		net, SizeBucketFor(net),
-	); err != nil {
-		return err
+	now := time.Now().UTC()
+	for _, r := range rows {
+		if err := batch.Append(
+			now, chainID, r.protocol, r.account.Bytes(), r.liquidator.Bytes(),
+			r.collateralAsset.Bytes(), r.debtAsset.Bytes(),
+			r.takenBlock, r.crossingBlock, r.stealTime, r.censored, r.evaluated, r.profitable, r.reason,
+			r.netProfitUSD, r.repaidUSD, r.sizeBucket,
+		); err != nil {
+			return err
+		}
 	}
 	return batch.Send()
 }
