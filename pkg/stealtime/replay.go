@@ -152,7 +152,7 @@ func Replay(ctx context.Context, conn driver.Conn, cfg ReplayConfig) error {
 			collateral: rl.liq.CollateralAsset, debt: rl.liq.DebtAsset,
 			takenBlock: rl.liq.TakenBlock, crossingBlock: rl.crossing, stealTime: rl.stealTime,
 			profitableV2: resV2.Profitable, profitableReal: resReal.Profitable,
-			netV2: orZero(resV2.NetProfitUSD), netReal: orZero(resReal.NetProfitUSD),
+			netV2: clampNonNeg(resV2.NetProfitUSD), netReal: clampNonNeg(resReal.NetProfitUSD),
 			winVenue: winVenue, sizeBucket: SizeBucketFor(resReal.NetProfitUSD),
 		})
 	}
@@ -411,8 +411,12 @@ func concentration(results []replayResult) string {
 	return b.String()
 }
 
-func orZero(n *big.Int) *big.Int {
-	if n == nil {
+// clampNonNeg returns max(n, 0). net_v2 / net_real are UInt256 columns, so a
+// negative net (an unprofitable liquidation) would wrap to ~2^256 on insert;
+// clamp to 0 to match the stealtime_results convention. Reports only ever sum
+// profitable (positive) rows, so this never changes a capture number.
+func clampNonNeg(n *big.Int) *big.Int {
+	if n == nil || n.Sign() < 0 {
 		return big.NewInt(0)
 	}
 	return n
