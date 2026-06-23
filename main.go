@@ -197,12 +197,41 @@ func main() {
 	stealtimeCmd.Flags().Bool("persist", true, "Persist per-liquidation rows to stealtime_results")
 	stealtimeCmd.Flags().Bool("debug", false, "Log per-position legs and result for the first evaluated liquidations")
 
+	replayCmd := &cobra.Command{
+		Use:   "replay",
+		Short: "Crash-day capture replay: V2-executable profitability on the days that carry the prize",
+		Run: func(command *cobra.Command, args []string) {
+			opts := cmd.DefaultReplayOptions()
+			cid, _ := command.Flags().GetUint32("chain")
+			opts.ChainID = cid
+			if v, _ := command.Flags().GetString("archive-rpc"); v != "" {
+				opts.ArchiveRPC = v
+			}
+			if v, _ := command.Flags().GetString("fallback-rpc"); v != "" {
+				opts.FallbackRPC = v
+			}
+			opts.TopDays, _ = command.Flags().GetInt("top-days")
+			opts.MinSizeUSD, _ = command.Flags().GetFloat64("min-size-usd")
+			opts.GasUnits, _ = command.Flags().GetUint64("gas-units")
+			opts.MinProfitUSD, _ = command.Flags().GetFloat64("min-profit-usd")
+			cmd.RunReplay(ctx, opts)
+		},
+	}
+	replayCmd.Flags().Uint32("chain", 43114, "EVM chain ID")
+	replayCmd.Flags().String("archive-rpc", os.Getenv("ICICLE_ARCHIVE_RPC"), "Archive node RPC URL (required)")
+	replayCmd.Flags().String("fallback-rpc", os.Getenv("ICICLE_FALLBACK_RPC"), "Optional public RPC fallback")
+	replayCmd.Flags().Int("top-days", 12, "Number of crash days to replay (by sized-liquidation count)")
+	replayCmd.Flags().Float64("min-size-usd", 1000, "Sized-liquidation threshold by repaid debt")
+	replayCmd.Flags().Uint64("gas-units", 700000, "Estimated full-bundle gas units")
+	replayCmd.Flags().Float64("min-profit-usd", 5, "Minimum net profit in USD to count as profitable")
+
 	root.AddCommand(
 		ingestCmd,
 		apiCmd,
 		lendingCmd,
 		kmeasureCmd,
 		stealtimeCmd,
+		replayCmd,
 		&cobra.Command{
 			Use:   "cache",
 			Short: "Fill RPC cache at max speed (no ClickHouse)",

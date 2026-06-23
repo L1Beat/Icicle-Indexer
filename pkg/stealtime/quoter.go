@@ -55,6 +55,17 @@ func newBlockQuoter(rpc *lending.Client, block uint64) *blockQuoter {
 	}
 }
 
+// newBlockQuoterV2 quotes only the V2-style routers (no Liquidity Book), the venue
+// an on-chain swapExactTokensForTokens can replicate. Used for the executable
+// crash-day capture decision.
+func newBlockQuoterV2(rpc *lending.Client, block uint64) *blockQuoter {
+	return &blockQuoter{
+		rpc:     rpc,
+		block:   block,
+		routers: []common.Address{pangolinRouter, traderJoeRouter},
+	}
+}
+
 func (q *blockQuoter) QuoteOut(ctx context.Context, tokenIn common.Address, _ uint8, tokenOut common.Address, _ uint8, amountIn *big.Int) (*big.Int, error) {
 	q.mu.Lock()
 	q.calls++
