@@ -11,20 +11,18 @@ import (
 	"icicle/pkg/lending"
 )
 
-// Avalanche venue defaults. The LFJ Liquidity Book quoter is the dominant venue
-// today; omitting it produces false illiquid results. Its address is configurable
-// and must be verified on-chain (LBQuoter), since a wrong address makes LB quotes
-// fail and fall back to the V2 routers.
+// Avalanche venue defaults. The real liquidity sits on concentrated-liquidity
+// venues (LFJ Liquidity Book, Uniswap V3, Pharaoh CL); the V2 routers below hold
+// little depth now and are kept only as an attributed fallback in the route
+// survey. Every quote is the venue's own on-chain swap simulation at the historical
+// block, sized to the real seize amount, so the fill reflects executable depth.
 var (
 	pangolinRouter  = common.HexToAddress("0xE54Ca86531e17Ef3616d22Ca28b0D458b6C89106")
 	traderJoeRouter = common.HexToAddress("0x60aE616a2155Ee3d9A68541Ba4544862310933d4")
 	wavax           = common.HexToAddress("0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7")
 
 	// LFJ Liquidity Book quoters, verified on-chain (developers.lfj.gg). V2.2 and
-	// V2.1 share the Quote struct shape (a versions field, so amounts is member
-	// index 4); V2.0 differs and is omitted. Querying both covers historical and
-	// recent blocks; a quoter that did not exist yet at a block reverts and is
-	// skipped.
+	// V2.1 share the Quote struct shape; V2.0 differs and is omitted.
 	lfjLBQuoters = []common.Address{
 		common.HexToAddress("0x9A550a522BBaDFB69019b0432800Ed17855A51C3"), // V2.2
 		common.HexToAddress("0xd76019A16606FDa4651f636D9751f500Ed776250"), // V2.1
@@ -32,38 +30,62 @@ var (
 )
 
 // blockQuoter implements prefilter.Quoter against live pool state at a fixed
-// historical block, surveying UniswapV2-style routers and the LFJ Liquidity Book
-// and keeping the best executable output. A pair with no route returns zero, which
-// the pre-filter classifies illiquid, never an error.
+// historical block, surveying a configurable venue set and keeping the best
+// executable output. When attribute is set it also records which venue won each
+// directed pair, so a venue's real contribution (e.g. whether V2 ever wins a large
+// unwind) can be measured. A pair with no route returns zero, which the pre-filter
+// classifies illiquid, never an error.
 type blockQuoter struct {
 	rpc       *lending.Client
 	block     uint64
 	routers   []common.Address
 	lbQuoters []common.Address
+	v3Venues  []v3Venue
+	attribute bool
 
 	mu       sync.Mutex
 	calls    int
 	failures int
+	winLabel map[string]string
+	winAmt   map[string]*big.Int
 }
 
+func newBlockQuoterBase(rpc *lending.Client, block uint64) *blockQuoter {
+	return &blockQuoter{
+		rpc: rpc, block: block,
+		winLabel: map[string]string{},
+		winAmt:   map[string]*big.Int{},
+	}
+}
+
+// newBlockQuoter surveys the V2 routers and the LFJ Liquidity Book. Used by the
+// steal-time backtest's profitability gate.
 func newBlockQuoter(rpc *lending.Client, block uint64) *blockQuoter {
-	return &blockQuoter{
-		rpc:       rpc,
-		block:     block,
-		routers:   []common.Address{pangolinRouter, traderJoeRouter},
-		lbQuoters: lfjLBQuoters,
-	}
+	q := newBlockQuoterBase(rpc, block)
+	q.routers = []common.Address{pangolinRouter, traderJoeRouter}
+	q.lbQuoters = lfjLBQuoters
+	return q
 }
 
-// newBlockQuoterV2 quotes only the V2-style routers (no Liquidity Book), the venue
-// an on-chain swapExactTokensForTokens can replicate. Used for the executable
-// crash-day capture decision.
+// newBlockQuoterV2 surveys ONLY the V2-style routers, the venue a plain
+// swapExactTokensForTokens can replicate. The conservative executability baseline.
 func newBlockQuoterV2(rpc *lending.Client, block uint64) *blockQuoter {
-	return &blockQuoter{
-		rpc:     rpc,
-		block:   block,
-		routers: []common.Address{pangolinRouter, traderJoeRouter},
-	}
+	q := newBlockQuoterBase(rpc, block)
+	q.routers = []common.Address{pangolinRouter, traderJoeRouter}
+	return q
+}
+
+// newRealVenueQuoter surveys the venues that actually hold depth on Avalanche:
+// the LFJ Liquidity Book and the V3 concentrated-liquidity venues (Uniswap V3 and
+// Pharaoh CL), with the V2 routers retained only as an attributed fallback. It
+// records which venue wins each route so V2's real share can be measured.
+func newRealVenueQuoter(rpc *lending.Client, block uint64) *blockQuoter {
+	q := newBlockQuoterBase(rpc, block)
+	q.routers = []common.Address{pangolinRouter, traderJoeRouter}
+	q.lbQuoters = lfjLBQuoters
+	q.v3Venues = realV3Venues
+	q.attribute = true
+	return q
 }
 
 func (q *blockQuoter) QuoteOut(ctx context.Context, tokenIn common.Address, _ uint8, tokenOut common.Address, _ uint8, amountIn *big.Int) (*big.Int, error) {
@@ -80,29 +102,58 @@ func (q *blockQuoter) QuoteOut(ctx context.Context, tokenIn common.Address, _ ui
 	}
 
 	best := big.NewInt(0)
+	bestLabel := "none"
 	bh := blockHex(q.block)
+	consider := func(out *big.Int, label string) {
+		if out != nil && out.Cmp(best) > 0 {
+			best = out
+			bestLabel = label
+		}
+	}
 
 	for _, router := range q.routers {
 		for _, path := range paths {
-			if out := q.getAmountsOut(ctx, router, amountIn, path, bh); out != nil && out.Cmp(best) > 0 {
-				best = out
-			}
+			consider(q.getAmountsOut(ctx, router, amountIn, path, bh), "v2")
 		}
 	}
 	for _, lb := range q.lbQuoters {
 		for _, path := range paths {
-			if out := q.lbQuote(ctx, lb, amountIn, path, bh); out != nil && out.Cmp(best) > 0 {
-				best = out
-			}
+			consider(q.lbQuote(ctx, lb, amountIn, path, bh), "lb")
 		}
+	}
+	for _, v := range q.v3Venues {
+		consider(q.v3Route(ctx, v, tokenIn, tokenOut, amountIn, bh), v.name)
 	}
 
 	if best.Sign() == 0 {
 		q.mu.Lock()
 		q.failures++
 		q.mu.Unlock()
+	} else if q.attribute {
+		q.recordWinner(tokenIn, tokenOut, best, bestLabel)
 	}
 	return best, nil
+}
+
+func (q *blockQuoter) recordWinner(tokenIn, tokenOut common.Address, out *big.Int, label string) {
+	key := tokenIn.Hex() + ":" + tokenOut.Hex()
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if prev, ok := q.winAmt[key]; !ok || out.Cmp(prev) > 0 {
+		q.winAmt[key] = out
+		q.winLabel[key] = label
+	}
+}
+
+// WinningVenue returns the venue label that produced the best output for a
+// directed pair during this quoter's lifetime, or "none".
+func (q *blockQuoter) WinningVenue(tokenIn, tokenOut common.Address) string {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if l, ok := q.winLabel[tokenIn.Hex()+":"+tokenOut.Hex()]; ok {
+		return l
+	}
+	return "none"
 }
 
 // Stats returns calls and failures for metrics.

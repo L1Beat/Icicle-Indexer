@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/ava-labs/libevm/common"
@@ -26,6 +28,9 @@ type ReplayConfig struct {
 	MinSizeUSD1e18   *big.Int // sized threshold (repaid debt), default $1000
 	GasUnits         uint64
 	MinProfitUSD1e18 *big.Int
+	Label            string // tags this run's rows in replay_results so runs never overwrite
+	ProbeVenues      bool   // if set, run the venue self-test at ProbeBlock and return
+	ProbeBlock       uint64
 }
 
 type replayLiq struct {
@@ -36,27 +41,45 @@ type replayLiq struct {
 }
 
 type replayResult struct {
-	day          string
-	protocol     string
-	liquidator   common.Address
-	stealTime    uint64
-	profitableV2 bool
-	netV2        *big.Int
-	netFull      *big.Int // V2 plus Liquidity Book, for the gap only
-	sizeBucket   string
+	day                          string
+	protocol                     string
+	account, liquidator          common.Address
+	collateral, debt             common.Address
+	takenBlock, crossingBlock    uint64
+	stealTime                    uint64
+	profitableV2, profitableReal bool
+	netV2, netReal               *big.Int // V2-only vs real concentrated-liquidity venue set
+	winVenue                     string   // venue that won the chosen route on the real set
+	sizeBucket                   string   // by real net
 }
 
 var reactionBudgets = []uint64{1, 2, 3, 5}
 
-// Replay re-evaluates crash-day sized liquidations on the executable V2 venue with
-// the actual crash-day base fee, and models would-be capture under a reaction
-// budget. It reads the liquidation set from stealtime_results (no re-enumeration),
-// but re-quotes and re-costs everything block-pinned and fresh, since the stored
-// net may have been computed on a different venue or gas basis.
+// Replay re-evaluates crash-day sized liquidations with the actual crash-day base
+// fee, computing capture under both a V2-only venue set (the conservative
+// executability baseline) and the real concentrated-liquidity venue set (LFJ
+// Liquidity Book, Uniswap V3, Pharaoh CL) that actually holds depth. It records
+// which venue wins each route, so V2's true contribution to the large-liquidation
+// prize is measured rather than assumed. It reads the liquidation set from
+// stealtime_results (no re-enumeration) but re-quotes and re-costs block-pinned and
+// fresh. Read-only: no keys, no contract, no submission.
 func Replay(ctx context.Context, conn driver.Conn, cfg ReplayConfig) error {
 	rpc := lending.NewClient(cfg.ArchiveRPC, cfg.FallbackRPC)
-	resolver := kmeasure.NewChainResolver(rpc)
 
+	if cfg.ProbeVenues {
+		block := cfg.ProbeBlock
+		if block == 0 {
+			head, err := rpc.BlockNumber(ctx)
+			if err != nil {
+				return fmt.Errorf("probe: read head: %w", err)
+			}
+			block = head - 16 // a few blocks back to be safely canonical
+		}
+		fmt.Print(VenueProbe(ctx, rpc, block))
+		return nil
+	}
+
+	resolver := kmeasure.NewChainResolver(rpc)
 	aaveAd := aave.New("")
 	benqiAd := benqi.New("")
 	aaveAddrs, aaveParams, aaveGlobals, err := bootstrap(ctx, rpc, aaveAd)
@@ -75,7 +98,16 @@ func Replay(ctx context.Context, conn driver.Conn, cfg ReplayConfig) error {
 	if err != nil {
 		return fmt.Errorf("load crash-day liquidations: %w", err)
 	}
-	slog.Info("stealtime replay: loaded crash-day sized liquidations", "count", len(liqs), "window_days", int(windowDays))
+	slog.Info("stealtime replay: loaded crash-day sized liquidations", "count", len(liqs), "window_days", int(windowDays), "label", cfg.Label)
+
+	// Confirm the gas basis is the real crash-day base fee, not a default, by
+	// sampling the first liquidation's crossing block.
+	gasNote := "base fee unavailable, cost model used its 25 gwei default"
+	if len(liqs) > 0 {
+		if bf, err := rpc.BlockBaseFee(ctx, liqs[0].crossing); err == nil && bf.Sign() > 0 {
+			gasNote = fmt.Sprintf("crash-day base fee (sample block %d = %.1f gwei)", liqs[0].crossing, gweiFloat(bf))
+		}
+	}
 
 	var results []replayResult
 	for i, rl := range liqs {
@@ -105,19 +137,33 @@ func Replay(ctx context.Context, conn driver.Conn, cfg ReplayConfig) error {
 		if err != nil {
 			continue
 		}
-		resFull, err := prefilter.EvaluatePosition(ctx, pos, params, newBlockQuoter(rpc, rl.crossing), cost)
+		realQ := newRealVenueQuoter(rpc, rl.crossing)
+		resReal, err := prefilter.EvaluatePosition(ctx, pos, params, realQ, cost)
+		winVenue := "none"
 		if err != nil {
-			resFull = resV2
+			resReal = resV2
+		} else {
+			winVenue = realQ.WinningVenue(resReal.CollateralAsset, resReal.DebtAsset)
 		}
 
 		results = append(results, replayResult{
-			day: rl.day, protocol: rl.liq.Protocol, liquidator: rl.liq.Liquidator, stealTime: rl.stealTime,
-			profitableV2: resV2.Profitable, netV2: orZero(resV2.NetProfitUSD), netFull: orZero(resFull.NetProfitUSD),
-			sizeBucket: SizeBucketFor(resV2.NetProfitUSD),
+			day: rl.day, protocol: rl.liq.Protocol,
+			account: rl.liq.Account, liquidator: rl.liq.Liquidator,
+			collateral: rl.liq.CollateralAsset, debt: rl.liq.DebtAsset,
+			takenBlock: rl.liq.TakenBlock, crossingBlock: rl.crossing, stealTime: rl.stealTime,
+			profitableV2: resV2.Profitable, profitableReal: resReal.Profitable,
+			netV2: orZero(resV2.NetProfitUSD), netReal: orZero(resReal.NetProfitUSD),
+			winVenue: winVenue, sizeBucket: SizeBucketFor(resReal.NetProfitUSD),
 		})
 	}
 
-	replayReport(results, windowDays, cfg)
+	if cfg.Label != "" {
+		if err := persistReplay(ctx, conn, cfg, results); err != nil {
+			slog.Warn("stealtime replay: persist failed", "error", err)
+		}
+	}
+
+	replayReport(results, windowDays, cfg, gasNote)
 	return nil
 }
 
@@ -176,62 +222,193 @@ func loadCrashDayLiquidations(ctx context.Context, conn driver.Conn, cfg ReplayC
 	return out, windowDays, rows.Err()
 }
 
-func replayReport(results []replayResult, windowDays float64, cfg ReplayConfig) {
-	var b strings.Builder
-	fmt.Fprintf(&b, "\n=== crash-day capture replay (V2-executable venue, crash-day gas) ===\n")
-	fmt.Fprintf(&b, "evaluated=%d  window_days=%d  min_profit=$%.0f  gas_units=%d\n",
-		len(results), int(windowDays), usdFloat(cfg.MinProfitUSD1e18), cfg.GasUnits)
+func ensureReplaySchema(ctx context.Context, conn driver.Conn) error {
+	return conn.Exec(ctx, `CREATE TABLE IF NOT EXISTS replay_results (
+		run_at DateTime64(3, 'UTC') DEFAULT now64(3),
+		label LowCardinality(String),
+		chain_id UInt32,
+		protocol LowCardinality(String),
+		account FixedString(20),
+		liquidator FixedString(20),
+		collateral_asset FixedString(20),
+		debt_asset FixedString(20),
+		taken_block UInt64,
+		crossing_block UInt64,
+		steal_time UInt64,
+		size_bucket LowCardinality(String),
+		profitable_v2 Bool,
+		profitable_real Bool,
+		net_v2 UInt256,
+		net_real UInt256,
+		win_venue LowCardinality(String)
+	) ENGINE = MergeTree ORDER BY (label, chain_id, taken_block)`)
+}
 
-	profV2 := 0
+func persistReplay(ctx context.Context, conn driver.Conn, cfg ReplayConfig, results []replayResult) error {
+	if err := ensureReplaySchema(ctx, conn); err != nil {
+		return err
+	}
+	// Replace any prior rows for this label so a re-run is idempotent, not additive.
+	if err := conn.Exec(ctx, fmt.Sprintf("ALTER TABLE replay_results DELETE WHERE label = '%s' AND chain_id = %d", sqlEscape(cfg.Label), cfg.ChainID)); err != nil {
+		return err
+	}
+	if len(results) == 0 {
+		return nil
+	}
+	batch, err := conn.PrepareBatch(ctx, `INSERT INTO replay_results (
+		run_at, label, chain_id, protocol, account, liquidator, collateral_asset, debt_asset,
+		taken_block, crossing_block, steal_time, size_bucket,
+		profitable_v2, profitable_real, net_v2, net_real, win_venue
+	)`)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	for _, r := range results {
+		if err := batch.Append(
+			now, cfg.Label, cfg.ChainID, r.protocol, r.account.Bytes(), r.liquidator.Bytes(),
+			r.collateral.Bytes(), r.debt.Bytes(),
+			r.takenBlock, r.crossingBlock, r.stealTime, r.sizeBucket,
+			r.profitableV2, r.profitableReal, r.netV2, r.netReal, r.winVenue,
+		); err != nil {
+			return err
+		}
+	}
+	return batch.Send()
+}
+
+func replayReport(results []replayResult, windowDays float64, cfg ReplayConfig, gasNote string) {
+	var b strings.Builder
+	fmt.Fprintf(&b, "\n=== crash-day capture replay (REAL concentrated-liquidity venues) ===\n")
+	fmt.Fprintf(&b, "label=%q  evaluated=%d  window_days=%d  min_profit=$%.0f  gas_units=%d\n",
+		cfg.Label, len(results), int(windowDays), usdFloat(cfg.MinProfitUSD1e18), cfg.GasUnits)
+	fmt.Fprintf(&b, "venues: LFJ Liquidity Book + Uniswap V3 + Pharaoh CL (V2 routers attributed fallback)\n")
+	fmt.Fprintf(&b, "gas basis: %s\n", gasNote)
+
+	profV2, profReal := 0, 0
 	for _, r := range results {
 		if r.profitableV2 {
 			profV2++
 		}
+		if r.profitableReal {
+			profReal++
+		}
 	}
-	fmt.Fprintf(&b, "profitable on V2 (sized, crash-day gas)=%d of %d\n\n", profV2, len(results))
+	fmt.Fprintf(&b, "profitable (sized, crash-day gas): V2-only=%d  real-venues=%d  of %d\n\n", profV2, profReal, len(results))
 
-	fmt.Fprintf(&b, "Step 3: would-be capture by reaction budget R (UPPER BOUND: assumes ready-first wins)\n")
+	fmt.Fprintf(&b, "Step 3: real-venue capture by reaction budget R (UPPER BOUND: assumes ready-first wins)\n")
 	for _, R := range reactionBudgets {
 		win, sum := 0, big.NewInt(0)
 		byProto := map[string]int{}
 		bySize := map[string]int{}
 		for _, r := range results {
-			if r.profitableV2 && r.stealTime > R {
+			if r.profitableReal && r.stealTime > R {
 				win++
-				sum = new(big.Int).Add(sum, r.netV2)
+				sum = new(big.Int).Add(sum, r.netReal)
 				byProto[r.protocol]++
 				bySize[r.sizeBucket]++
 			}
 		}
 		rate := 0.0
-		if profV2 > 0 {
-			rate = float64(win) / float64(profV2)
+		if profReal > 0 {
+			rate = float64(win) / float64(profReal)
 		}
 		fmt.Fprintf(&b, "  R=%d: winnable=%d  capture=$%.0f  rate=%.1f%%  (aave=%d benqi=%d | small=%d medium=%d large=%d)\n",
 			R, win, usdFloat(sum), rate*100, byProto["aave-v3"], byProto["benqi"], bySize["small"], bySize["medium"], bySize["large"])
 	}
 
-	// Step 6: V2 vs LB gap on the R=2 winnable set.
-	winV2, winFull := big.NewInt(0), big.NewInt(0)
+	// V2-only vs real on the R=2 winnable set: does "V2 is sufficient" survive?
+	v2Sum, realSum := big.NewInt(0), big.NewInt(0)
+	v2Win, realWin := 0, 0
 	for _, r := range results {
-		if r.profitableV2 && r.stealTime > 2 {
-			winV2 = new(big.Int).Add(winV2, r.netV2)
-			winFull = new(big.Int).Add(winFull, r.netFull)
+		if r.stealTime <= 2 {
+			continue
+		}
+		if r.profitableV2 {
+			v2Win++
+			v2Sum = new(big.Int).Add(v2Sum, r.netV2)
+		}
+		if r.profitableReal {
+			realWin++
+			realSum = new(big.Int).Add(realSum, r.netReal)
 		}
 	}
-	gap := new(big.Int).Sub(winFull, winV2)
-	fmt.Fprintf(&b, "\nStep 6: venue gap on R=2 winnable set: V2=$%.0f  V2+LB=$%.0f  LB_adds=$%.0f (%.0f%%)\n",
-		usdFloat(winV2), usdFloat(winFull), usdFloat(gap), pct(gap, winV2))
+	uplift := new(big.Int).Sub(realSum, v2Sum)
+	fmt.Fprintf(&b, "\nStep 6: V2-only vs real venues, R=2 winnable set\n")
+	fmt.Fprintf(&b, "  V2-only:      winnable=%d  capture=$%.0f\n", v2Win, usdFloat(v2Sum))
+	fmt.Fprintf(&b, "  real venues:  winnable=%d  capture=$%.0f\n", realWin, usdFloat(realSum))
+	fmt.Fprintf(&b, "  real over V2: +$%.0f (%.0f%%)\n", usdFloat(uplift), pct(uplift, v2Sum))
 
-	// Annualize R=2 V2 capture with explicit haircuts.
-	annual := 0.0
-	if windowDays > 0 {
-		annual = usdFloat(winV2) * 365 / windowDays
-	}
-	fmt.Fprintf(&b, "\nAnnualized V2 capture at R=2 (window=%dd): upper_bound=$%.0f/yr\n", int(windowDays), annual)
-	fmt.Fprintf(&b, "  after win-fraction haircut: 50%% -> $%.0f/yr   25%% -> $%.0f/yr   10%% -> $%.0f/yr\n",
-		annual*0.5, annual*0.25, annual*0.1)
+	// Venue attribution: which venue wins the route, overall and for large unwinds.
+	fmt.Fprintf(&b, "\nVenue wins among real-venue profitable liquidations (which venue actually fills):\n")
+	fmt.Fprintf(&b, "  all sizes: %s\n", venueTally(results, ""))
+	fmt.Fprintf(&b, "  large only: %s\n", venueTally(results, "large"))
+
+	// Profit concentration: how much of the R=2 capture sits in the top few.
+	fmt.Fprintf(&b, "\nProfit concentration (real-venue, R=2 winnable set):\n%s", concentration(results))
+
 	fmt.Print(b.String())
+}
+
+// venueTally counts winning venues among real-venue profitable results, optionally
+// restricted to one size bucket.
+func venueTally(results []replayResult, sizeBucket string) string {
+	counts := map[string]int{}
+	total := 0
+	for _, r := range results {
+		if !r.profitableReal {
+			continue
+		}
+		if sizeBucket != "" && r.sizeBucket != sizeBucket {
+			continue
+		}
+		counts[r.winVenue]++
+		total++
+	}
+	if total == 0 {
+		return "(none)"
+	}
+	type kv struct {
+		k string
+		v int
+	}
+	list := make([]kv, 0, len(counts))
+	for k, v := range counts {
+		list = append(list, kv{k, v})
+	}
+	sort.Slice(list, func(i, j int) bool { return list[i].v > list[j].v })
+	parts := make([]string, 0, len(list))
+	for _, it := range list {
+		parts = append(parts, fmt.Sprintf("%s=%d (%.0f%%)", it.k, it.v, float64(it.v)/float64(total)*100))
+	}
+	return strings.Join(parts, "  ")
+}
+
+func concentration(results []replayResult) string {
+	nets := make([]*big.Int, 0)
+	total := big.NewInt(0)
+	for _, r := range results {
+		if r.profitableReal && r.stealTime > 2 {
+			nets = append(nets, r.netReal)
+			total = new(big.Int).Add(total, r.netReal)
+		}
+	}
+	if len(nets) == 0 || total.Sign() == 0 {
+		return "  (no winnable set)\n"
+	}
+	sort.Slice(nets, func(i, j int) bool { return nets[i].Cmp(nets[j]) > 0 })
+	var b strings.Builder
+	for _, topN := range []int{1, 3, 5, 10} {
+		if topN > len(nets) {
+			break
+		}
+		sum := big.NewInt(0)
+		for i := 0; i < topN; i++ {
+			sum = new(big.Int).Add(sum, nets[i])
+		}
+		fmt.Fprintf(&b, "  top-%d: $%.0f of $%.0f (%.0f%%)\n", topN, usdFloat(sum), usdFloat(total), pct(sum, total))
+	}
+	return b.String()
 }
 
 func orZero(n *big.Int) *big.Int {
@@ -249,3 +426,14 @@ func pct(part, whole *big.Int) float64 {
 	v, _ := p.Float64()
 	return v * 100
 }
+
+func gweiFloat(wei *big.Int) float64 {
+	if wei == nil {
+		return 0
+	}
+	f := new(big.Float).Quo(new(big.Float).SetInt(wei), big.NewFloat(1e9))
+	v, _ := f.Float64()
+	return v
+}
+
+func sqlEscape(s string) string { return strings.ReplaceAll(s, "'", "''") }

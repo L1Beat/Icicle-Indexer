@@ -20,6 +20,9 @@ type ReplayOptions struct {
 	MinSizeUSD   float64
 	GasUnits     uint64
 	MinProfitUSD float64
+	Label        string
+	ProbeVenues  bool
+	ProbeBlock   uint64
 }
 
 // DefaultReplayOptions returns replay defaults.
@@ -57,6 +60,9 @@ func RunReplay(ctx context.Context, opts ReplayOptions) {
 		MinSizeUSD1e18:   usdToWei(opts.MinSizeUSD),
 		GasUnits:         opts.GasUnits,
 		MinProfitUSD1e18: usdToWei(opts.MinProfitUSD),
+		Label:            opts.Label,
+		ProbeVenues:      opts.ProbeVenues,
+		ProbeBlock:       opts.ProbeBlock,
 	}
 
 	if err := stealtime.Replay(ctx, conn, cfg); err != nil {

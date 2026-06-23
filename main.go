@@ -214,6 +214,9 @@ func main() {
 			opts.MinSizeUSD, _ = command.Flags().GetFloat64("min-size-usd")
 			opts.GasUnits, _ = command.Flags().GetUint64("gas-units")
 			opts.MinProfitUSD, _ = command.Flags().GetFloat64("min-profit-usd")
+			opts.Label, _ = command.Flags().GetString("label")
+			opts.ProbeVenues, _ = command.Flags().GetBool("probe-venues")
+			opts.ProbeBlock, _ = command.Flags().GetUint64("probe-block")
 			cmd.RunReplay(ctx, opts)
 		},
 	}
@@ -224,6 +227,9 @@ func main() {
 	replayCmd.Flags().Float64("min-size-usd", 1000, "Sized-liquidation threshold by repaid debt")
 	replayCmd.Flags().Uint64("gas-units", 700000, "Estimated full-bundle gas units")
 	replayCmd.Flags().Float64("min-profit-usd", 5, "Minimum net profit in USD to count as profitable")
+	replayCmd.Flags().String("label", "", "Tag for replay_results rows so runs do not overwrite each other (e.g. real_oct)")
+	replayCmd.Flags().Bool("probe-venues", false, "Self-test: quote WAVAX/USDC against every venue at --probe-block and exit (verify addresses/encoding live)")
+	replayCmd.Flags().Uint64("probe-block", 0, "Block for --probe-venues (0 = recent head)")
 
 	root.AddCommand(
 		ingestCmd,
