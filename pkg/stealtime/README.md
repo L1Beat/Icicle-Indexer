@@ -82,9 +82,11 @@ re-aggregate or compare windows without re-running the archive reads.
 - It reflects **past competition**, which predicts but does not guarantee future
   competition. A field that is thin today can thicken once a new opportunity is
   demonstrated.
-- The LFJ Liquidity Book quoter address must be verified on-chain. A wrong
-  `LBQuoter` address makes LB quotes fail and fall back to the V2 routers, which
-  would understate profitability for LB-only pairs.
+- The LFJ Liquidity Book quoters are the verified Avalanche V2.2 and V2.1 LBQuoter
+  addresses (developers.lfj.gg), both decoded as the Quote struct with a versions
+  field (amounts at member index 4). V2.0 has a different struct and is omitted. A
+  quoter that did not exist yet at a block reverts and is skipped, falling back to
+  the V2 routers.
 - The crossing scan assumes health crosses once and stays liquidatable through
   taken (the common case). A position that oscillated healthy and liquidatable
   within the bracket gets the binary-search boundary, which is block-precise but
