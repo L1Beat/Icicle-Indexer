@@ -17,6 +17,7 @@ type FixturesOptions struct {
 	FallbackRPC string
 	Label       string
 	Protocol    string
+	MinSteal    uint64
 }
 
 // DefaultFixturesOptions returns fixture-extraction defaults.
@@ -49,6 +50,7 @@ func RunFixtures(ctx context.Context, opts FixturesOptions) {
 		FallbackRPC: opts.FallbackRPC,
 		Label:       opts.Label,
 		Protocol:    opts.Protocol,
+		MinSteal:    opts.MinSteal,
 	}
 
 	if err := stealtime.Fixtures(ctx, conn, cfg); err != nil {

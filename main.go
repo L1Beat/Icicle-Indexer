@@ -248,6 +248,7 @@ func main() {
 				opts.Label = v
 			}
 			opts.Protocol, _ = command.Flags().GetString("protocol")
+			opts.MinSteal, _ = command.Flags().GetUint64("min-steal")
 			cmd.RunFixtures(ctx, opts)
 		},
 	}
@@ -256,6 +257,7 @@ func main() {
 	fixturesCmd.Flags().String("fallback-rpc", os.Getenv("ICICLE_FALLBACK_RPC"), "Optional public RPC fallback")
 	fixturesCmd.Flags().String("label", "real_oct", "replay_results label to pick fixtures from")
 	fixturesCmd.Flags().String("protocol", "", "Also emit a protocol-scoped fixture preferring a CL route (e.g. benqi)")
+	fixturesCmd.Flags().Uint64("min-steal", 1, "Protocol fixture: minimum steal_time (blocks) so the case is fork-replayable")
 
 	root.AddCommand(
 		ingestCmd,
