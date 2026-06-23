@@ -64,6 +64,17 @@ func (c *Client) EthCall(ctx context.Context, to, data, block string) (string, e
 	return result, err
 }
 
+// GetCode returns the deployed bytecode at an address (0x-hex) at the block tag
+// ("latest" when empty). Used to verify a contract is live on-chain.
+func (c *Client) GetCode(ctx context.Context, addr, block string) (string, error) {
+	if block == "" {
+		block = "latest"
+	}
+	var result string
+	err := c.call(ctx, "eth_getCode", []interface{}{addr, block}, &result)
+	return result, err
+}
+
 // GasPrice returns the current network gas price in wei.
 func (c *Client) GasPrice(ctx context.Context) (*big.Int, error) {
 	var h string

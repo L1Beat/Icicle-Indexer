@@ -64,6 +64,10 @@ var (
 
 	realV3Venues = []v3Venue{uniswapV3, pharaohV3}
 
+	// Pharaoh CL swap router (docs.phar.gg), the execution counterpart to the
+	// quoter. Reported in fixtures and verified live via getCode.
+	pharaohRouter = common.HexToAddress("0xc8B8fCbDb5C019D7802fFb0b39603395D7d3915c")
+
 	// Canonical liquid token for the venue self-test (native USDC, 6 decimals).
 	usdcAvax = common.HexToAddress("0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E")
 )

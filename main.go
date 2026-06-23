@@ -231,6 +231,30 @@ func main() {
 	replayCmd.Flags().Bool("probe-venues", false, "Self-test: quote WAVAX/USDC against every venue at --probe-block and exit (verify addresses/encoding live)")
 	replayCmd.Flags().Uint64("probe-block", 0, "Block for --probe-venues (0 = recent head)")
 
+	fixturesCmd := &cobra.Command{
+		Use:   "fixtures",
+		Short: "Extract per-venue fork-test fixtures from replay_results (read-only)",
+		Run: func(command *cobra.Command, args []string) {
+			opts := cmd.DefaultFixturesOptions()
+			cid, _ := command.Flags().GetUint32("chain")
+			opts.ChainID = cid
+			if v, _ := command.Flags().GetString("archive-rpc"); v != "" {
+				opts.ArchiveRPC = v
+			}
+			if v, _ := command.Flags().GetString("fallback-rpc"); v != "" {
+				opts.FallbackRPC = v
+			}
+			if v, _ := command.Flags().GetString("label"); v != "" {
+				opts.Label = v
+			}
+			cmd.RunFixtures(ctx, opts)
+		},
+	}
+	fixturesCmd.Flags().Uint32("chain", 43114, "EVM chain ID")
+	fixturesCmd.Flags().String("archive-rpc", os.Getenv("ICICLE_ARCHIVE_RPC"), "Archive node RPC URL (required)")
+	fixturesCmd.Flags().String("fallback-rpc", os.Getenv("ICICLE_FALLBACK_RPC"), "Optional public RPC fallback")
+	fixturesCmd.Flags().String("label", "real_oct", "replay_results label to pick fixtures from")
+
 	root.AddCommand(
 		ingestCmd,
 		apiCmd,
@@ -238,6 +262,7 @@ func main() {
 		kmeasureCmd,
 		stealtimeCmd,
 		replayCmd,
+		fixturesCmd,
 		&cobra.Command{
 			Use:   "cache",
 			Short: "Fill RPC cache at max speed (no ClickHouse)",
