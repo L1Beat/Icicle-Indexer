@@ -16,6 +16,7 @@ type FixturesOptions struct {
 	ArchiveRPC  string
 	FallbackRPC string
 	Label       string
+	Protocol    string
 }
 
 // DefaultFixturesOptions returns fixture-extraction defaults.
@@ -47,6 +48,7 @@ func RunFixtures(ctx context.Context, opts FixturesOptions) {
 		ArchiveRPC:  opts.ArchiveRPC,
 		FallbackRPC: opts.FallbackRPC,
 		Label:       opts.Label,
+		Protocol:    opts.Protocol,
 	}
 
 	if err := stealtime.Fixtures(ctx, conn, cfg); err != nil {

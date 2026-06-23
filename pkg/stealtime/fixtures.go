@@ -22,6 +22,7 @@ type FixturesConfig struct {
 	ArchiveRPC  string
 	FallbackRPC string
 	Label       string // replay_results label to pick from (e.g. real_oct)
+	Protocol    string // optional: also emit a protocol-scoped fixture (e.g. benqi)
 }
 
 type fixtureTarget struct {
@@ -123,6 +124,43 @@ func Fixtures(ctx context.Context, conn driver.Conn, cfg FixturesConfig) error {
 		fmt.Fprintf(&out, "# verify: https://snowtrace.io/tx/0x%s\n\n", txHash)
 	}
 
+	// Optional protocol-scoped fixture (e.g. Benqi), to exercise a path the
+	// venue-chosen fixtures miss (Benqi liquidateBorrow + seizeTokens + redeem).
+	// Prefers a CL-routed candidate so the redeem-then-CL-swap path is covered.
+	if cfg.Protocol != "" {
+		prefix := "FIX_" + strings.ToUpper(cfg.Protocol)
+		row, ok, err := selectProtocolFixture(ctx, conn, cfg)
+		if err != nil {
+			return fmt.Errorf("select %s: %w", prefix, err)
+		}
+		if !ok {
+			fmt.Fprintf(&out, "# %s: no profitable %s liquidation in label %q.\n\n", prefix, cfg.Protocol, cfg.Label)
+		} else if txHash, repay, seized, ok := fetchLiquidationEvent(ctx, conn, cfg.ChainID, aavePool, row); !ok {
+			fmt.Fprintf(&out, "# %s: raw liquidation event not found for %s @ block %d (skipped).\n\n", prefix, row.account.Hex(), row.taken)
+		} else {
+			confirmed := confirmVenue(ctx, rpc, resolver, addrRes, row,
+				aaveAd, benqiAd, aaveParams, aaveGlobals, benqiParams, benqiGlobals,
+				benqiComptroller, aavePool, minProfit)
+			clNote := "routes a CL venue (redeem + CL swap exercised)"
+			if !isCLVenue(confirmed) {
+				clNote = "no clean CL route in window; routes " + confirmed + " (redeem path still exercised)"
+			}
+			fmt.Fprintf(&out, "# %s  protocol=%s  size=%s  net_real=$%.2f  confirmed_venue=%s  (%s)\n",
+				prefix, row.protocol, row.sizeBucket, usdFloat(row.netReal), confirmed, clNote)
+			fmt.Fprintf(&out, "# Benqi assets are qiToken markets as stored; the bot resolves underlyings on-chain. SEIZED is qiToken units (seizeTokens), REPAY is underlying debt units.\n")
+			fmt.Fprintf(&out, "%s_FORK_BLOCK=%d\n", prefix, row.crossing)
+			fmt.Fprintf(&out, "%s_ACCOUNT=%s\n", prefix, row.account.Hex())
+			fmt.Fprintf(&out, "%s_PROTOCOL=%s\n", prefix, row.protocol)
+			fmt.Fprintf(&out, "%s_DEBT_ASSET=%s\n", prefix, row.debt.Hex())
+			fmt.Fprintf(&out, "%s_COLLATERAL_ASSET=%s\n", prefix, row.collateral.Hex())
+			fmt.Fprintf(&out, "%s_REPAY_AMOUNT=%s\n", prefix, repay.String())
+			fmt.Fprintf(&out, "%s_SEIZED_AMOUNT=%s\n", prefix, seized.String())
+			fmt.Fprintf(&out, "%s_WIN_VENUE=%s\n", prefix, confirmed)
+			fmt.Fprintf(&out, "%s_TX_HASH=0x%s\n", prefix, txHash)
+			fmt.Fprintf(&out, "# verify: https://snowtrace.io/tx/0x%s\n\n", txHash)
+		}
+	}
+
 	// Pharaoh quoter/router, verified live on-chain via getCode.
 	fmt.Fprintf(&out, "# Pharaoh CL venue addresses (verified on-chain below)\n")
 	fmt.Fprintf(&out, "FIX_PHARAOH_QUOTER=%s\n", pharaohV3.quoter.Hex())
@@ -177,6 +215,38 @@ func selectFixture(ctx context.Context, conn driver.Conn, cfg FixturesConfig, t 
 	r.collateral = common.BytesToAddress(coll[:])
 	r.debt = common.BytesToAddress(debt[:])
 	return r, true, nil
+}
+
+// selectProtocolFixture picks the best profitable liquidation for one protocol,
+// preferring a candidate whose route is a CL venue (LB / Uniswap V3 / Pharaoh) so
+// the redeem-then-CL-swap path is exercised, falling back to any venue.
+func selectProtocolFixture(ctx context.Context, conn driver.Conn, cfg FixturesConfig) (fixtureRow, bool, error) {
+	q := `
+		SELECT protocol, account, collateral_asset, debt_asset,
+			crossing_block, taken_block, size_bucket, net_real, win_venue
+		FROM replay_results
+		WHERE label = ? AND chain_id = ? AND profitable_real AND protocol = ?
+		ORDER BY (win_venue IN ('lb', 'univ3', 'pharaoh')) DESC, net_real DESC
+		LIMIT 1`
+
+	var r fixtureRow
+	var acc, coll, debt [20]byte
+	row := conn.QueryRow(ctx, q, cfg.Label, cfg.ChainID, cfg.Protocol)
+	err := row.Scan(&r.protocol, &acc, &coll, &debt, &r.crossing, &r.taken, &r.sizeBucket, &r.netReal, &r.storedVenue)
+	if err != nil {
+		if strings.Contains(err.Error(), "no rows") {
+			return fixtureRow{}, false, nil
+		}
+		return fixtureRow{}, false, err
+	}
+	r.account = common.BytesToAddress(acc[:])
+	r.collateral = common.BytesToAddress(coll[:])
+	r.debt = common.BytesToAddress(debt[:])
+	return r, true, nil
+}
+
+func isCLVenue(v string) bool {
+	return v == "lb" || v == "univ3" || v == "pharaoh"
 }
 
 // fetchLiquidationEvent reads the raw liquidation event for a fixture and returns

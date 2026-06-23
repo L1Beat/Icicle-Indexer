@@ -247,6 +247,7 @@ func main() {
 			if v, _ := command.Flags().GetString("label"); v != "" {
 				opts.Label = v
 			}
+			opts.Protocol, _ = command.Flags().GetString("protocol")
 			cmd.RunFixtures(ctx, opts)
 		},
 	}
@@ -254,6 +255,7 @@ func main() {
 	fixturesCmd.Flags().String("archive-rpc", os.Getenv("ICICLE_ARCHIVE_RPC"), "Archive node RPC URL (required)")
 	fixturesCmd.Flags().String("fallback-rpc", os.Getenv("ICICLE_FALLBACK_RPC"), "Optional public RPC fallback")
 	fixturesCmd.Flags().String("label", "real_oct", "replay_results label to pick fixtures from")
+	fixturesCmd.Flags().String("protocol", "", "Also emit a protocol-scoped fixture preferring a CL route (e.g. benqi)")
 
 	root.AddCommand(
 		ingestCmd,
