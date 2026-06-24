@@ -45,6 +45,7 @@ const (
 	fnGetUnderlyingPrice   = "getUnderlyingPrice(address)"
 	fnUnderlying           = "underlying()"
 	fnSymbol               = "symbol()"
+	fnDecimals             = "decimals()"
 	fnComptroller          = "comptroller()"
 )
 
@@ -202,11 +203,15 @@ func (a *Adapter) BuildProbe(account string, _ []lending.Exposure) lending.Healt
 				BlockNumber:   block,
 				HealthFactor:  big.NewInt(0),
 				ShortfallBase: big.NewInt(0),
+				LiquidityBase: big.NewInt(0),
 			}
 			if len(results) == 0 || !results[0].Success {
 				return h // liquidity read reverted, skip (rule 5)
 			}
-			// getAccountLiquidity returns (error, liquidity, shortfall), 1e18 USD.
+			// getAccountLiquidity returns (error, liquidity, shortfall), 1e18 USD. One
+			// side is always zero: liquidity > 0 gives the distance to liquidation, and
+			// shortfall > 0 means already underwater (authoritative liquidatable).
+			h.LiquidityBase = lending.Word(results[0].ReturnData, 1)
 			shortfall := lending.Word(results[0].ReturnData, 2)
 			h.ShortfallBase = shortfall
 			h.Liquidatable = shortfall.Sign() > 0 // authoritative (rule 3)
@@ -295,21 +300,29 @@ func (a *Adapter) RefreshParams(ctx context.Context, rpc *lending.Client) ([]len
 		}
 		cfBps := toBps(lending.Word(lending.DecodeHexBytes(cf), 1))
 
-		// underlying() reverts on the native market (qiAVAX). Fall back to the
-		// market address so the leg is still tracked.
+		// underlying() reverts on the native market (qiAVAX): its underlying is native
+		// AVAX (18 decimals). Otherwise resolve the underlying token's symbol and
+		// decimals, since legs are keyed by the qiToken market and the dashboard wants
+		// the underlying displayed (e.g. qiAVAX -> AVAX, qiUSDC -> USDC).
 		asset := m
+		symbol := "AVAX"
+		decimals := uint8(18)
 		if u, err := a.callAddr(ctx, rpc, m, fnUnderlying); err == nil && u != lending.ZeroAddress {
 			asset = u
-		}
-		symbol := ""
-		if s, err := rpc.EthCall(ctx, m, lending.EncodeCall0(fnSymbol), "latest"); err == nil {
-			symbol = decodeString(lending.DecodeHexBytes(s))
+			symbol = ""
+			if s, serr := rpc.EthCall(ctx, u, lending.EncodeCall0(fnSymbol), "latest"); serr == nil {
+				symbol = decodeString(lending.DecodeHexBytes(s))
+			}
+			if d, derr := a.callUint(ctx, rpc, u, fnDecimals); derr == nil && d.Sign() > 0 {
+				decimals = uint8(d.Uint64())
+			}
 		}
 
 		params = append(params, lending.AssetParam{
 			Asset:                   lending.NormalizeAddr(asset),
 			Market:                  lending.NormalizeAddr(m),
 			Symbol:                  symbol,
+			Decimals:                decimals,
 			LiquidationThresholdBps: cfBps, // Compound uses the collateral factor for the liquidation limit
 			LtvBps:                  cfBps,
 			LiquidationBonusBps:     0, // global on Benqi (rule 6)

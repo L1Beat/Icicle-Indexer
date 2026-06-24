@@ -114,6 +114,7 @@ type Health struct {
 	CollateralBase *big.Int // weighted collateral in oracle base currency
 	DebtBase       *big.Int
 	ShortfallBase  *big.Int // Benqi shortfall, nil or 0 for Aave
+	LiquidityBase  *big.Int // Benqi positive account liquidity (getAccountLiquidity word1), distance to liquidation; nil/0 for Aave
 	Liquidatable   bool     // Aave HF<1e18, Benqi shortfall>0 (rule 3)
 	Assets         []AssetPosition
 	BlockNumber    uint64

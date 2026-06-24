@@ -81,12 +81,16 @@ CREATE TABLE IF NOT EXISTS lending_positions (
     collateral_base UInt256,               -- weighted collateral in oracle base currency
     debt_base UInt256,
     shortfall_base UInt256,                -- Benqi shortfall, 0 for Aave
+    liquidity_base UInt256,                -- Benqi positive account liquidity (distance to liquidation), 0 for Aave
     liquidatable Bool,                     -- Aave HF<1e18, Benqi shortfall>0 (rule 3)
     tier LowCardinality(String),           -- hot | warm | cold
     block_number UInt32,                   -- chain head at read time
     updated_at DateTime64(3, 'UTC') DEFAULT now64(3)
 ) ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY (chain_id, protocol, account);
+
+-- Backfill the liquidity_base column onto an already-created table (idempotent).
+ALTER TABLE lending_positions ADD COLUMN IF NOT EXISTS liquidity_base UInt256 AFTER shortfall_base;
 
 -- Per-asset breakdown for the feed. Assets that drop to zero are written with
 -- amount 0 on the next refresh so stale legs do not linger.

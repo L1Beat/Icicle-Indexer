@@ -17,10 +17,12 @@ import (
 // stale health (rule 2).
 
 type lendingLeg struct {
-	Asset     string `json:"asset"`
-	Symbol    string `json:"symbol,omitempty"`
-	Amount    string `json:"amount"`
-	BaseValue string `json:"base_value"`
+	Asset      string `json:"asset"`                 // for Benqi this is the qiToken market
+	Underlying string `json:"underlying,omitempty"` // resolved underlying token (Benqi qiToken -> underlying)
+	Symbol     string `json:"symbol,omitempty"`     // underlying symbol
+	Decimals   uint8  `json:"decimals"`             // underlying decimals, for scaling Amount
+	Amount     string `json:"amount"`
+	BaseValue  string `json:"base_value"`
 }
 
 type lendingEstimate struct {
@@ -43,6 +45,7 @@ type lendingPosition struct {
 	CollateralBase string           `json:"collateral_base"`
 	DebtBase       string           `json:"debt_base"`
 	ShortfallBase  string           `json:"shortfall_base,omitempty"`
+	LiquidityBase  string           `json:"liquidity_base,omitempty"` // Benqi distance-to-liquidation (positive side of getAccountLiquidity)
 	Tier           string           `json:"tier"`
 	Collateral     []lendingLeg     `json:"collateral"`
 	Debt           []lendingLeg     `json:"debt"`
@@ -53,8 +56,10 @@ type lendingPosition struct {
 
 // assetMeta is per-asset parameter metadata loaded for valuation and sizing.
 type assetMeta struct {
-	symbol   string
-	bonusBps uint16
+	symbol     string
+	underlying string
+	decimals   uint8
+	bonusBps   uint16
 }
 
 type globalMeta struct {
@@ -99,12 +104,13 @@ func (s *Server) handleLendingPositions(w http.ResponseWriter, r *http.Request) 
 	}
 
 	query := fmt.Sprintf(`
-		SELECT account, protocol, hf, coll, debt, short, liq, tier, blk, upd FROM (
+		SELECT account, protocol, hf, coll, debt, short, liqd, liq, tier, blk, upd FROM (
 			SELECT account, protocol,
 				argMax(health_factor, updated_at) AS hf,
 				argMax(collateral_base, updated_at) AS coll,
 				argMax(debt_base, updated_at) AS debt,
 				argMax(shortfall_base, updated_at) AS short,
+				argMax(liquidity_base, updated_at) AS liqd,
 				argMax(liquidatable, updated_at) AS liq,
 				argMax(tier, updated_at) AS tier,
 				argMax(block_number, updated_at) AS blk,
@@ -130,11 +136,11 @@ func (s *Server) handleLendingPositions(w http.ResponseWriter, r *http.Request) 
 	for rows.Next() {
 		var acc [20]byte
 		var proto, tier string
-		var hf, coll, debt, short *big.Int
+		var hf, coll, debt, short, liqd *big.Int
 		var liq bool
 		var blk uint32
 		var upd time.Time
-		if err := rows.Scan(&acc, &proto, &hf, &coll, &debt, &short, &liq, &tier, &blk, &upd); err != nil {
+		if err := rows.Scan(&acc, &proto, &hf, &coll, &debt, &short, &liqd, &liq, &tier, &blk, &upd); err != nil {
 			writeInternalError(w, err.Error())
 			return
 		}
@@ -147,6 +153,7 @@ func (s *Server) handleLendingPositions(w http.ResponseWriter, r *http.Request) 
 			CollateralBase: bigStr(coll),
 			DebtBase:       bigStr(debt),
 			ShortfallBase:  bigStrOmitZero(short),
+			LiquidityBase:  bigStrOmitZero(liqd),
 			Tier:           tier,
 			BlockNumber:    blk,
 			UpdatedAt:      upd,
@@ -187,12 +194,13 @@ func (s *Server) handleLendingAccount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := s.conn.Query(ctx, fmt.Sprintf(`
-		SELECT account, protocol, hf, coll, debt, short, liq, tier, blk, upd FROM (
+		SELECT account, protocol, hf, coll, debt, short, liqd, liq, tier, blk, upd FROM (
 			SELECT account, protocol,
 				argMax(health_factor, updated_at) AS hf,
 				argMax(collateral_base, updated_at) AS coll,
 				argMax(debt_base, updated_at) AS debt,
 				argMax(shortfall_base, updated_at) AS short,
+				argMax(liquidity_base, updated_at) AS liqd,
 				argMax(liquidatable, updated_at) AS liq,
 				argMax(tier, updated_at) AS tier,
 				argMax(block_number, updated_at) AS blk,
@@ -213,18 +221,18 @@ func (s *Server) handleLendingAccount(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var acc [20]byte
 		var proto, tier string
-		var hf, coll, debt, short *big.Int
+		var hf, coll, debt, short, liqd *big.Int
 		var liq bool
 		var blk uint32
 		var upd time.Time
-		if err := rows.Scan(&acc, &proto, &hf, &coll, &debt, &short, &liq, &tier, &blk, &upd); err != nil {
+		if err := rows.Scan(&acc, &proto, &hf, &coll, &debt, &short, &liqd, &liq, &tier, &blk, &upd); err != nil {
 			writeInternalError(w, err.Error())
 			return
 		}
 		positions = append(positions, lendingPosition{
 			Account: addr, Protocol: proto, HealthFactor: bigStr(hf), Liquidatable: liq,
 			CollateralBase: bigStr(coll), DebtBase: bigStr(debt), ShortfallBase: bigStrOmitZero(short),
-			Tier: tier, BlockNumber: blk, UpdatedAt: upd,
+			LiquidityBase: bigStrOmitZero(liqd), Tier: tier, BlockNumber: blk, UpdatedAt: upd,
 		})
 	}
 	if err := rows.Err(); err != nil {
@@ -611,14 +619,25 @@ func (s *Server) handleLendingAlerts(w http.ResponseWriter, r *http.Request) {
 func (s *Server) enrich(p *lendingPosition, legs map[string][]lendingLeg, params map[string]assetMeta, globals map[string]globalMeta) {
 	key := p.Protocol + "|" + p.Account
 	for _, leg := range legs[key+"|collateral"] {
-		leg.Symbol = params[p.Protocol+"|"+leg.Asset].symbol
+		applyLegMeta(&leg, params[p.Protocol+"|"+leg.Asset])
 		p.Collateral = append(p.Collateral, leg)
 	}
 	for _, leg := range legs[key+"|debt"] {
-		leg.Symbol = params[p.Protocol+"|"+leg.Asset].symbol
+		applyLegMeta(&leg, params[p.Protocol+"|"+leg.Asset])
 		p.Debt = append(p.Debt, leg)
 	}
 	p.Liquidation = buildEstimate(p, params, globals)
+}
+
+// applyLegMeta fills a leg's underlying symbol, decimals, and underlying address
+// from resolved params. For Aave the underlying equals the leg asset; for Benqi it
+// resolves the qiToken market to its underlying.
+func applyLegMeta(leg *lendingLeg, m assetMeta) {
+	leg.Symbol = m.symbol
+	leg.Decimals = m.decimals
+	if m.underlying != "" && m.underlying != leg.Asset {
+		leg.Underlying = m.underlying
+	}
 }
 
 // buildEstimate sizes the largest collateral and debt legs into a gross-only
@@ -691,10 +710,13 @@ func (s *Server) loadLegs(ctx context.Context, chainID uint32, accounts []string
 	return out
 }
 
+// loadAssetMeta maps asset metadata keyed by BOTH the underlying asset and the
+// market (Benqi qiToken) address, so legs that arrive keyed by the qiToken market
+// resolve to the underlying symbol, decimals, and underlying address server-side.
 func (s *Server) loadAssetMeta(ctx context.Context, chainID uint32) map[string]assetMeta {
 	out := map[string]assetMeta{}
 	rows, err := s.conn.Query(ctx, `
-		SELECT protocol, asset, symbol, liquidation_bonus_bps
+		SELECT protocol, asset, market, symbol, decimals, liquidation_bonus_bps
 		FROM (SELECT * FROM lending_protocol_params FINAL)
 		WHERE chain_id = ?
 	`, chainID)
@@ -704,12 +726,18 @@ func (s *Server) loadAssetMeta(ctx context.Context, chainID uint32) map[string]a
 	defer rows.Close()
 	for rows.Next() {
 		var proto, symbol string
-		var asset [20]byte
+		var asset, market [20]byte
+		var decimals uint8
 		var bonus uint16
-		if err := rows.Scan(&proto, &asset, &symbol, &bonus); err != nil {
+		if err := rows.Scan(&proto, &asset, &market, &symbol, &decimals, &bonus); err != nil {
 			return out
 		}
-		out[proto+"|0x"+hex.EncodeToString(asset[:])] = assetMeta{symbol: symbol, bonusBps: bonus}
+		underlying := "0x" + hex.EncodeToString(asset[:])
+		m := assetMeta{symbol: symbol, underlying: underlying, decimals: decimals, bonusBps: bonus}
+		out[proto+"|"+underlying] = m
+		if market != ([20]byte{}) {
+			out[proto+"|0x"+hex.EncodeToString(market[:])] = m
+		}
 	}
 	return out
 }
