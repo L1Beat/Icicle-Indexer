@@ -172,6 +172,7 @@ func (s *Server) registerRoutes(cfg Config) {
 	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/lending/positions", s.handleLendingPositions)
 	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/lending/positions/{account}", s.handleLendingAccount)
 	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/lending/stats", s.handleLendingStats)
+	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/lending/risk", s.handleLendingRisk)
 	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/lending/alerts", s.handleLendingAlerts)
 
 	// P-Chain Transactions

@@ -294,6 +294,258 @@ func (s *Server) handleLendingStats(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, Response{Data: stats})
 }
 
+// Health-factor histogram bounds (1e18-scaled). Fixed buckets so the dashboard can
+// chart the full distribution, not just the loaded risk tail.
+const (
+	hfWAD = "1000000000000000000" // 1.0
+	hf110 = "1100000000000000000" // 1.1
+	hf125 = "1250000000000000000" // 1.25
+	hf150 = "1500000000000000000" // 1.5
+	hf200 = "2000000000000000000" // 2.0
+)
+
+type riskBucket struct {
+	Range string `json:"range"`
+	Count uint64 `json:"count"`
+}
+
+type riskAsset struct {
+	Asset          string `json:"asset"`
+	Symbol         string `json:"symbol,omitempty"`
+	CollateralBase string `json:"collateral_base"`
+	DebtBase       string `json:"debt_base"`
+}
+
+type riskStat struct {
+	Protocol      string `json:"protocol"`
+	MinDebtBase   string `json:"min_debt_base"`
+	OpenPositions uint64 `json:"open_positions"`
+	Liquidatable  uint64 `json:"liquidatable"`
+	BadDebt       struct {
+		Count     uint64 `json:"count"`
+		TotalBase string `json:"total_base"`
+	} `json:"bad_debt"`
+	NearLiquidation struct {
+		Count uint64 `json:"count"`
+		HFMax string `json:"hf_max"`
+	} `json:"near_liquidation"`
+	ValueAtRisk struct {
+		CollateralBase string `json:"collateral_base"`
+		DebtBase       string `json:"debt_base"`
+	} `json:"value_at_risk"`
+	HFHistogram []riskBucket `json:"hf_histogram"`
+	ByAsset     []riskAsset  `json:"by_asset"`
+}
+
+// handleLendingRisk returns server-side aggregate risk stats per protocol (and per
+// asset), all gated by a min_debt_base debt floor so the dust-inclusive counts the
+// overview shows can be replaced by the real, dust-free numbers. Computed in two
+// GROUP BY passes over the argMax-deduped current state, never a plain SELECT, so
+// pre-merge ReplacingMergeTree duplicates cannot return stale health (rule 2).
+func (s *Server) handleLendingRisk(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	chainID, err := getChainIDFromPath(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid chain_id")
+		return
+	}
+	protocol := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("protocol")))
+	floor := validBigParam(r, "min_debt_base", "0")
+	nearMax := validBigParam(r, "near_hf_max", hf110)
+
+	conds := "chain_id = ?"
+	args := []interface{}{chainID}
+	if protocol != "" {
+		conds += " AND protocol = ?"
+		args = append(args, protocol)
+	}
+
+	// Pass 1: per-protocol aggregates over the deduped current positions. The debt
+	// floor (and all HF bounds) are validated base-10 integers, so they are
+	// injection-safe to inline; chain_id and protocol stay bound parameters.
+	aggQ := fmt.Sprintf(`
+		SELECT protocol,
+			countIf(debt > %[1]s) AS open_positions,
+			countIf(liq AND debt > %[1]s) AS liquidatable,
+			countIf(coll < debt AND debt > %[1]s) AS bad_debt_count,
+			sumIf(debt - coll, coll < debt AND debt > %[1]s) AS bad_debt_total,
+			countIf(NOT liq AND hf >= %[2]s AND hf < %[3]s AND debt > %[1]s) AS near_count,
+			sumIf(coll, (liq OR hf < %[3]s) AND debt > %[1]s) AS var_coll,
+			sumIf(debt, (liq OR hf < %[3]s) AND debt > %[1]s) AS var_debt,
+			countIf(hf < %[2]s AND debt > %[1]s) AS b0,
+			countIf(hf >= %[2]s AND hf < %[4]s AND debt > %[1]s) AS b1,
+			countIf(hf >= %[4]s AND hf < %[5]s AND debt > %[1]s) AS b2,
+			countIf(hf >= %[5]s AND hf < %[6]s AND debt > %[1]s) AS b3,
+			countIf(hf >= %[6]s AND hf < %[7]s AND debt > %[1]s) AS b4,
+			countIf(hf >= %[7]s AND debt > %[1]s) AS b5
+		FROM (
+			SELECT account, protocol,
+				argMax(health_factor, updated_at) AS hf,
+				argMax(collateral_base, updated_at) AS coll,
+				argMax(debt_base, updated_at) AS debt,
+				argMax(liquidatable, updated_at) AS liq
+			FROM lending_positions
+			WHERE %[8]s
+			GROUP BY account, protocol
+		)
+		GROUP BY protocol
+		ORDER BY protocol
+	`, floor, hfWAD, nearMax, hf110, hf125, hf150, hf200, conds)
+
+	rows, err := s.conn.Query(ctx, aggQ, args...)
+	if err != nil {
+		writeInternalError(w, err.Error())
+		return
+	}
+	defer rows.Close()
+
+	statsByProto := map[string]*riskStat{}
+	var order []string
+	for rows.Next() {
+		var st riskStat
+		var badTotal, varColl, varDebt *big.Int
+		var b [6]uint64
+		if err := rows.Scan(&st.Protocol, &st.OpenPositions, &st.Liquidatable,
+			&st.BadDebt.Count, &badTotal, &st.NearLiquidation.Count, &varColl, &varDebt,
+			&b[0], &b[1], &b[2], &b[3], &b[4], &b[5]); err != nil {
+			writeInternalError(w, err.Error())
+			return
+		}
+		st.MinDebtBase = floor
+		st.BadDebt.TotalBase = bigStr(badTotal)
+		st.NearLiquidation.HFMax = nearMax
+		st.ValueAtRisk.CollateralBase = bigStr(varColl)
+		st.ValueAtRisk.DebtBase = bigStr(varDebt)
+		st.HFHistogram = []riskBucket{
+			{"<1.0", b[0]}, {"1.0-1.1", b[1]}, {"1.1-1.25", b[2]},
+			{"1.25-1.5", b[3]}, {"1.5-2.0", b[4]}, {">=2.0", b[5]},
+		}
+		st.ByAsset = []riskAsset{}
+		statsByProto[st.Protocol] = &st
+		order = append(order, st.Protocol)
+	}
+	if err := rows.Err(); err != nil {
+		writeInternalError(w, err.Error())
+		return
+	}
+
+	s.attachRiskByAsset(ctx, chainID, conds, args, floor, statsByProto)
+
+	out := make([]riskStat, 0, len(order))
+	for _, p := range order {
+		out = append(out, *statsByProto[p])
+	}
+	writeJSON(w, http.StatusOK, Response{Data: out})
+}
+
+// attachRiskByAsset fills the per-asset collateral/debt exposure for each protocol,
+// restricted to the dust-free open set (positions whose total debt clears the
+// floor), and resolves the asset symbol (covering Benqi qiToken markets too).
+func (s *Server) attachRiskByAsset(ctx context.Context, chainID uint32, conds string, args []interface{}, floor string, statsByProto map[string]*riskStat) {
+	q := fmt.Sprintf(`
+		SELECT protocol, asset, side, sum(val) AS total_base FROM (
+			SELECT account, protocol, asset, side, argMax(base_value, updated_at) AS val
+			FROM lending_position_assets
+			WHERE %[1]s
+			GROUP BY account, protocol, asset, side
+		)
+		WHERE val > 0 AND (protocol, account) IN (
+			SELECT protocol, account FROM (
+				SELECT account, protocol, argMax(debt_base, updated_at) AS debt
+				FROM lending_positions WHERE %[1]s GROUP BY account, protocol
+			) WHERE debt > %[2]s
+		)
+		GROUP BY protocol, asset, side
+		ORDER BY total_base DESC
+	`, conds, floor)
+
+	// conds/args appear twice (legs subquery and the debt-floor subquery).
+	dualArgs := append(append([]interface{}{}, args...), args...)
+	rows, err := s.conn.Query(ctx, q, dualArgs...)
+	if err != nil {
+		return
+	}
+	defer rows.Close()
+
+	symbols := s.loadAssetSymbols(ctx, chainID)
+	// per protocol: asset -> *riskAsset, preserving size order.
+	seen := map[string]map[string]*riskAsset{}
+	order := map[string][]string{}
+	for rows.Next() {
+		var proto, side string
+		var asset [20]byte
+		var total *big.Int
+		if err := rows.Scan(&proto, &asset, &side, &total); err != nil {
+			return
+		}
+		addr := "0x" + hex.EncodeToString(asset[:])
+		if seen[proto] == nil {
+			seen[proto] = map[string]*riskAsset{}
+		}
+		ra := seen[proto][addr]
+		if ra == nil {
+			ra = &riskAsset{Asset: addr, Symbol: symbols[proto+"|"+addr], CollateralBase: "0", DebtBase: "0"}
+			seen[proto][addr] = ra
+			order[proto] = append(order[proto], addr)
+		}
+		if side == "debt" {
+			ra.DebtBase = bigStr(total)
+		} else {
+			ra.CollateralBase = bigStr(total)
+		}
+	}
+	for proto, addrs := range order {
+		st := statsByProto[proto]
+		if st == nil {
+			continue
+		}
+		for _, addr := range addrs {
+			st.ByAsset = append(st.ByAsset, *seen[proto][addr])
+		}
+	}
+}
+
+// loadAssetSymbols maps both underlying asset and Benqi qiToken market addresses to
+// their symbol, so per-asset breakdowns label Benqi legs that arrive keyed by the
+// qiToken market.
+func (s *Server) loadAssetSymbols(ctx context.Context, chainID uint32) map[string]string {
+	out := map[string]string{}
+	rows, err := s.conn.Query(ctx, `
+		SELECT protocol, asset, market, symbol
+		FROM (SELECT * FROM lending_protocol_params FINAL)
+		WHERE chain_id = ?
+	`, chainID)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var proto, symbol string
+		var asset, market [20]byte
+		if err := rows.Scan(&proto, &asset, &market, &symbol); err != nil {
+			return out
+		}
+		if symbol == "" {
+			continue
+		}
+		out[proto+"|0x"+hex.EncodeToString(asset[:])] = symbol
+		if market != ([20]byte{}) {
+			out[proto+"|0x"+hex.EncodeToString(market[:])] = symbol
+		}
+	}
+	return out
+}
+
+// validBigParam returns a query param if it is a valid base-10 integer, else def.
+func validBigParam(r *http.Request, name, def string) string {
+	if v := strings.TrimSpace(r.URL.Query().Get(name)); v != "" {
+		if _, ok := new(big.Int).SetString(v, 10); ok {
+			return v
+		}
+	}
+	return def
+}
+
 // handleLendingAlerts returns recent crossing events, newest first.
 func (s *Server) handleLendingAlerts(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
