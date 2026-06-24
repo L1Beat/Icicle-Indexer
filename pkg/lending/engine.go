@@ -39,6 +39,8 @@ type Engine struct {
 
 	active      []Adapter
 	discoveries []*Discovery
+	liq         *LiquidationIngester
+	liqSources  []liqSource
 }
 
 // NewEngine constructs the engine. Adapters are brought up in Bootstrap.
@@ -85,6 +87,7 @@ func (e *Engine) Bootstrap(ctx context.Context, adapters []Adapter) error {
 
 		e.active = append(e.active, a)
 		e.discoveries = append(e.discoveries, NewDiscovery(e.store, a, e.cfg.DiscoveryBatch))
+		e.liqSources = append(e.liqSources, buildLiqSource(a.Protocol(), addrs, params))
 		slog.Info("lending: protocol ready", "protocol", a.Protocol(), "assets", len(params),
 			"close_factor_bps", globals.CloseFactorBps, "incentive_bps", globals.LiquidationIncentiveBps)
 	}
@@ -93,6 +96,7 @@ func (e *Engine) Bootstrap(ctx context.Context, adapters []Adapter) error {
 		return errNoProtocols
 	}
 
+	e.liq = NewLiquidationIngester(e.store, e.rpc, e.cfg.ChainID, e.liqSources)
 	e.health = NewHealthEngine(e.store, e.rpc, e.active, e.cfg.Health)
 	e.price = NewPriceWatch(e.store, e.rpc, e.health)
 	e.resolvePriceSources(ctx)
@@ -107,6 +111,9 @@ func (e *Engine) Run(ctx context.Context) {
 	go e.health.Run(ctx)
 	go e.price.Run(ctx)
 	go e.paramsRefreshLoop(ctx)
+	if e.liq != nil {
+		go e.liq.Loop(ctx)
+	}
 
 	slog.Info("lending: engine running", "protocols", len(e.active), "chain_id", e.cfg.ChainID)
 	<-ctx.Done()

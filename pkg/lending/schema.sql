@@ -106,6 +106,27 @@ CREATE TABLE IF NOT EXISTS lending_position_assets (
 ) ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY (chain_id, protocol, account, asset, side);
 
+-- Executed on-chain liquidations (Aave LiquidationCall, Benqi LiquidateBorrow),
+-- valued in USD at the event block. ReplacingMergeTree keyed by the event identity
+-- so a re-scan replaces rather than duplicates. Serve with FINAL.
+CREATE TABLE IF NOT EXISTS lending_liquidations (
+    chain_id UInt32,
+    protocol LowCardinality(String),       -- aave-v3 | benqi
+    block_number UInt32,
+    block_time DateTime64(3, 'UTC'),
+    tx_hash FixedString(32),
+    log_index UInt32,
+    liquidator FixedString(20),
+    borrower FixedString(20),
+    collateral_asset FixedString(20),      -- Aave underlying / Benqi qiToken market
+    debt_asset FixedString(20),            -- Aave underlying / Benqi qiToken market
+    repay_amount UInt256,                  -- native debt units (Aave debtToCover, Benqi repayAmount)
+    seize_amount UInt256,                  -- native units (Aave liquidatedCollateralAmount, Benqi seizeTokens)
+    repaid_usd UInt256,                    -- 1e18 USD of repaid debt at the block, 0 when unpriced
+    updated_at DateTime64(3, 'UTC') DEFAULT now64(3)
+) ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (chain_id, block_number, tx_hash, log_index);
+
 -- Append-only crossing events for the WebSocket tail.
 CREATE TABLE IF NOT EXISTS lending_alerts (
     chain_id UInt32,
