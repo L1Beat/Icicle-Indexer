@@ -173,6 +173,7 @@ func (s *Server) registerRoutes(cfg Config) {
 	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/lending/positions/{account}", s.handleLendingAccount)
 	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/lending/stats", s.handleLendingStats)
 	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/lending/risk", s.handleLendingRisk)
+	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/lending/risk/timeseries", s.handleLendingRiskTimeseries)
 	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/lending/liquidations", s.handleLendingLiquidations)
 	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/lending/liquidations/daily", s.handleLendingLiquidationsDaily)
 	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/lending/alerts", s.handleLendingAlerts)

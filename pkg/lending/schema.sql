@@ -127,6 +127,24 @@ CREATE TABLE IF NOT EXISTS lending_liquidations (
 ) ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY (chain_id, block_number, tx_hash, log_index);
 
+-- Periodic aggregate-risk snapshots per protocol, for the dashboard's risk-trend
+-- timeseries. Append-only; one row per (protocol, sample time) at a fixed debt
+-- floor so the series is comparable across time.
+CREATE TABLE IF NOT EXISTS lending_risk_snapshots (
+    chain_id UInt32,
+    protocol LowCardinality(String),
+    snapshot_at DateTime64(3, 'UTC'),
+    min_debt_base UInt256,                 -- debt floor the snapshot was taken at
+    open_positions UInt32,
+    liquidatable UInt32,                   -- dust-free (debt > floor)
+    bad_debt_count UInt32,                 -- collateral < debt
+    bad_debt_total UInt256,                -- sum(debt - collateral), 1e18 USD
+    near_count UInt32,                     -- not liquidatable, HF within the near band
+    var_collateral UInt256,                -- collateral USD across at-risk positions
+    var_debt UInt256                       -- debt USD across at-risk positions
+) ENGINE = MergeTree
+ORDER BY (chain_id, protocol, snapshot_at);
+
 -- Append-only crossing events for the WebSocket tail.
 CREATE TABLE IF NOT EXISTS lending_alerts (
     chain_id UInt32,

@@ -15,6 +15,7 @@ type Config struct {
 	FallbackRPC           string // optional public RPC, used only on archive failure
 	DiscoveryBatch        uint64
 	ParamsRefreshInterval time.Duration
+	RiskSnapshotInterval  time.Duration
 	Health                HealthConfig
 }
 
@@ -24,6 +25,7 @@ func DefaultConfig() Config {
 		ChainID:               43114,
 		DiscoveryBatch:        5000,
 		ParamsRefreshInterval: 6 * time.Hour,
+		RiskSnapshotInterval:  15 * time.Minute,
 		Health:                DefaultHealthConfig(),
 	}
 }
@@ -41,6 +43,7 @@ type Engine struct {
 	discoveries []*Discovery
 	liq         *LiquidationIngester
 	liqSources  []liqSource
+	risk        *RiskSampler
 }
 
 // NewEngine constructs the engine. Adapters are brought up in Bootstrap.
@@ -97,6 +100,7 @@ func (e *Engine) Bootstrap(ctx context.Context, adapters []Adapter) error {
 	}
 
 	e.liq = NewLiquidationIngester(e.store, e.rpc, e.cfg.ChainID, e.liqSources)
+	e.risk = NewRiskSampler(e.store, e.cfg.ChainID, e.cfg.RiskSnapshotInterval, nil, nil)
 	e.health = NewHealthEngine(e.store, e.rpc, e.active, e.cfg.Health)
 	e.price = NewPriceWatch(e.store, e.rpc, e.health)
 	e.resolvePriceSources(ctx)
@@ -113,6 +117,9 @@ func (e *Engine) Run(ctx context.Context) {
 	go e.paramsRefreshLoop(ctx)
 	if e.liq != nil {
 		go e.liq.Loop(ctx)
+	}
+	if e.risk != nil {
+		go e.risk.Loop(ctx)
 	}
 
 	slog.Info("lending: engine running", "protocols", len(e.active), "chain_id", e.cfg.ChainID)

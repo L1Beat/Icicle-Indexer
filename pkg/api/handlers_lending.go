@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,7 +18,7 @@ import (
 // stale health (rule 2).
 
 type lendingLeg struct {
-	Asset      string `json:"asset"`                 // for Benqi this is the qiToken market
+	Asset      string `json:"asset"`                // for Benqi this is the qiToken market
 	Underlying string `json:"underlying,omitempty"` // resolved underlying token (Benqi qiToken -> underlying)
 	Symbol     string `json:"symbol,omitempty"`     // underlying symbol
 	Decimals   uint8  `json:"decimals"`             // underlying decimals, for scaling Amount
@@ -552,6 +553,84 @@ func validBigParam(r *http.Request, name, def string) string {
 		}
 	}
 	return def
+}
+
+type riskSnapshot struct {
+	SnapshotAt    time.Time `json:"snapshot_at"`
+	Protocol      string    `json:"protocol"`
+	OpenPositions uint32    `json:"open_positions"`
+	Liquidatable  uint32    `json:"liquidatable"`
+	BadDebtCount  uint32    `json:"bad_debt_count"`
+	BadDebtTotal  string    `json:"bad_debt_total"`
+	NearCount     uint32    `json:"near_count"`
+	VarCollateral string    `json:"var_collateral"`
+	VarDebt       string    `json:"var_debt"`
+}
+
+// handleLendingRiskTimeseries returns the per-protocol aggregate-risk snapshots
+// over a trailing window (oldest first, for charting), so the dashboard can show
+// whether risk is building or easing.
+func (s *Server) handleLendingRiskTimeseries(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	chainID, err := getChainIDFromPath(r)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid chain_id")
+		return
+	}
+	protocol := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("protocol")))
+
+	days := 30
+	if v := strings.TrimSpace(r.URL.Query().Get("days")); v != "" {
+		if n, perr := strconv.Atoi(v); perr == nil && n > 0 {
+			days = n
+		}
+	}
+	if days > 365 {
+		days = 365
+	}
+	cutoff := time.Now().UTC().AddDate(0, 0, -days)
+
+	conds := []string{"chain_id = ?", "snapshot_at >= ?"}
+	args := []interface{}{chainID, cutoff}
+	if protocol != "" {
+		conds = append(conds, "protocol = ?")
+		args = append(args, protocol)
+	}
+
+	query := fmt.Sprintf(`
+		SELECT snapshot_at, protocol, open_positions, liquidatable,
+			bad_debt_count, bad_debt_total, near_count, var_collateral, var_debt
+		FROM lending_risk_snapshots
+		WHERE %s
+		ORDER BY snapshot_at ASC, protocol
+	`, strings.Join(conds, " AND "))
+
+	rows, err := s.conn.Query(ctx, query, args...)
+	if err != nil {
+		writeInternalError(w, err.Error())
+		return
+	}
+	defer rows.Close()
+
+	var out []riskSnapshot
+	for rows.Next() {
+		var sn riskSnapshot
+		var badTotal, varColl, varDebt *big.Int
+		if err := rows.Scan(&sn.SnapshotAt, &sn.Protocol, &sn.OpenPositions, &sn.Liquidatable,
+			&sn.BadDebtCount, &badTotal, &sn.NearCount, &varColl, &varDebt); err != nil {
+			writeInternalError(w, err.Error())
+			return
+		}
+		sn.BadDebtTotal = bigStr(badTotal)
+		sn.VarCollateral = bigStr(varColl)
+		sn.VarDebt = bigStr(varDebt)
+		out = append(out, sn)
+	}
+	if err := rows.Err(); err != nil {
+		writeInternalError(w, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, Response{Data: out})
 }
 
 // handleLendingAlerts returns recent crossing events, newest first.
