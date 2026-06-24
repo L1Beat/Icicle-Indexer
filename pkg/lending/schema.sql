@@ -128,7 +128,7 @@ CREATE TABLE IF NOT EXISTS lending_liquidations (
 ORDER BY (chain_id, block_number, tx_hash, log_index);
 
 -- Periodic aggregate-risk snapshots per protocol, for the dashboard's risk-trend
--- timeseries. Append-only; one row per (protocol, sample time) at a fixed debt
+-- timeseries. Append-only, one row per (protocol, sample time) at a fixed debt
 -- floor so the series is comparable across time.
 CREATE TABLE IF NOT EXISTS lending_risk_snapshots (
     chain_id UInt32,
