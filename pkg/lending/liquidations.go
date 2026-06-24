@@ -29,11 +29,13 @@ const (
 
 // liqSource holds one protocol's liquidation event source and valuation inputs.
 type liqSource struct {
-	protocol string
-	logAddrs []string         // contracts that emit the event (Aave pool / Benqi markets)
-	oracle   string           // price oracle for block-pinned valuation
-	decimals map[string]uint8 // debt underlying -> decimals (Aave); nil for Benqi
-	isBenqi  bool
+	protocol  string
+	logAddrs  []string         // contracts that emit the event (Aave pool / Benqi markets)
+	oracle    string           // head oracle, fallback when block-pinned resolution fails
+	anchor    string           // stable contract to resolve the oracle at a block
+	oracleSig string           // getPriceOracle() (Aave) / oracle() (Benqi)
+	decimals  map[string]uint8 // debt underlying -> decimals (Aave); nil for Benqi
+	isBenqi   bool
 }
 
 // LiquidationRow is one decoded, valued liquidation ready to persist.
@@ -49,12 +51,17 @@ type LiquidationRow struct {
 
 // LiquidationIngester scans, values, and persists executed liquidations.
 type LiquidationIngester struct {
-	store   *Store
-	rpc     *Client
-	chainID uint32
-	addrSet []string
-	byAddr  map[string]liqSource // log address -> its source (Benqi markets all map to the Benqi source)
+	store       *Store
+	rpc         *Client
+	chainID     uint32
+	addrSet     []string
+	byAddr      map[string]liqSource // log address -> its source (Benqi markets all map to the Benqi source)
+	oracleCache map[string]string    // protocol|block-bucket -> oracle resolved at that block
 }
+
+// oracleStride buckets oracle resolution by ~1 day; oracles rotate rarely, so this
+// bounds the resolution reads during backfill.
+const oracleStride = 43200
 
 // buildLiqSource derives a protocol's liquidation source from its resolved
 // addresses and params: Aave events come from the pool with per-underlying
@@ -65,9 +72,13 @@ func buildLiqSource(protocol Protocol, addrs Addresses, params []AssetParam) liq
 	if protocol == ProtocolBenqi {
 		s.isBenqi = true
 		s.logAddrs = append([]string(nil), addrs.Markets...)
+		s.anchor = NormalizeAddr(addrs.Comptroller)
+		s.oracleSig = "oracle()"
 		return s
 	}
 	s.logAddrs = []string{addrs.Pool}
+	s.anchor = NormalizeAddr(addrs.Provider)
+	s.oracleSig = "getPriceOracle()"
 	s.decimals = map[string]uint8{}
 	for _, p := range params {
 		s.decimals[NormalizeAddr(p.Asset)] = p.Decimals
@@ -77,7 +88,7 @@ func buildLiqSource(protocol Protocol, addrs Addresses, params []AssetParam) liq
 
 // NewLiquidationIngester builds an ingester from the active protocols' sources.
 func NewLiquidationIngester(store *Store, rpc *Client, chainID uint32, sources []liqSource) *LiquidationIngester {
-	li := &LiquidationIngester{store: store, rpc: rpc, chainID: chainID, byAddr: map[string]liqSource{}}
+	li := &LiquidationIngester{store: store, rpc: rpc, chainID: chainID, byAddr: map[string]liqSource{}, oracleCache: map[string]string{}}
 	for _, s := range sources {
 		for _, a := range s.logAddrs {
 			la := NormalizeAddr(a)
@@ -227,7 +238,14 @@ func (li *LiquidationIngester) scan(ctx context.Context, from, to uint64) ([]Liq
 // block. Returns 0 when the price cannot be read (kept as an unpriced row rather
 // than dropped, so counts stay complete).
 func (li *LiquidationIngester) valueRepaid(ctx context.Context, src liqSource, r LiquidationRow) *big.Int {
-	if r.RepayAmount == nil || r.RepayAmount.Sign() == 0 || src.oracle == "" {
+	if r.RepayAmount == nil || r.RepayAmount.Sign() == 0 {
+		return big.NewInt(0)
+	}
+	// Resolve the oracle as of the event block: Benqi rotates its oracle, so the
+	// head address has no code / reverts at historical blocks. Aave's is stable but
+	// block-pinned is correct for both.
+	oracle := li.oracleAt(ctx, src, uint64(r.Block))
+	if oracle == "" {
 		return big.NewInt(0)
 	}
 	bh := "0x" + strconv.FormatUint(uint64(r.Block), 16)
@@ -235,7 +253,7 @@ func (li *LiquidationIngester) valueRepaid(ctx context.Context, src liqSource, r
 
 	if src.isBenqi {
 		// getUnderlyingPrice(market) is scaled 1e(36-dec); price * amount / 1e18 = USD 1e18.
-		price := li.callPrice(ctx, src.oracle, "getUnderlyingPrice(address)", debt, bh)
+		price := li.callPrice(ctx, oracle, "getUnderlyingPrice(address)", debt, bh)
 		if price == nil || price.Sign() == 0 {
 			return big.NewInt(0)
 		}
@@ -243,7 +261,7 @@ func (li *LiquidationIngester) valueRepaid(ctx context.Context, src liqSource, r
 	}
 
 	// Aave getAssetPrice(asset) is 1e8 USD. value = amount * price / 10^dec, then 1e8 -> 1e18.
-	price := li.callPrice(ctx, src.oracle, "getAssetPrice(address)", debt, bh)
+	price := li.callPrice(ctx, oracle, "getAssetPrice(address)", debt, bh)
 	if price == nil || price.Sign() == 0 {
 		return big.NewInt(0)
 	}
@@ -254,6 +272,27 @@ func (li *LiquidationIngester) valueRepaid(ctx context.Context, src liqSource, r
 	v := new(big.Int).Mul(r.RepayAmount, price)
 	v.Mul(v, mul1e10liq)
 	return v.Div(v, pow10liq(dec))
+}
+
+// oracleAt resolves the price oracle as of a block via the protocol's stable anchor
+// (Aave PoolAddressesProvider.getPriceOracle / Benqi Comptroller.oracle), cached by
+// a coarse block bucket. Falls back to the head oracle if the read fails.
+func (li *LiquidationIngester) oracleAt(ctx context.Context, src liqSource, block uint64) string {
+	key := src.protocol + "|" + strconv.FormatUint(block/oracleStride, 10)
+	if v, ok := li.oracleCache[key]; ok {
+		return v
+	}
+	o := src.oracle
+	if src.anchor != "" && src.oracleSig != "" {
+		bh := "0x" + strconv.FormatUint(block, 16)
+		if res, err := li.rpc.EthCall(ctx, src.anchor, EncodeCall0(src.oracleSig), bh); err == nil {
+			if a := Addr(DecodeHexBytes(res), 0); a != ZeroAddress {
+				o = a
+			}
+		}
+	}
+	li.oracleCache[key] = o
+	return o
 }
 
 func (li *LiquidationIngester) callPrice(ctx context.Context, oracle, sig, arg, blockHex string) *big.Int {
