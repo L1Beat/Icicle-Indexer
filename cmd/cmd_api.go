@@ -19,6 +19,7 @@ type APIOptions struct {
 	RateLimitPerMin          int
 	RateLimitBurst           int
 	TrustedProxies           []string
+	ExemptLoopback           bool
 	MetricsToken             string
 	WSMaxConnections         int
 	WSMaxConnectionsPerIP    int
@@ -31,6 +32,7 @@ func DefaultAPIOptions() APIOptions {
 		Port:                     8080,
 		RateLimitPerMin:          60,
 		RateLimitBurst:           10,
+		ExemptLoopback:           true,
 		MetricsToken:             os.Getenv("ICICLE_METRICS_TOKEN"),
 		WSMaxConnections:         1000,
 		WSMaxConnectionsPerIP:    20,
@@ -55,6 +57,7 @@ func RunAPI(ctx context.Context, opts APIOptions) {
 			BurstSize:         opts.RateLimitBurst,
 			CleanupInterval:   5 * time.Minute,
 			TrustedProxies:    opts.TrustedProxies,
+			ExemptLoopback:    opts.ExemptLoopback,
 		},
 		Metrics: api.MetricsConfig{
 			Token: opts.MetricsToken,

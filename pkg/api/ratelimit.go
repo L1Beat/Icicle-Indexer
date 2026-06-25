@@ -17,6 +17,12 @@ type RateLimitConfig struct {
 	BurstSize         int
 	CleanupInterval   time.Duration
 	TrustedProxies    []string
+	// ExemptLoopback skips rate limiting for genuine same-box direct callers: a
+	// loopback peer with no forwarding header. External traffic always arrives via
+	// the reverse proxy (which adds X-Forwarded-For) and cannot reach the API port
+	// directly (firewall), so this cannot be spoofed from outside. Lets trusted
+	// same-box consumers burst freely.
+	ExemptLoopback bool
 }
 
 // DefaultRateLimitConfig returns sensible defaults
@@ -25,6 +31,7 @@ func DefaultRateLimitConfig() RateLimitConfig {
 		RequestsPerMinute: 60,
 		BurstSize:         10,
 		CleanupInterval:   5 * time.Minute,
+		ExemptLoopback:    true,
 	}
 }
 
@@ -37,6 +44,7 @@ type RateLimiter struct {
 	cleanup  time.Duration
 	stopCh   chan struct{}
 	proxies  []*net.IPNet
+	exemptLB bool
 }
 
 type rateLimiterEntry struct {
@@ -53,6 +61,7 @@ func NewRateLimiter(cfg RateLimitConfig) *RateLimiter {
 		cleanup:  cfg.CleanupInterval,
 		stopCh:   make(chan struct{}),
 		proxies:  parseTrustedProxies(cfg.TrustedProxies),
+		exemptLB: cfg.ExemptLoopback,
 	}
 	go rl.cleanupLoop()
 	return rl
@@ -120,6 +129,16 @@ func (rl *RateLimiter) Stop() {
 // full (sustained refill rate is RequestsPerMinute/min).
 func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Same-box direct callers on 127.0.0.1 bypass the limit: a loopback peer with
+		// no forwarding header is necessarily local and trusted, and cannot be
+		// impersonated from outside (external traffic comes through the proxy with
+		// X-Forwarded-For and cannot reach this port directly).
+		if rl.exemptLB && isLocalDirect(r) {
+			w.Header().Set("X-RateLimit-Bypass", "loopback")
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		ip := rl.ClientIP(r)
 		limiter := rl.getLimiter(ip)
 		allowed := limiter.Allow()
@@ -171,6 +190,18 @@ func (rl *RateLimiter) ClientIP(r *http.Request) string {
 // getClientIP extracts the client IP without trusting forwarded headers.
 func getClientIP(r *http.Request) string {
 	return remoteAddrIP(r)
+}
+
+// isLocalDirect reports whether a request is a genuine same-box direct call: the
+// immediate peer is loopback and no forwarding header is present. The reverse proxy
+// always sets X-Forwarded-For, so a forwarded (external) request is never treated
+// as local even though its peer is also loopback.
+func isLocalDirect(r *http.Request) bool {
+	if r.Header.Get("X-Forwarded-For") != "" || r.Header.Get("X-Real-IP") != "" {
+		return false
+	}
+	ip := net.ParseIP(remoteAddrIP(r))
+	return ip != nil && ip.IsLoopback()
 }
 
 func remoteAddrIP(r *http.Request) string {
