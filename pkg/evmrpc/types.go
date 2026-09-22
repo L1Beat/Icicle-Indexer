@@ -57,6 +57,16 @@ type Block struct {
 	ParentBeaconBlockRoot string        `json:"parentBeaconBlockRoot,omitempty"`
 	MinDelayExcess        string        `json:"minDelayExcess,omitempty"`
 	TimestampMilliseconds string        `json:"timestampMilliseconds,omitempty"`
+	// Helicon (avalanchego v1.15.0, 2026-09-22) header fields. The decoder runs
+	// with DisallowUnknownFields, so every new header field must be listed here
+	// or the syncer stalls on the first post-upgrade block. Parsed only; not
+	// stored yet.
+	TargetExponent      string `json:"targetExponent,omitempty"`      // ACP-176 target exponent
+	MinPriceExponent    string `json:"minPriceExponent,omitempty"`    // ACP-283 dynamic min gas price
+	SettledHeight       string `json:"settledHeight,omitempty"`       // ACP-194 async execution
+	SettledGasUnix      string `json:"settledGasUnix,omitempty"`      // ACP-194
+	SettledGasNumerator string `json:"settledGasNumerator,omitempty"` // ACP-194
+	SettledExcess       string `json:"settledExcess,omitempty"`       // ACP-194
 }
 
 type CallTrace struct {
