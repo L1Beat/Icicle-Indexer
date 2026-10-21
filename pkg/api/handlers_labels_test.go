@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"math/big"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -307,4 +308,22 @@ func mustHex(s string) []byte {
 		out[i] = b
 	}
 	return out
+}
+
+// TestTxBatchKeys_TimeRangePadsToWholeSeconds guards against the driver
+// truncating DateTime64(3) bounds to seconds (seen live on 2026-10-21: a tx
+// at 19:19:17.187 lost its transfers because the upper bound became 19:19:17).
+func TestTxBatchKeys_TimeRangePadsToWholeSeconds(t *testing.T) {
+	ts := time.Date(2026, 10, 21, 19, 19, 17, 187_000_000, time.UTC)
+	txs := []Transaction{
+		{Hash: "0xaa", BlockNumber: 10, BlockTime: ts},
+		{Hash: "0xbb", BlockNumber: 11, BlockTime: ts.Add(-2 * time.Second)},
+	}
+	hashList, blockList, minTime, maxTime := txBatchKeys(txs)
+	assert.Equal(t, "unhex('aa'),unhex('bb')", hashList)
+	assert.ElementsMatch(t, []string{"10", "11"}, strings.Split(blockList, ","))
+	assert.True(t, !minTime.After(ts.Add(-2*time.Second)), "lower bound must not exclude the earliest tx")
+	assert.True(t, maxTime.After(ts), "upper bound must be strictly after a millisecond timestamp")
+	assert.Equal(t, 0, minTime.Nanosecond())
+	assert.Equal(t, 0, maxTime.Nanosecond())
 }

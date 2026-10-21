@@ -506,6 +506,12 @@ func txBatchKeys(txs []Transaction) (hashList, blockList string, minTime, maxTim
 	for b := range blocks {
 		blockStrs = append(blockStrs, strconv.FormatUint(uint64(b), 10))
 	}
+	// clickhouse-go binds a plain time.Time as toDateTime(unix_seconds), which
+	// drops the milliseconds of our DateTime64(3) block_time. Pad the range to
+	// whole seconds so a row at 17.187 is not excluded by an upper bound of 17.000.
+	// The exact block_number and transaction_hash filters keep the result precise.
+	minTime = minTime.Truncate(time.Second)
+	maxTime = maxTime.Truncate(time.Second).Add(time.Second)
 	return strings.Join(hashes, ","), strings.Join(blockStrs, ","), minTime, maxTime
 }
 
