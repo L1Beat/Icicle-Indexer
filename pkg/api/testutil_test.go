@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math/big"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -171,6 +172,35 @@ func (r *MockRows) Scan(dest ...interface{}) error {
 				// Handle nullable string pointers
 				if ptr, ok := v.(*string); ok {
 					*d = ptr
+				}
+			case *[]uint16:
+				if a, ok := v.([]uint16); ok {
+					*d = a
+				}
+			case *[]byte:
+				// Raw String / Nullable(FixedString) columns
+				if b, ok := v.([]byte); ok {
+					*d = b
+				}
+			case *[32]byte:
+				if b, ok := v.([32]byte); ok {
+					*d = b
+				}
+			case *[20]byte:
+				if b, ok := v.([20]byte); ok {
+					*d = b
+				}
+			case *uint16:
+				if n, ok := v.(uint16); ok {
+					*d = n
+				}
+			case *uint8:
+				if n, ok := v.(uint8); ok {
+					*d = n
+				}
+			case *big.Int:
+				if n, ok := v.(big.Int); ok {
+					*d = n
 				}
 			case *[]string:
 				// Handle string slices

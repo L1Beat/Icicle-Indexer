@@ -85,6 +85,7 @@ type Server struct {
 	rateLimiter *RateLimiter
 	handler     http.Handler
 	wsHub       *WSHub
+	enrichment  *enrichState
 }
 
 type Response struct {
@@ -113,6 +114,7 @@ func NewServer(conn driver.Conn, cfg Config) *Server {
 		router:      http.NewServeMux(),
 		rateLimiter: NewRateLimiter(cfg.RateLimit),
 		wsHub:       NewWSHub(conn, cfg.WebSocket, nil),
+		enrichment:  newEnrichState(),
 	}
 	s.wsHub.clientIP = s.rateLimiter.ClientIP
 	s.registerRoutes(cfg)
@@ -159,6 +161,9 @@ func (s *Server) registerRoutes(cfg Config) {
 	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/txs/{hash}", s.handleGetTx)
 	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/address/{address}/txs", s.handleAddressTxs)
 	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/address/{address}/internal-txs", s.handleAddressInternalTxs)
+
+	// EVM Address labels (curated / verified-source / token-metadata)
+	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/labels", s.handleLabels)
 
 	// EVM Address Balances
 	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/address/{address}/balances", s.handleAddressBalances)

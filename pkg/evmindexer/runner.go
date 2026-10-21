@@ -5,7 +5,9 @@ import (
 	_ "embed"
 	"fmt"
 	"icicle/pkg/chwrapper"
+	"icicle/pkg/enrich"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -40,6 +42,13 @@ type IndexRunner struct {
 	// Token metadata fetcher
 	tokenMetadataFetcher *TokenMetadataFetcher
 	lastMetadataFetch    time.Time
+
+	// Enrichment: function signatures (OpenChain) + address labels (curated,
+	// Routescan). Incremental steps run from this loop; nothing here is on the
+	// API request path. Disabled with ICICLE_ENRICH_DISABLE=1.
+	enricher        *enrich.Enricher
+	lastEnrichStep  time.Time
+	lastEnrichRetry time.Time
 }
 
 // NewIndexRunner creates a new indexer runner for a single chain
@@ -98,6 +107,19 @@ func NewIndexRunner(chainId uint32, conn driver.Conn, sqlDir string, startBlock 
 		slog.Info("Token metadata fetcher initialized", "chain_id", chainId, "rpc_url", rpcURL)
 	} else {
 		slog.Info("Token metadata fetcher NOT initialized (no RPC URL)", "chain_id", chainId)
+	}
+
+	// Enrichment (signatures + labels). Seeds the bundled lists at startup so
+	// repo edits reach the tables; the incremental steps run from Start().
+	if os.Getenv("ICICLE_ENRICH_DISABLE") == "1" {
+		slog.Info("Enrichment disabled by ICICLE_ENRICH_DISABLE", "chain_id", chainId)
+	} else {
+		runner.enricher = enrich.NewEnricher(chainId, conn, rpcURL)
+		if err := runner.enricher.SeedAll(context.Background()); err != nil {
+			slog.Warn("Enrichment seed failed (will retry next start)", "chain_id", chainId, "error", err)
+		} else {
+			slog.Info("Enrichment seeded", "chain_id", chainId)
+		}
 	}
 
 	// Discover indexers
@@ -187,6 +209,21 @@ func (r *IndexRunner) Start(ctx context.Context) {
 				slog.Info("Fetched token metadata", "chain_id", r.chainId, "count", count)
 			} else {
 				slog.Debug("Token metadata: no missing tokens found", "chain_id", r.chainId)
+			}
+		}
+
+		// Enrichment: resolve new selectors and label new contracts (every 30s),
+		// and retry negative-cached selectors once a day (weekly TTL per row).
+		if r.enricher != nil && time.Since(r.lastEnrichStep) > 30*time.Second {
+			r.lastEnrichStep = time.Now()
+			r.enricher.Step(ctx)
+			if time.Since(r.lastEnrichRetry) > 24*time.Hour {
+				r.lastEnrichRetry = time.Now()
+				if n, err := r.enricher.RetryUnknownSelectors(ctx, 2000); err != nil {
+					slog.Warn("Enrichment: selector retry failed", "chain_id", r.chainId, "error", err)
+				} else if n > 0 {
+					slog.Info("Enrichment: previously unknown selectors resolved", "chain_id", r.chainId, "count", n)
+				}
 			}
 		}
 

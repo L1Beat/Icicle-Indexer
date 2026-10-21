@@ -513,3 +513,36 @@ CREATE TABLE IF NOT EXISTS validator_count_snapshots (
     sampled_at DateTime64(3, 'UTC') DEFAULT now64(3)
 ) ENGINE = ReplacingMergeTree(sampled_at)
 ORDER BY (p_chain_id, subnet_id, snapshot_date);
+
+-- Function signatures - 4-byte selector -> canonical signature, filled by the
+-- bundled seed list and demand-driven OpenChain lookups (pkg/enrich). Several
+-- rows per selector are expected (collisions); the API picks one per tx using
+-- priority + calldata-length plausibility. signature = '' is a negative-cache
+-- row (looked up, unknown) retried weekly. Never written on the request path.
+CREATE TABLE IF NOT EXISTS function_signatures (
+    selector FixedString(4),
+    signature String,  -- canonical text such as transfer(address,uint256), empty string = unknown
+    name String,  -- function name, the part before the parameter list
+    source LowCardinality(String),  -- seed | openchain
+    priority UInt8,  -- 0 seed, 1 openchain+verified contract, 2 openchain
+    resolved_at DateTime64(3, 'UTC')
+) ENGINE = ReplacingMergeTree(resolved_at)
+ORDER BY (selector, signature);
+
+-- Address labels - one row per (address, source). Sources are merged at read
+-- time: curated beats verified-source beats token-metadata. source =
+-- 'unverified' rows are negative cache (EOA or unverified contract) so the
+-- Routescan fetcher does not re-query; they carry no name and never surface.
+CREATE TABLE IF NOT EXISTS address_labels (
+    chain_id UInt32,
+    address FixedString(20),
+    name String,
+    kind LowCardinality(String),  -- protocol | token | pool | router | bridge | exchange | wallet | contract
+    protocol String,  -- optional group name, e.g. Pharaoh
+    is_contract Bool,
+    verified Bool,  -- has verified source on Routescan (or curated says so)
+    implementation Nullable(FixedString(20)),  -- proxy implementation if any
+    source LowCardinality(String),  -- curated | verified-source | token-metadata | unverified
+    updated_at DateTime64(3, 'UTC')
+) ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY (chain_id, address, source);

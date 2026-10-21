@@ -397,6 +397,88 @@ Get transactions for a specific address (as sender or receiver).
 
 ---
 
+### GET /api/v1/data/evm/{chainId}/labels
+
+Resolve up to 100 addresses to labels. Sources are merged per address in the
+order curated > verified-source (Routescan) > token-metadata; unknown
+addresses are omitted from the map. Served from memory (refreshed every 5
+minutes from `address_labels` / `token_metadata`); nothing on the request path
+calls a third party.
+
+**Query Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `addresses` | string | Comma-separated 0x addresses, any case, max 100 |
+
+**Response:**
+```json
+{
+  "data": {
+    "0x60ae616a2155ee3d9a68541ba4544862310933d4": {
+      "name": "LFJ Router (v1)",
+      "kind": "router",
+      "protocol": "LFJ",
+      "is_contract": true,
+      "verified": true,
+      "implementation": null
+    }
+  }
+}
+```
+
+`kind` is one of `protocol`, `token`, `pool`, `router`, `bridge`, `exchange`,
+`wallet`, `contract`. `protocol` and `implementation` are `null` when unknown.
+Keys are lowercase.
+
+---
+
+### Transaction enrichment fields (all tx endpoints)
+
+Every transaction object (list, address and single-tx endpoints) carries four
+additive fields. Existing fields are unchanged.
+
+```json
+{
+  "method": {
+    "selector": "0xa214fa6b",
+    "name": "burn",
+    "signature": "burn(uint256,uint128,address,uint256,uint256,bool)"
+  },
+  "from_label": null,
+  "to_label": { "name": "Pharaoh CL Positions NFT", "kind": "protocol", "protocol": "Pharaoh", "is_contract": true, "verified": true, "implementation": "0x9f10..." },
+  "intent": { "kind": "remove_liquidity", "label": "Removed liquidity", "protocol": "Pharaoh", "confidence": 0.9 }
+}
+```
+
+- `method` is `null` when the transaction has no calldata or the selector is
+  unknown. Selectors are resolved from `function_signatures` (bundled seed +
+  OpenChain lookups done by the indexer, cached, negative results retried
+  weekly). Colliding signatures are disambiguated by calldata length, then
+  source priority.
+- `from_label` / `to_label` have the labels-endpoint shape or are `null`.
+- `intent` kinds: `remove_liquidity`, `add_liquidity`, `swap`, `send`,
+  `receive`, `deposit`, `withdraw`, `stake`, `unstake`, `claim`, `approve`,
+  `bridge`, `contract_call`. Rules are documented in `pkg/enrich/INTENT_RULES.md`.
+  `receive` is only emitted on `/address/{address}/txs`.
+- Each `token_transfers[]` and `approvals[]` entry carries `token_label`
+  (same shape as `to_label`, or `null`).
+
+**`include=transfers`** on `GET /txs` and `GET /address/{address}/txs` embeds
+`internal_txs`, `token_transfers` and `approvals` on every row, exactly as the
+single-transaction endpoint does, loaded with three batched queries per page.
+With the flag the page size is capped at 50 and per transaction at most 100
+internal txs, 200 token transfers and 50 approvals are returned. Without the
+flag the rows are unchanged apart from the four fields above.
+
+Backfill / ops: `./icicle enrich-backfill --chain 43114 --days 30` seeds the
+bundled lists, resolves selectors seen in the window and labels the most
+active contracts (Routescan, throttled). Idempotent, runs alongside the
+indexer. The indexer keeps both tables current incrementally;
+`ICICLE_ENRICH_DISABLE=1` turns that off and `ICICLE_ROUTESCAN_API_KEY` is
+optional.
+
+---
+
 ### GET /api/v1/data/evm/{chainId}/address/{address}/internal-txs
 
 Get internal transactions (traces) for a specific address.
@@ -1526,6 +1608,7 @@ ws.onmessage = (event) => {
 | GET | `/api/v1/data/evm/{chainId}/txs/{hash}` | Get transaction detail |
 | GET | `/api/v1/data/evm/{chainId}/address/{address}/txs` | Address transactions |
 | GET | `/api/v1/data/evm/{chainId}/address/{address}/internal-txs` | Address internal txs |
+| GET | `/api/v1/data/evm/{chainId}/labels` | Address labels (batch, max 100) |
 | GET | `/api/v1/data/evm/{chainId}/address/{address}/balances` | ERC-20 token balances |
 | GET | `/api/v1/data/evm/{chainId}/address/{address}/native` | Native token balance |
 | GET | `/api/v1/data/evm/{chainId}/stablecoins` | List stablecoins (supply, holders, 24h) |

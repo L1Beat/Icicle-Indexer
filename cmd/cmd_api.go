@@ -73,6 +73,11 @@ func RunAPI(ctx context.Context, opts APIOptions) {
 	server := api.NewServer(conn, cfg)
 	defer server.Stop()
 
+	// Load method signatures / address labels into memory and keep them fresh.
+	// Request handlers only read these maps; nothing on the request path
+	// touches the enrichment tables or any third-party service.
+	server.StartEnrichmentRefresh(ctx, 5*time.Minute)
+
 	addr := fmt.Sprintf(":%d", opts.Port)
 	httpServer := &http.Server{
 		Addr:              addr,

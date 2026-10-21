@@ -278,7 +278,31 @@ func main() {
 	validatorBackfillCmd.Flags().String("interval", "month", "Sample interval: day, week, or month")
 	validatorBackfillCmd.Flags().Int("concurrency", 2, "Parallel getValidatorsAt calls (keep low - deep history is expensive for the node)")
 
+	enrichBackfillCmd := &cobra.Command{
+		Use:   "enrich-backfill",
+		Short: "Resolve method signatures and label contracts for recent history (idempotent, runs alongside the indexer)",
+		Run: func(command *cobra.Command, args []string) {
+			var opts cmd.EnrichBackfillOptions
+			opts.ChainID, _ = command.Flags().GetUint32("chain")
+			opts.Days, _ = command.Flags().GetInt("days")
+			opts.MaxContracts, _ = command.Flags().GetInt("max-contracts")
+			opts.MaxSelectors, _ = command.Flags().GetInt("max-selectors")
+			opts.RPCURL, _ = command.Flags().GetString("rpc")
+			opts.SkipLabels, _ = command.Flags().GetBool("skip-labels")
+			opts.SkipSigs, _ = command.Flags().GetBool("skip-signatures")
+			cmd.RunEnrichBackfill(ctx, opts)
+		},
+	}
+	enrichBackfillCmd.Flags().Uint32("chain", 43114, "EVM chain ID")
+	enrichBackfillCmd.Flags().Int("days", 30, "Trailing window of history to cover")
+	enrichBackfillCmd.Flags().Int("max-contracts", 5000, "Max contracts to look up on Routescan (most active first)")
+	enrichBackfillCmd.Flags().Int("max-selectors", 20000, "Max distinct selectors to resolve via OpenChain")
+	enrichBackfillCmd.Flags().String("rpc", cmd.DefaultChainRPC(43114), "Node RPC for eth_getCode / proxy slot reads (default: from config.yaml)")
+	enrichBackfillCmd.Flags().Bool("skip-labels", false, "Only resolve signatures")
+	enrichBackfillCmd.Flags().Bool("skip-signatures", false, "Only label contracts")
+
 	root.AddCommand(
+		enrichBackfillCmd,
 		ingestCmd,
 		apiCmd,
 		lendingCmd,

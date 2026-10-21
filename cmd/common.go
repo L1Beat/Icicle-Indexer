@@ -1,10 +1,10 @@
 package cmd
 
 import (
+	"fmt"
 	"icicle/pkg/cache"
 	"icicle/pkg/evmsyncer"
 	"icicle/pkg/pchainsyncer"
-	"fmt"
 	"os"
 	"time"
 
@@ -110,4 +110,19 @@ func CreateSyncer(cfg ChainConfig, conn driver.Conn, cacheInstance *cache.Cache,
 	default:
 		return nil, fmt.Errorf("unsupported VM type: %s", cfg.VM)
 	}
+}
+
+// DefaultChainRPC returns the rpcURL configured for chainID in config.yaml, or
+// "" when the file or chain is missing. Used for flag defaults.
+func DefaultChainRPC(chainID uint32) string {
+	configs, err := LoadConfig("config.yaml")
+	if err != nil {
+		return ""
+	}
+	for _, c := range configs {
+		if c.ChainID == chainID && c.VM == "evm" {
+			return c.RpcURL
+		}
+	}
+	return ""
 }
