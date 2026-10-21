@@ -193,13 +193,16 @@ func UpsertLabels(ctx context.Context, conn driver.Conn, chainID uint32, labels 
 		if err != nil {
 			return err
 		}
-		var impl *[20]byte
+		// Nullable(FixedString(20)): the driver accepts *string for FixedString
+		// (nil = NULL) but not *[20]byte, so pass the raw bytes as a string.
+		var impl *string
 		if l.Implementation != "" {
 			b, err := addrBytes(l.Implementation)
 			if err != nil {
 				return err
 			}
-			impl = &b
+			s := string(b[:])
+			impl = &s
 		}
 		if err := batch.Append(chainID, addr, l.Name, l.Kind, l.Protocol, l.IsContract, l.Verified, impl, l.Source, now); err != nil {
 			return err
@@ -278,14 +281,14 @@ func LoadLabels(ctx context.Context, conn driver.Conn) (map[uint32]map[string][]
 	for rows.Next() {
 		var chainID uint32
 		var addr [20]byte
-		var impl []byte
+		var impl *string
 		var l Label
 		if err := rows.Scan(&chainID, &addr, &l.Name, &l.Kind, &l.Protocol, &l.IsContract, &l.Verified, &impl, &l.Source); err != nil {
 			return nil, err
 		}
 		l.Address = "0x" + hex.EncodeToString(addr[:])
-		if len(impl) == 20 {
-			l.Implementation = "0x" + hex.EncodeToString(impl)
+		if impl != nil && len(*impl) == 20 {
+			l.Implementation = "0x" + hex.EncodeToString([]byte(*impl))
 		}
 		if out[chainID] == nil {
 			out[chainID] = make(map[string][]Label)
