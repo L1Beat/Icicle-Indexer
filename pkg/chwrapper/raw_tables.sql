@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS raw_txs (
     gas_price UInt64,
     gas_used UInt32,  -- From receipt
     success Bool,  -- From receipt status
-    input String,  -- Calldata
+    input String CODEC(ZSTD(3)),  -- Calldata
     type UInt8,  -- 0,1,2,3 (legacy, EIP-2930, EIP-1559, EIP-4844)
     max_fee_per_gas Nullable(UInt64),  -- Only for EIP-1559
     max_priority_fee_per_gas Nullable(UInt64),  -- Only for EIP-1559
@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS raw_traces (
     gas UInt32,
     gas_used UInt32,
     value UInt256,
-    input String,
+    input String CODEC(ZSTD(3)),
     output String,
     call_type LowCardinality(String),  -- CALL, DELEGATECALL, STATICCALL, CREATE, CREATE2, etc.
     tx_success Bool,  -- Transaction success status (denormalized from raw_txs)
@@ -106,7 +106,7 @@ CREATE TABLE IF NOT EXISTS raw_logs (
     topic1 Nullable(FixedString(32)),
     topic2 Nullable(FixedString(32)),
     topic3 Nullable(FixedString(32)),
-    data String,  -- Non-indexed event data
+    data String CODEC(ZSTD(3)),  -- Non-indexed event data
     removed Bool,  -- TODO: check if ever happen to be true
     INDEX idx_block_number block_number TYPE minmax GRANULARITY 1,  -- Speeds up block range queries
     INDEX idx_transaction_hash transaction_hash TYPE bloom_filter GRANULARITY 1  -- Fast log lookup by tx hash
