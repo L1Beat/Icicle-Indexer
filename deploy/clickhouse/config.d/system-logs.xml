@@ -1,0 +1,37 @@
+<!--
+  Cap ClickHouse's internal system.* log tables.
+
+  Without this they have no TTL and grow forever. On 2026-10-07 they reached
+  1.75 TiB (text_log alone 962 GiB at the default trace level), filled /home,
+  and avalanchego crash-looped on its free-disk check for ~27h.
+
+  Changing a log table's TTL/level takes effect on ClickHouse restart. CH then
+  renames the old table to <name>_0 and creates a fresh one; drop the _0 copies.
+-->
+<clickhouse>
+    <text_log>
+        <level>warning</level>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+    </text_log>
+    <query_log>
+        <ttl>event_date + INTERVAL 14 DAY DELETE</ttl>
+    </query_log>
+    <trace_log>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+    </trace_log>
+    <processors_profile_log>
+        <ttl>event_date + INTERVAL 3 DAY DELETE</ttl>
+    </processors_profile_log>
+    <part_log>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+    </part_log>
+    <metric_log>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+    </metric_log>
+    <asynchronous_metric_log>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+    </asynchronous_metric_log>
+    <query_metric_log>
+        <ttl>event_date + INTERVAL 7 DAY DELETE</ttl>
+    </query_metric_log>
+</clickhouse>

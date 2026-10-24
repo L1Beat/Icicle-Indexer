@@ -82,6 +82,10 @@ sed "s|__CLICKHOUSE_PASSWORD_SHA256__|$CLICKHOUSE_PASSWORD_SHA256|" \
 chown "$ICICLE_USER:$ICICLE_USER" "$CH_CONFIG_DIR/users.d/default-user.xml"
 chmod 644 "$CH_CONFIG_DIR/users.d/default-user.xml"
 
+install -d -o "$ICICLE_USER" -g "$ICICLE_USER" "$CH_CONFIG_DIR/config.d"
+install -m 644 -o "$ICICLE_USER" -g "$ICICLE_USER" \
+  clickhouse/config.d/system-logs.xml "$CH_CONFIG_DIR/config.d/system-logs.xml"
+
 echo "==> Starting ClickHouse"
 # Render .env paths into a tmp .env that docker compose picks up
 TMP_ENV=$(mktemp)

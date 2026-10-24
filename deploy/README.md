@@ -10,6 +10,7 @@ Reproducible setup for an Icicle indexer + API server. Each new server is bootst
 | `.env.example` | Template for the per-server secrets file. |
 | `docker-compose.yml` | ClickHouse container with the right bind-mounts and loopback ports. |
 | `clickhouse/users.d/default-user.xml.template` | Renders the `default` user with a sha256 password. |
+| `clickhouse/config.d/system-logs.xml` | TTLs on `system.*` log tables + `text_log` at warning level, so they can't fill the disk. |
 | `clickhouse/access-setup.sql` | Creates the read-only `anonymous` / `anonymous_heavy` users for dashboards. |
 | `nginx/api.conf` | Reverse-proxy vhost. Forwards `X-Forwarded-For` correctly. |
 | `systemd/icicle-api.service`, `icicle-indexer.service`, `icicle-lending.service` | Service units (with memory caps). |

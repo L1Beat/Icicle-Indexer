@@ -6,6 +6,8 @@
 # Key choices:
 # - Ports are bound to 127.0.0.1 only. The DB must NEVER be on 0.0.0.0.
 # - users.d is bind-mounted from host so the `default` password survives container recreation.
+# - config.d/system-logs.xml caps system.* log tables (TTL + text_log level). Mounted as a single
+#   file so the image's own config.d contents (docker_related_config.xml) stay in place.
 # - Data volume on host, not a docker-managed volume, so it's easy to back up and reason about.
 
 services:
@@ -20,6 +22,7 @@ services:
     volumes:
       - ${CH_DATA_DIR}:/var/lib/clickhouse
       - ${CH_CONFIG_DIR}/users.d:/etc/clickhouse-server/users.d:ro
+      - ${CH_CONFIG_DIR}/config.d/system-logs.xml:/etc/clickhouse-server/config.d/system-logs.xml:ro
     ports:
       - "127.0.0.1:8123:8123"
       - "127.0.0.1:9000:9000"
