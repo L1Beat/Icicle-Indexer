@@ -18,7 +18,7 @@ import (
 // resume from the watermark).
 const ingestShutdownGrace = 30 * time.Second
 
-func RunIngest(ctx context.Context, fast bool) {
+func RunIngest(ctx context.Context, fast bool, rpcCache bool) {
 	if fast {
 		slog.Info("Starting ingest in FAST mode (indexers disabled)")
 	} else {
@@ -65,12 +65,18 @@ func RunIngest(ctx context.Context, fast bool) {
 
 	// Start a syncer for each chain
 	for _, cfg := range configs {
-		// Create cache
-		cacheInstance, err := cache.New("./rpc_cache", cfg.ChainID)
-		if err != nil {
-			log.Fatalf("Failed to create cache for chain %d: %v", cfg.ChainID, err)
+		// The on-disk RPC cache is a full second copy of every fetched block
+		// (2.5 TB after indexing C-Chain from genesis). It only pays off for a
+		// resync, so it is opt-in via --rpc-cache; the fetchers run without it.
+		var cacheInstance *cache.Cache
+		if rpcCache {
+			c, err := cache.New("./rpc_cache", cfg.ChainID)
+			if err != nil {
+				log.Fatalf("Failed to create cache for chain %d: %v", cfg.ChainID, err)
+			}
+			defer c.Close()
+			cacheInstance = c
 		}
-		defer cacheInstance.Close()
 
 		// Create syncer based on VM type
 		syncer, err := CreateSyncer(cfg, conn, cacheInstance, fast)

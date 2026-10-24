@@ -172,7 +172,7 @@ For detailed information about granular metrics, see: **[sql/metrics/README.md](
   - **Batched Incremental**: Block-based indexers, throttled to 5min intervals
   - **Immediate Incremental**: Block-based indexers, run every batch (0.9s spacing)
 - **Watermarks**: Track progress per indexer in `indexer_watermarks` table
-- **RPC Cache**: Local disk cache to speed up resync (will be removed in production)
+- **RPC Cache**: Optional on-disk copy of every fetched block (`./rpc_cache`), only written when `ingest` runs with `--rpc-cache`. Speeds up a resync but costs ~25 KB per block (2.5 TB for C-Chain from genesis), so leave it off in production
 
 ## Troubleshooting
 

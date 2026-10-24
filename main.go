@@ -60,10 +60,12 @@ func main() {
 		Short: "Start the continuous ingestion process",
 		Run: func(command *cobra.Command, args []string) {
 			fast, _ := command.Flags().GetBool("fast")
-			cmd.RunIngest(ctx, fast)
+			rpcCache, _ := command.Flags().GetBool("rpc-cache")
+			cmd.RunIngest(ctx, fast, rpcCache)
 		},
 	}
 	ingestCmd.Flags().Bool("fast", false, "Skip all indexers (incremental and metrics)")
+	ingestCmd.Flags().Bool("rpc-cache", false, "Write fetched blocks to ./rpc_cache (speeds up a later resync; costs ~25 KB per block on disk)")
 
 	apiCmd := &cobra.Command{
 		Use:   "api",

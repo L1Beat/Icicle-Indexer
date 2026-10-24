@@ -11,7 +11,7 @@ WorkingDirectory=__HOME__/icicle
 
 EnvironmentFile=/etc/icicle/indexer.env
 
-ExecStart=__HOME__/icicle/icicle indexer
+ExecStart=__HOME__/icicle/icicle ingest
 
 Restart=always
 RestartSec=10
