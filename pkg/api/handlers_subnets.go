@@ -312,7 +312,7 @@ func (s *Server) handleGetSubnet(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	limit, offset := getPagination(r)
-	cursor := getCursor(r)
+	cursor := getTxIDCursor(r)
 	wantCount := getCountParam(r)
 
 	chainType := r.URL.Query().Get("chain_type")
@@ -341,8 +341,9 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 		conditions = append(conditions, "v.active_validators > 0")
 	}
 	if cursor != nil {
-		conditions = append(conditions, "c.created_block < ?")
-		args = append(args, cursor.BlockNumber)
+		cond, cursorArgs := cursor.condition("c.created_block", "c.chain_id")
+		conditions = append(conditions, cond)
+		args = append(args, cursorArgs...)
 	}
 
 	whereClause := ""
@@ -530,7 +531,8 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 
 	meta := &Meta{Limit: limit, Offset: offset, HasMore: hasMore}
 	if hasMore && len(chains) > 0 {
-		meta.NextCursor = cursorBlock(chains[len(chains)-1].CreatedBlock)
+		last := chains[len(chains)-1]
+		meta.NextCursor = cursorBlockTxID(last.CreatedBlock, last.ChainID)
 	}
 
 	if wantCount {

@@ -314,6 +314,46 @@ func getCursor(r *http.Request) *Cursor {
 	return c
 }
 
+// txIDCursor is the keyset cursor for lists ordered by (block DESC, id ASC),
+// where one block holds many rows. A bare block number (the old format) still
+// parses and resumes at the next block.
+type txIDCursor struct {
+	BlockNumber uint64
+	TxID        string
+}
+
+// getTxIDCursor parses ?cursor=<block> or ?cursor=<block>:<id>
+func getTxIDCursor(r *http.Request) *txIDCursor {
+	raw := r.URL.Query().Get("cursor")
+	if raw == "" {
+		return nil
+	}
+	parts := strings.SplitN(raw, ":", 2)
+	bn, err := strconv.ParseUint(parts[0], 10, 64)
+	if err != nil {
+		return nil
+	}
+	c := &txIDCursor{BlockNumber: bn}
+	if len(parts) == 2 {
+		c.TxID = parts[1]
+	}
+	return c
+}
+
+// condition returns the WHERE fragment selecting rows after the cursor.
+func (c *txIDCursor) condition(blockCol, idCol string) (string, []interface{}) {
+	if c.TxID == "" {
+		return blockCol + " < ?", []interface{}{c.BlockNumber}
+	}
+	cond := fmt.Sprintf("(%s < ? OR (%s = ? AND %s > ?))", blockCol, blockCol, idCol)
+	return cond, []interface{}{c.BlockNumber, c.BlockNumber, c.TxID}
+}
+
+// cursorBlockTxID builds next_cursor from block:id
+func cursorBlockTxID(block uint64, txID string) string {
+	return fmt.Sprintf("%d:%s", block, txID)
+}
+
 // getCountParam returns true if ?count=true
 func getCountParam(r *http.Request) bool {
 	return r.URL.Query().Get("count") == "true"
@@ -325,11 +365,6 @@ func trimResults[T any](results []T, limit int) ([]T, bool) {
 		return results[:limit], true
 	}
 	return results, false
-}
-
-// cursorBlock builds next_cursor from a block number
-func cursorBlock(block uint64) string {
-	return fmt.Sprintf("%d", block)
 }
 
 // cursorBlockTx builds next_cursor from block:txIndex

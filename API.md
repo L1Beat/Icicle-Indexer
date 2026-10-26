@@ -104,6 +104,8 @@ Most endpoints also support **cursor-based** pagination, which is more efficient
 
 **Cursor-eligible endpoints:** blocks, transactions, address transactions, address internal transactions, P-Chain transactions, chains, validator deposits.
 
+Treat `next_cursor` as opaque and pass it back unchanged. P-Chain transactions, validator deposits and chains return `<block>:<id>`, so a page that ends partway through a block resumes after its last row. A bare block number is still accepted on those endpoints, but it resumes at the next block and skips the rest of the current one.
+
 **Offset-only endpoints** (sorted by non-monotonic fields): validators, fee metrics, token balances.
 
 ---
@@ -829,7 +831,7 @@ List P-Chain transactions.
     "limit": 20,
     "offset": 0,
     "has_more": true,
-    "next_cursor": "12345678"
+    "next_cursor": "12345678:2ZW6HUePB..."
   }
 }
 ```
@@ -1090,7 +1092,7 @@ List all blockchains with enriched subnet, L1 registry, and validator data. This
     "limit": 20,
     "offset": 0,
     "has_more": true,
-    "next_cursor": "10000001"
+    "next_cursor": "10000001:2q9e4r6Mu..."
   }
 }
 ```

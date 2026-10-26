@@ -610,7 +610,7 @@ func (s *Server) handleGetValidator(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleValidatorDeposits(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	limit, offset := getPagination(r)
-	cursor := getCursor(r)
+	cursor := getTxIDCursor(r)
 	wantCount := getCountParam(r)
 	id := r.PathValue("id")
 
@@ -620,14 +620,15 @@ func (s *Server) handleValidatorDeposits(w http.ResponseWriter, r *http.Request)
 	var args []interface{}
 
 	if cursor != nil {
+		cond, cursorArgs := cursor.condition("block_number", "tx_id")
 		query = `
 			SELECT tx_id, tx_type, block_number, block_time, amount
 			FROM l1_validator_balance_txs FINAL
-			WHERE (validation_id = ? OR node_id = ?) AND block_number < ?
+			WHERE (validation_id = ? OR node_id = ?) AND ` + cond + `
 			ORDER BY block_number DESC, tx_id
 			LIMIT ?
 		`
-		args = []interface{}{id, id, cursor.BlockNumber, fetchLimit}
+		args = append(append([]interface{}{id, id}, cursorArgs...), fetchLimit)
 	} else {
 		query = `
 			SELECT tx_id, tx_type, block_number, block_time, amount
@@ -664,7 +665,8 @@ func (s *Server) handleValidatorDeposits(w http.ResponseWriter, r *http.Request)
 
 	meta := &Meta{Limit: limit, Offset: offset, HasMore: hasMore}
 	if hasMore && len(deposits) > 0 {
-		meta.NextCursor = cursorBlock(deposits[len(deposits)-1].BlockNumber)
+		last := deposits[len(deposits)-1]
+		meta.NextCursor = cursorBlockTxID(last.BlockNumber, last.TxID)
 	}
 
 	if wantCount {

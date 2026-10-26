@@ -203,3 +203,32 @@ func TestHandleGetPChainTx_MethodNotAllowed(t *testing.T) {
 	w := MakeRequest(t, server, "DELETE", "/api/v1/data/pchain/txs/tx123")
 	require.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
+
+// A page that ends mid-block must resume after its last tx, not at the next
+// block, or the block's remaining txs are skipped.
+func TestPChainTxs_CursorResumesWithinBlock(t *testing.T) {
+	var gotQuery string
+	var gotArgs []interface{}
+	conn := &MockConn{QueryFunc: func(ctx context.Context, q string, args ...interface{}) (driver.Rows, error) {
+		gotQuery, gotArgs = q, args
+		return NewMockRows(nil, [][]interface{}{
+			{"txA", "AddPermissionlessValidatorTx", uint64(100), time.Now(), map[string]interface{}{}},
+			{"txB", "AddPermissionlessValidatorTx", uint64(100), time.Now(), map[string]interface{}{}},
+		}), nil
+	}}
+	server := NewTestServer(conn)
+
+	w := MakeRequest(t, server, "GET", "/api/v1/data/pchain/txs?limit=1")
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), `"next_cursor":"100:txA"`)
+
+	w = MakeRequest(t, server, "GET", "/api/v1/data/pchain/txs?limit=1&cursor=100:txA")
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, gotQuery, "(block_number < ? OR (block_number = ? AND tx_id > ?))")
+	assert.Equal(t, []interface{}{uint64(100), uint64(100), "txA", 2}, gotArgs)
+
+	// The old bare-block cursor still works.
+	MakeRequest(t, server, "GET", "/api/v1/data/pchain/txs?limit=1&cursor=100")
+	assert.Contains(t, gotQuery, "WHERE block_number < ?")
+	assert.Equal(t, []interface{}{uint64(100), 2}, gotArgs)
+}

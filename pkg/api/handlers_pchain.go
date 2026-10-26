@@ -31,7 +31,7 @@ type PChainTx struct {
 func (s *Server) handleListPChainTxs(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	limit, offset := getPagination(r)
-	cursor := getCursor(r)
+	cursor := getTxIDCursor(r)
 	wantCount := getCountParam(r)
 
 	txType := r.URL.Query().Get("tx_type")
@@ -43,9 +43,12 @@ func (s *Server) handleListPChainTxs(w http.ResponseWriter, r *http.Request) {
 	whereParts := []string{}
 	whereArgs := []interface{}{}
 
+	cursorArgs := 0
 	if cursor != nil {
-		whereParts = append(whereParts, "block_number < ?")
-		whereArgs = append(whereArgs, cursor.BlockNumber)
+		cond, args := cursor.condition("block_number", "tx_id")
+		whereParts = append(whereParts, cond)
+		whereArgs = append(whereArgs, args...)
+		cursorArgs = len(args)
 	}
 
 	if txType != "" {
@@ -157,7 +160,8 @@ func (s *Server) handleListPChainTxs(w http.ResponseWriter, r *http.Request) {
 
 	meta := &Meta{Limit: limit, Offset: offset, HasMore: hasMore}
 	if hasMore && len(txs) > 0 {
-		meta.NextCursor = cursorBlock(txs[len(txs)-1].BlockNumber)
+		last := txs[len(txs)-1]
+		meta.NextCursor = cursorBlockTxID(last.BlockNumber, last.TxID)
 	}
 
 	if wantCount {
@@ -185,7 +189,7 @@ func (s *Server) handleListPChainTxs(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			countQuery = fmt.Sprintf(`SELECT toInt64(count()) FROM p_chain_txs FINAL %s`, countWhere)
-			countArgs = whereArgs[1:] // skip cursor arg
+			countArgs = whereArgs[cursorArgs:] // skip cursor args
 		} else {
 			countQuery = fmt.Sprintf(`SELECT toInt64(count()) FROM p_chain_txs FINAL %s`, whereClause)
 			countArgs = whereArgs

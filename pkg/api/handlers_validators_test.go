@@ -413,3 +413,24 @@ func TestWholeTokenString(t *testing.T) {
 	beam := stakeConv{factor: big.NewInt(1000), token: "BEAM"}
 	assert.Equal(t, "9000000", wholeTokenString(9_000_000_000, beam))
 }
+
+func TestValidatorDeposits_CursorResumesWithinBlock(t *testing.T) {
+	var gotQuery string
+	var gotArgs []interface{}
+	conn := &MockConn{QueryFunc: func(ctx context.Context, q string, args ...interface{}) (driver.Rows, error) {
+		gotQuery, gotArgs = q, args
+		return NewMockRows(nil, [][]interface{}{
+			{"txA", "deposit", uint64(100), time.Now(), uint64(1)},
+			{"txB", "topup", uint64(100), time.Now(), uint64(2)},
+		}), nil
+	}}
+	server := NewTestServer(conn)
+
+	w := MakeRequest(t, server, "GET", "/api/v1/data/validators/v1/deposits?limit=1")
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), `"next_cursor":"100:txA"`)
+
+	MakeRequest(t, server, "GET", "/api/v1/data/validators/v1/deposits?limit=1&cursor=100:txA")
+	assert.Contains(t, gotQuery, "(block_number < ? OR (block_number = ? AND tx_id > ?))")
+	assert.Equal(t, []interface{}{"v1", "v1", uint64(100), uint64(100), "txA", 2}, gotArgs)
+}
