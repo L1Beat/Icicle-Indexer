@@ -105,6 +105,12 @@ type AssetPosition struct {
 	Side      Side
 	Amount    *big.Int // token units
 	BaseValue *big.Int // oracle base-currency value
+	// NotEntered marks Benqi supply in a market the account has not entered as
+	// collateral. It backs no borrow, so it is excluded from collateral_base and the
+	// health factor, but it is still seizable in a liquidation (Benqi seizeAllowed
+	// checks only that both markets are listed). Zero value = entered, so Aave and
+	// debt legs are unaffected.
+	NotEntered bool
 }
 
 // Health is the unified per-account health snapshot produced by an adapter.

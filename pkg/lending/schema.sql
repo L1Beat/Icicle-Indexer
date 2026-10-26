@@ -102,9 +102,13 @@ CREATE TABLE IF NOT EXISTS lending_position_assets (
     side LowCardinality(String),           -- collateral | debt
     amount UInt256,                        -- token units
     base_value UInt256,                    -- oracle base-currency value
+    entered Bool DEFAULT true,             -- Benqi false = supplied but not entered as collateral, seizable but backs no borrow
     updated_at DateTime64(3, 'UTC') DEFAULT now64(3)
 ) ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY (chain_id, protocol, account, asset, side);
+
+-- Backfill the entered column onto an already-created table (idempotent).
+ALTER TABLE lending_position_assets ADD COLUMN IF NOT EXISTS entered Bool DEFAULT true AFTER base_value;
 
 -- Executed on-chain liquidations (Aave LiquidationCall, Benqi LiquidateBorrow),
 -- valued in USD at the event block. ReplacingMergeTree keyed by the event identity

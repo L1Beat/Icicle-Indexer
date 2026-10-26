@@ -42,6 +42,7 @@ const (
 	fnMarkets              = "markets(address)"
 	fnGetAccountLiquidity  = "getAccountLiquidity(address)"
 	fnGetAccountSnapshot   = "getAccountSnapshot(address)"
+	fnGetAssetsIn          = "getAssetsIn(address)"
 	fnGetUnderlyingPrice   = "getUnderlyingPrice(address)"
 	fnUnderlying           = "underlying()"
 	fnSymbol               = "symbol()"
@@ -170,14 +171,22 @@ func (a *Adapter) DecodeLog(l lending.LogRow) []lending.Exposure {
 	return nil
 }
 
-// BuildProbe reads getAccountLiquidity for the authoritative shortfall, plus a
-// snapshot and price for every market so collateral and the derived health factor
-// are complete regardless of how much discovery has processed. The exposure
-// argument is unused: Benqi needs the full market set, not just seen markets.
+// BuildProbe reads getAccountLiquidity for the authoritative liquidity and
+// shortfall, getAssetsIn for the markets the account has entered as collateral,
+// plus a snapshot and price for every market. The exposure argument is unused:
+// Benqi needs the full market set, not just seen markets.
+//
+// Only entered markets count as collateral on Benqi. A supplied but non-entered
+// balance backs no borrow, so it is excluded from collateral_base. It is still
+// reported as a collateral leg flagged NotEntered, because seizeAllowed does not
+// check membership and a liquidator can seize it. The health factor comes from the Comptroller's own
+// figures, (debt + liquidity - shortfall) / debt, so it matches the chain exactly
+// even if a collateral factor here is stale.
 func (a *Adapter) BuildProbe(account string, _ []lending.Exposure) lending.HealthProbe {
 	account = lending.NormalizeAddr(account)
 	calls := []lending.Call{
 		{Target: a.comptroller, AllowFailure: true, Data: lending.EncodeCall1Addr(fnGetAccountLiquidity, account)},
+		{Target: a.comptroller, AllowFailure: true, Data: lending.EncodeCall1Addr(fnGetAssetsIn, account)},
 	}
 
 	// Read every market, not just discovered exposure. Benqi health is the sum of
@@ -217,11 +226,22 @@ func (a *Adapter) BuildProbe(account string, _ []lending.Exposure) lending.Healt
 			h.Liquidatable = shortfall.Sign() > 0 // authoritative (rule 3)
 			h.OK = true
 
+			// Entered markets. If getAssetsIn fails, count every market rather than
+			// none: an overstated collateral leg is safer than a zeroed one, and the
+			// health factor below does not depend on this set.
+			var entered map[string]bool
+			if len(results) > 1 && results[1].Success {
+				entered = map[string]bool{}
+				for _, m := range decodeAddressArray(results[1].ReturnData) {
+					entered[lending.NormalizeAddr(m)] = true
+				}
+			}
+
 			weightedCollateral := big.NewInt(0)
 			collateral := big.NewInt(0)
 			debt := big.NewInt(0)
 
-			idx := 1
+			idx := 2
 			for _, m := range markets {
 				if idx+1 >= len(results) {
 					break
@@ -243,17 +263,19 @@ func (a *Adapter) BuildProbe(account string, _ []lending.Exposure) lending.Healt
 				collUSD := div1e18(new(big.Int).Mul(price, underlyingRaw))
 				borrowUSD := div1e18(new(big.Int).Mul(price, borrowBalance))
 
-				cfBps := params[lending.NormalizeAddr(m)].LiquidationThresholdBps
-				weighted := new(big.Int).Div(new(big.Int).Mul(collUSD, big.NewInt(int64(cfBps))), big.NewInt(10000))
-
-				collateral.Add(collateral, collUSD)
-				weightedCollateral.Add(weightedCollateral, weighted)
+				isCollateral := entered == nil || entered[lending.NormalizeAddr(m)]
+				if isCollateral {
+					cfBps := params[lending.NormalizeAddr(m)].LiquidationThresholdBps
+					weighted := new(big.Int).Div(new(big.Int).Mul(collUSD, big.NewInt(int64(cfBps))), big.NewInt(10000))
+					collateral.Add(collateral, collUSD)
+					weightedCollateral.Add(weightedCollateral, weighted)
+				}
 				debt.Add(debt, borrowUSD)
 
 				if underlyingRaw.Sign() > 0 {
 					h.Assets = append(h.Assets, lending.AssetPosition{
 						Asset: lending.NormalizeAddr(m), Side: lending.SideCollateral,
-						Amount: underlyingRaw, BaseValue: collUSD,
+						Amount: underlyingRaw, BaseValue: collUSD, NotEntered: !isCollateral,
 					})
 				}
 				if borrowBalance.Sign() > 0 {
@@ -266,7 +288,16 @@ func (a *Adapter) BuildProbe(account string, _ []lending.Exposure) lending.Healt
 
 			h.CollateralBase = collateral
 			h.DebtBase = debt
-			h.HealthFactor = lending.DeriveHealthFactor(weightedCollateral, debt)
+			// Benqi's liquidity = weighted entered collateral - debt (shortfall is the
+			// negative side), so weighted collateral = debt + liquidity - shortfall.
+			// Fall back to the locally weighted sum only if that goes negative, which
+			// would mean debt here disagrees with the Comptroller's.
+			auth := new(big.Int).Add(debt, h.LiquidityBase)
+			auth.Sub(auth, shortfall)
+			if auth.Sign() < 0 {
+				auth = weightedCollateral
+			}
+			h.HealthFactor = lending.DeriveHealthFactor(auth, debt)
 			return h
 		},
 	}

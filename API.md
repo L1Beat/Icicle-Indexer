@@ -686,6 +686,113 @@ Time series for a stablecoin metric.
 
 ---
 
+## Data API - Lending
+
+Liquidation-risk feed for Aave v3 and Benqi on C-Chain (`chainId` 43114), written by the `icicle-lending` service.
+
+### Units
+
+| Field | Scale |
+|-------|-------|
+| `health_factor`, `hf_max` | Dimensionless ratio × 1e18. `1000000000000000000` = 1.0; below 1.0 is liquidatable |
+| `*_base` (`collateral_base`, `debt_base`, `base_value`, `min_debt_base`, ...) | USD × 1e18 for **both** protocols. Aave's 1e8 base currency is normalized to 1e18 |
+| `repaid_usd`, `total_repaid_usd` | USD × 1e18, priced by the protocol oracle at the liquidation block. Same scale as `*_base` |
+| `amount`, `repay_amount`, `seize_amount` | Raw token units. Scale by the leg's `decimals` |
+
+All of these are decimal strings.
+
+### Collateral legs and `entered`
+
+Each collateral leg has `entered`. It is always `true` for Aave. For Benqi, `false` means the account supplied the asset but never entered that market as collateral (`enterMarkets`). That supply backs no borrow, so it is excluded from `collateral_base`, `health_factor`, and the per-asset `/risk` totals. It is still seizable in a liquidation, because Benqi's `seizeAllowed` only checks that both markets are listed. The `liquidation` estimate therefore considers it when picking the largest collateral leg.
+
+Benqi `health_factor` is computed from the Comptroller's own `getAccountLiquidity`: `(debt_base + liquidity_base - shortfall_base) / debt_base`.
+
+### Freshness
+
+`health_factor`, `liquidatable`, `tier`, the `*_base` totals, and the per-asset legs are a snapshot read from chain at the row's `block_number` (written at `updated_at`). They are **not** live. How often a position is re-read depends on its tier:
+
+| Tier | Health factor | Re-read every | Re-read on oracle price move ≥ 0.5% |
+|------|---------------|---------------|-------------------------------------|
+| hot | < 1.1 | 4 s | yes |
+| warm | 1.1 to 1.5 | 60 s | yes |
+| cold | ≥ 1.5 | 20 min | no |
+
+A cold position can therefore drift from the chain for up to 20 minutes. Before acting on a position, re-read it on chain.
+
+### Filters
+
+Address filters (`account`, `asset`) take a 40-hex-character address, with or without `0x`, case-insensitive. A malformed value returns `400 INVALID_PARAMETER`. It is never ignored. Empty results return `"data": []`.
+
+### GET /api/v1/data/evm/{chainId}/lending/positions
+
+Open positions ranked by liquidation proximity.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `protocol` | string | — | `aave-v3` or `benqi` |
+| `asset` | string | — | Only positions with a collateral or debt leg in this asset (Benqi: qiToken market) |
+| `min_debt_base` | string | `0` | Dust floor: only positions with `debt_base` above this (USD × 1e18). Must be a non-negative integer |
+| `limit`, `offset` | int | | Pagination |
+
+### GET /api/v1/data/evm/{chainId}/lending/positions/{account}
+
+All positions for one account, across protocols.
+
+### GET /api/v1/data/evm/{chainId}/lending/stats
+
+Open and liquidatable position counts per protocol.
+
+### GET /api/v1/data/evm/{chainId}/lending/risk
+
+Aggregate risk per protocol and per asset: health factor histogram, near-liquidation count, bad debt, value at risk. Takes `protocol` and `min_debt_base`. The applied floor is echoed back as `min_debt_base`.
+
+### GET /api/v1/data/evm/{chainId}/lending/risk/timeseries
+
+Periodic risk snapshots (every 15 min). `days` defaults to 30, max 365.
+
+### GET /api/v1/data/evm/{chainId}/lending/alerts
+
+Health factor crossing alerts (became liquidatable, entered near-liquidation), newest first. Paginated.
+
+### GET /api/v1/data/evm/{chainId}/lending/liquidations
+
+Executed liquidations, newest first.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `protocol` | string | — | `aave-v3` or `benqi` |
+| `account` | string | — | Matches the **borrower or the liquidator** |
+| `asset` | string | — | Matches the collateral or debt asset |
+| `limit`, `offset` | int | | Pagination |
+
+**Response:**
+```json
+{
+  "data": [
+    {
+      "protocol": "aave-v3",
+      "block_number": 98432377,
+      "tx_hash": "0x...",
+      "liquidator": "0x777e0fc6...",
+      "borrower": "0x9674fc77...",
+      "collateral_asset": "0x...",
+      "debt_asset": "0x...",
+      "repay_amount": "10254000000",
+      "seize_amount": "...",
+      "repaid_usd": "10255549220530094080000"
+    }
+  ],
+  "meta": { "limit": 5, "offset": 0, "has_more": false }
+}
+```
+`repaid_usd` above is $10,255.55.
+
+### GET /api/v1/data/evm/{chainId}/lending/liquidations/daily
+
+Daily liquidation counts per protocol, with size buckets (`over_25`, `over_100`, `over_1000` USD) and `total_repaid_usd`. `days` defaults to 30, max 3650.
+
+---
+
 ## Data API - P-Chain
 
 ### GET /api/v1/data/pchain/txs
@@ -1613,6 +1720,14 @@ ws.onmessage = (event) => {
 | GET | `/api/v1/data/evm/{chainId}/address/{address}/native` | Native token balance |
 | GET | `/api/v1/data/evm/{chainId}/stablecoins` | List stablecoins (supply, holders, 24h) |
 | GET | `/api/v1/data/evm/{chainId}/stablecoins/timeseries` | Stablecoin metric time series |
+| GET | `/api/v1/data/evm/{chainId}/lending/positions` | Lending positions by liquidation proximity |
+| GET | `/api/v1/data/evm/{chainId}/lending/positions/{account}` | Lending positions for one account |
+| GET | `/api/v1/data/evm/{chainId}/lending/stats` | Lending open/liquidatable counts |
+| GET | `/api/v1/data/evm/{chainId}/lending/risk` | Lending aggregate risk |
+| GET | `/api/v1/data/evm/{chainId}/lending/risk/timeseries` | Lending risk snapshots |
+| GET | `/api/v1/data/evm/{chainId}/lending/alerts` | Health factor crossing alerts |
+| GET | `/api/v1/data/evm/{chainId}/lending/liquidations` | Executed liquidations |
+| GET | `/api/v1/data/evm/{chainId}/lending/liquidations/daily` | Daily liquidation stats |
 | GET | `/api/v1/data/pchain/txs` | List P-Chain transactions |
 | GET | `/api/v1/data/pchain/txs/{txId}` | Get P-Chain transaction |
 | GET | `/api/v1/data/pchain/tx-types` | P-Chain transaction type counts |

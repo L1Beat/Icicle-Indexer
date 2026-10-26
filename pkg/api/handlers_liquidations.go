@@ -41,8 +41,16 @@ func (s *Server) handleLendingLiquidations(w http.ResponseWriter, r *http.Reques
 	}
 	limit, offset := getPagination(r)
 	protocol := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("protocol")))
-	account := normalizeHexAddr(r.URL.Query().Get("account"))
-	asset := normalizeHexAddr(r.URL.Query().Get("asset"))
+	account, ok := addrFilter(r, "account")
+	if !ok {
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid account address")
+		return
+	}
+	asset, ok := addrFilter(r, "asset")
+	if !ok {
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid asset address")
+		return
+	}
 
 	conds := []string{"chain_id = ?"}
 	args := []interface{}{chainID}
@@ -77,7 +85,7 @@ func (s *Server) handleLendingLiquidations(w http.ResponseWriter, r *http.Reques
 	defer rows.Close()
 
 	symbols := s.loadAssetSymbols(ctx, chainID)
-	var events []liquidationEvent
+	events := []liquidationEvent{}
 	for rows.Next() {
 		var e liquidationEvent
 		var tx, liq, borrower, coll, debt string
@@ -171,7 +179,7 @@ func (s *Server) handleLendingLiquidationsDaily(w http.ResponseWriter, r *http.R
 	}
 	defer rows.Close()
 
-	var out []liquidationDay
+	out := []liquidationDay{}
 	for rows.Next() {
 		var d liquidationDay
 		var total *big.Int

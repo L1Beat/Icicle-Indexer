@@ -376,7 +376,7 @@ func (s *Store) writePositions(ctx context.Context, healths []Health, tiers map[
 
 func (s *Store) writePositionAssets(ctx context.Context, healths []Health) error {
 	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO lending_position_assets
-		(chain_id, protocol, account, asset, side, amount, base_value, updated_at)`)
+		(chain_id, protocol, account, asset, side, amount, base_value, entered, updated_at)`)
 	if err != nil {
 		return err
 	}
@@ -391,7 +391,7 @@ func (s *Store) writePositionAssets(ctx context.Context, healths []Health) error
 			any = true
 			if err := batch.Append(
 				s.chainID, string(h.Account.Protocol), addrBytes(h.Account.Address),
-				addrBytes(a.Asset), string(a.Side), orZero(a.Amount), orZero(a.BaseValue), now,
+				addrBytes(a.Asset), string(a.Side), orZero(a.Amount), orZero(a.BaseValue), !a.NotEntered, now,
 			); err != nil {
 				return err
 			}

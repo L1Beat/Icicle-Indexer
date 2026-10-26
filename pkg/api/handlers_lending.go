@@ -24,6 +24,7 @@ type lendingLeg struct {
 	Decimals   uint8  `json:"decimals"`             // underlying decimals, for scaling Amount
 	Amount     string `json:"amount"`
 	BaseValue  string `json:"base_value"`
+	Entered    bool   `json:"entered"` // false: Benqi supply not entered as collateral. Excluded from collateral_base and HF, but seizable
 }
 
 type lendingEstimate struct {
@@ -80,16 +81,23 @@ func (s *Server) handleLendingPositions(w http.ResponseWriter, r *http.Request) 
 	}
 	limit, offset := getPagination(r)
 	protocol := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("protocol")))
-	asset := normalizeHexAddr(r.URL.Query().Get("asset"))
+	asset, ok := addrFilter(r, "asset")
+	if !ok {
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid asset address")
+		return
+	}
 
 	// Opt-in dust filter: only positions whose debt in the oracle base currency is
 	// greater than this value. Validated as a base-10 integer so it is
 	// injection-safe. Defaults to 0, the existing debt > 0 behavior.
 	debtFloor := "0"
 	if v := strings.TrimSpace(r.URL.Query().Get("min_debt_base")); v != "" {
-		if _, ok := new(big.Int).SetString(v, 10); ok {
-			debtFloor = v
+		n, ok := new(big.Int).SetString(v, 10)
+		if !ok || n.Sign() < 0 {
+			writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "min_debt_base must be a non-negative base-10 integer")
+			return
 		}
+		debtFloor = n.String()
 	}
 
 	var conds []string
@@ -132,7 +140,7 @@ func (s *Server) handleLendingPositions(w http.ResponseWriter, r *http.Request) 
 	}
 	defer rows.Close()
 
-	var positions []lendingPosition
+	positions := []lendingPosition{}
 	var accounts []string
 	for rows.Next() {
 		var acc [20]byte
@@ -217,7 +225,7 @@ func (s *Server) handleLendingAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	var positions []lendingPosition
+	positions := []lendingPosition{}
 	addr := "0x" + account
 	for rows.Next() {
 		var acc [20]byte
@@ -291,7 +299,7 @@ func (s *Server) handleLendingStats(w http.ResponseWriter, r *http.Request) {
 		OpenPositions uint64 `json:"open_positions"`
 		Liquidatable  uint64 `json:"liquidatable"`
 	}
-	var stats []stat
+	stats := []stat{}
 	for rows.Next() {
 		var st stat
 		if err := rows.Scan(&st.Protocol, &st.OpenPositions, &st.Liquidatable); err != nil {
@@ -453,12 +461,14 @@ func (s *Server) handleLendingRisk(w http.ResponseWriter, r *http.Request) {
 func (s *Server) attachRiskByAsset(ctx context.Context, chainID uint32, conds string, args []interface{}, floor string, statsByProto map[string]*riskStat) {
 	q := fmt.Sprintf(`
 		SELECT protocol, asset, side, sum(val) AS total_base FROM (
-			SELECT account, protocol, asset, side, argMax(base_value, updated_at) AS val
+			SELECT account, protocol, asset, side,
+				argMax(base_value, updated_at) AS val,
+				argMax(entered, updated_at) AS ent
 			FROM lending_position_assets
 			WHERE %[1]s
 			GROUP BY account, protocol, asset, side
 		)
-		WHERE val > 0 AND (protocol, account) IN (
+		WHERE val > 0 AND (side != 'collateral' OR ent) AND (protocol, account) IN (
 			SELECT protocol, account FROM (
 				SELECT account, protocol, argMax(debt_base, updated_at) AS debt
 				FROM lending_positions WHERE %[1]s GROUP BY account, protocol
@@ -612,7 +622,7 @@ func (s *Server) handleLendingRiskTimeseries(w http.ResponseWriter, r *http.Requ
 	}
 	defer rows.Close()
 
-	var out []riskSnapshot
+	out := []riskSnapshot{}
 	for rows.Next() {
 		var sn riskSnapshot
 		var badTotal, varColl, varDebt *big.Int
@@ -666,7 +676,7 @@ func (s *Server) handleLendingAlerts(w http.ResponseWriter, r *http.Request) {
 		BlockNumber    uint32    `json:"block_number"`
 		CreatedAt      time.Time `json:"created_at"`
 	}
-	var alerts []alert
+	alerts := []alert{}
 	for rows.Next() {
 		var acc [20]byte
 		var a alert
@@ -761,10 +771,11 @@ func (s *Server) loadLegs(ctx context.Context, chainID uint32, accounts []string
 	}
 	in := accountInList(accounts)
 	rows, err := s.conn.Query(ctx, fmt.Sprintf(`
-		SELECT account, protocol, asset, side, amt, val FROM (
+		SELECT account, protocol, asset, side, amt, val, ent FROM (
 			SELECT account, protocol, asset, side,
 				argMax(amount, updated_at) AS amt,
-				argMax(base_value, updated_at) AS val
+				argMax(base_value, updated_at) AS val,
+				argMax(entered, updated_at) AS ent
 			FROM lending_position_assets
 			WHERE chain_id = ? AND account IN (%s)
 			GROUP BY account, protocol, asset, side
@@ -778,12 +789,13 @@ func (s *Server) loadLegs(ctx context.Context, chainID uint32, accounts []string
 		var acc, asset [20]byte
 		var proto, side string
 		var amt, val *big.Int
-		if err := rows.Scan(&acc, &proto, &asset, &side, &amt, &val); err != nil {
+		var entered bool
+		if err := rows.Scan(&acc, &proto, &asset, &side, &amt, &val, &entered); err != nil {
 			return out
 		}
 		key := proto + "|0x" + hex.EncodeToString(acc[:]) + "|" + side
 		out[key] = append(out[key], lendingLeg{
-			Asset: "0x" + hex.EncodeToString(asset[:]), Amount: bigStr(amt), BaseValue: bigStr(val),
+			Asset: "0x" + hex.EncodeToString(asset[:]), Amount: bigStr(amt), BaseValue: bigStr(val), Entered: entered,
 		})
 	}
 	return out
@@ -886,6 +898,18 @@ func toBig(s string) *big.Int {
 		return big.NewInt(0)
 	}
 	return n
+}
+
+// addrFilter reads an optional address query parameter. Absent or empty means no
+// filter. A present but malformed value is rejected, so a typo can never silently
+// widen the result to every account.
+func addrFilter(r *http.Request, name string) (string, bool) {
+	raw := strings.TrimSpace(r.URL.Query().Get(name))
+	if raw == "" {
+		return "", true
+	}
+	a := normalizeHexAddr(raw)
+	return a, a != ""
 }
 
 func normalizeHexAddr(s string) string {
