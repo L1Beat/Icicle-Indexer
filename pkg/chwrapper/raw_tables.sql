@@ -546,3 +546,78 @@ CREATE TABLE IF NOT EXISTS address_labels (
     updated_at DateTime64(3, 'UTC')
 ) ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY (chain_id, address, source);
+
+-- Address lookup tables for the explorer's address pages. raw_txs and
+-- raw_traces are sorted by block, so finding one address meant scanning their
+-- bloom filters: about 2.5% of the table even for a small wallet (the filter's
+-- false-positive floor), and the whole table for a busy contract (30s
+-- timeouts). These keep one row per (address, tx) or (address, trace), sorted
+-- by address, so a page is one short read from the newest end.
+-- Filled by the materialized views below on every insert. History before the
+-- views existed is copied once with `icicle address-backfill`.
+-- Readers must ORDER BY the full sorting key (chain_id DESC, address DESC, ...)
+-- because unhex(?) is not folded to a constant, and without the fixed prefix
+-- in ORDER BY ClickHouse falls back to a full sort of the address's rows.
+CREATE TABLE IF NOT EXISTS address_txs (
+    chain_id UInt32,
+    address FixedString(20),  -- the from or the to of the tx
+    block_number UInt32,
+    transaction_index UInt16,
+    block_time DateTime64(3, 'UTC'),
+    hash FixedString(32),
+    from FixedString(20),
+    to Nullable(FixedString(20)),
+    value UInt256,
+    gas_limit UInt32,
+    gas_price UInt64,
+    gas_used UInt32,
+    success Bool,
+    type UInt8,
+    selector String,  -- first 4 bytes of input, for method resolution
+    input_len UInt32
+) ENGINE = ReplacingMergeTree
+ORDER BY (chain_id, address, block_number, transaction_index);
+
+-- Only traces the internal-txs endpoint shows: value transfers and contract
+-- creations (about 5.5% of all traces).
+CREATE TABLE IF NOT EXISTS address_traces (
+    chain_id UInt32,
+    address FixedString(20),  -- the from or the to of the trace
+    block_number UInt32,
+    transaction_index UInt16,
+    trace_address Array(UInt16),
+    block_time DateTime64(3, 'UTC'),
+    tx_hash FixedString(32),
+    from FixedString(20),
+    to Nullable(FixedString(20)),
+    value UInt256,
+    gas_used UInt32,
+    call_type LowCardinality(String),
+    tx_success Bool
+) ENGINE = ReplacingMergeTree
+ORDER BY (chain_id, address, block_number, transaction_index, trace_address);
+
+-- Progress of `icicle address-backfill`, one row per <table>:<chain_id>.
+CREATE TABLE IF NOT EXISTS address_backfill_state (
+    key String,
+    cutoff UInt32,  -- first block the materialized view captured, the backfill copies below it
+    next_block UInt32  -- blocks below this are copied
+) ENGINE = EmbeddedRocksDB
+PRIMARY KEY key;
+
+-- arrayDistinct gives a self-transfer one row, matching the old from/to query.
+CREATE MATERIALIZED VIEW IF NOT EXISTS address_txs_mv TO address_txs AS
+SELECT
+    chain_id, address, block_number, transaction_index, block_time, hash,
+    from, to, value, gas_limit, gas_price, gas_used, success, type,
+    substring(input, 1, 4) AS selector, toUInt32(length(input)) AS input_len
+FROM raw_txs
+ARRAY JOIN arrayDistinct(if(isNull(to), [from], [from, assumeNotNull(to)])) AS address;
+
+CREATE MATERIALIZED VIEW IF NOT EXISTS address_traces_mv TO address_traces AS
+SELECT
+    chain_id, address, block_number, transaction_index, trace_address, block_time,
+    tx_hash, from, to, value, gas_used, call_type, tx_success
+FROM raw_traces
+ARRAY JOIN arrayDistinct(if(isNull(to), [from], [from, assumeNotNull(to)])) AS address
+WHERE (value > 0 OR call_type IN ('CREATE', 'CREATE2'));

@@ -303,7 +303,25 @@ func main() {
 	enrichBackfillCmd.Flags().Bool("skip-labels", false, "Only resolve signatures")
 	enrichBackfillCmd.Flags().Bool("skip-signatures", false, "Only label contracts")
 
+	addressBackfillCmd := &cobra.Command{
+		Use:   "address-backfill",
+		Short: "Copy history into the address_txs / address_traces lookup tables (one-time, resumable, runs alongside the indexer)",
+		Run: func(command *cobra.Command, args []string) {
+			var opts cmd.AddressBackfillOptions
+			opts.Tables, _ = command.Flags().GetStringSlice("tables")
+			opts.ChainID, _ = command.Flags().GetUint32("chain")
+			opts.ChunkSize, _ = command.Flags().GetUint32("chunk")
+			opts.MaxThreads, _ = command.Flags().GetInt("threads")
+			cmd.RunAddressBackfill(ctx, opts)
+		},
+	}
+	addressBackfillCmd.Flags().StringSlice("tables", []string{"txs", "traces"}, "Lookup tables to fill: txs, traces")
+	addressBackfillCmd.Flags().Uint32("chain", 0, "EVM chain ID (0 = every indexed chain)")
+	addressBackfillCmd.Flags().Uint32("chunk", 500000, "Blocks per INSERT ... SELECT")
+	addressBackfillCmd.Flags().Int("threads", 8, "ClickHouse threads per chunk")
+
 	root.AddCommand(
+		addressBackfillCmd,
 		enrichBackfillCmd,
 		ingestCmd,
 		apiCmd,
