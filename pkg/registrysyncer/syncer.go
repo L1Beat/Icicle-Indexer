@@ -19,6 +19,13 @@ import (
 const (
 	NpmTarballURL = "https://registry.npmjs.org/l1beat-l1-registry/-/l1beat-l1-registry-latest.tgz"
 	NpmMetaURL    = "https://registry.npmjs.org/l1beat-l1-registry"
+
+	// Stale-row cleanup refuses to remove more than this many rows, or more
+	// than 1/maxStaleFraction of the table, in one sync. A redeploy removes one
+	// or two rows. A larger drop is more likely a broken release, so it is
+	// logged and left for a human.
+	maxStaleRows     = 10
+	maxStaleFraction = 5
 )
 
 // getLatestTarballURL fetches the npm registry metadata to get the latest tarball URL
@@ -90,6 +97,7 @@ func SyncRegistry(ctx context.Context, conn clickhouse.Conn) error {
 
 	tr := tar.NewReader(gzr)
 	var chains []ChainRegistry
+	unreadable := 0 // chain.json files that failed to read or parse
 
 	for {
 		header, err := tr.Next()
@@ -116,12 +124,14 @@ func SyncRegistry(ctx context.Context, conn clickhouse.Conn) error {
 		content, err := io.ReadAll(tr)
 		if err != nil {
 			slog.Warn("Failed to read registry file", "path", name, "error", err)
+			unreadable++
 			continue
 		}
 
 		var chain ChainRegistry
 		if err := json.Unmarshal(content, &chain); err != nil {
 			slog.Warn("Failed to parse registry file", "path", name, "error", err)
+			unreadable++
 			continue
 		}
 
@@ -135,6 +145,12 @@ func SyncRegistry(ctx context.Context, conn clickhouse.Conn) error {
 	if len(chains) > 0 {
 		if err := insertRegistryData(ctx, conn, chains); err != nil {
 			return fmt.Errorf("failed to insert registry data: %w", err)
+		}
+		if unreadable > 0 {
+			// A chain whose file failed to parse would look removed.
+			slog.Warn("Skipping stale registry cleanup: some registry files were unreadable", "unreadable", unreadable)
+		} else if err := deleteStaleRegistryRows(ctx, conn, registryBlockchainIDs(chains)); err != nil {
+			slog.Error("Stale registry cleanup failed", "error", err)
 		}
 	}
 
@@ -206,4 +222,45 @@ func insertRegistryData(ctx context.Context, conn clickhouse.Conn, registries []
 	}
 
 	return batch.Send()
+}
+
+// registryBlockchainIDs returns every blockchain ID insertRegistryData writes.
+func registryBlockchainIDs(registries []ChainRegistry) []string {
+	var ids []string
+	for _, reg := range registries {
+		for _, c := range reg.Chains {
+			if c.BlockchainID != "" {
+				ids = append(ids, c.BlockchainID)
+			}
+		}
+	}
+	return ids
+}
+
+// deleteStaleRegistryRows removes l1_registry rows whose blockchain ID is no
+// longer in the package. Without it, a chain repointed to a redeployment keeps
+// its old row, and the chains list shows two chains with the same name.
+func deleteStaleRegistryRows(ctx context.Context, conn clickhouse.Conn, ids []string) error {
+	var total, stale uint64
+	if err := conn.QueryRow(ctx, `
+		SELECT count(), countIf(NOT has(?, blockchain_id)) FROM l1_registry FINAL
+	`, ids).Scan(&total, &stale); err != nil {
+		return fmt.Errorf("count stale rows: %w", err)
+	}
+	if !staleCleanupAllowed(total, stale) {
+		slog.Warn("Skipping stale registry cleanup: too many rows would be removed", "stale", stale, "total", total)
+		return nil
+	}
+	if stale == 0 {
+		return nil
+	}
+	if err := conn.Exec(ctx, `DELETE FROM l1_registry WHERE NOT has(?, blockchain_id)`, ids); err != nil {
+		return fmt.Errorf("delete stale rows: %w", err)
+	}
+	slog.Info("Removed stale registry rows", "count", stale)
+	return nil
+}
+
+func staleCleanupAllowed(total, stale uint64) bool {
+	return stale <= maxStaleRows && stale*maxStaleFraction <= total
 }
