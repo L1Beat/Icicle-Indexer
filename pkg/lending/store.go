@@ -329,13 +329,17 @@ func (s *Store) ReadPriorStates(ctx context.Context, protocol Protocol, nearEdge
 }
 
 // WriteHealth persists position snapshots, their per-asset legs, and any crossing
-// alerts in one logical update.
+// alerts in one logical update. Positions and legs share one updated_at. A leg
+// that drops to zero is not rewritten, so readers keep only legs whose latest
+// updated_at is at or after the position's latest updated_at: a repaid debt or a
+// withdrawn collateral leg is then older than the position and drops out.
 func (s *Store) WriteHealth(ctx context.Context, healths []Health, tiers map[string]Tier, alerts []Alert) error {
 	if len(healths) > 0 {
-		if err := s.writePositions(ctx, healths, tiers); err != nil {
+		now := time.Now().UTC()
+		if err := s.writePositions(ctx, healths, tiers, now); err != nil {
 			return err
 		}
-		if err := s.writePositionAssets(ctx, healths); err != nil {
+		if err := s.writePositionAssets(ctx, healths, now); err != nil {
 			return err
 		}
 	}
@@ -347,14 +351,13 @@ func (s *Store) WriteHealth(ctx context.Context, healths []Health, tiers map[str
 	return nil
 }
 
-func (s *Store) writePositions(ctx context.Context, healths []Health, tiers map[string]Tier) error {
+func (s *Store) writePositions(ctx context.Context, healths []Health, tiers map[string]Tier, now time.Time) error {
 	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO lending_positions
 		(chain_id, protocol, account, health_factor, collateral_base, debt_base, shortfall_base, liquidity_base, liquidatable, tier, block_number, updated_at)`)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = batch.Abort() }()
-	now := time.Now().UTC()
 	for _, h := range healths {
 		if !h.OK {
 			continue
@@ -374,14 +377,13 @@ func (s *Store) writePositions(ctx context.Context, healths []Health, tiers map[
 	return chwrapper.RetryableBatchSend(batch)
 }
 
-func (s *Store) writePositionAssets(ctx context.Context, healths []Health) error {
+func (s *Store) writePositionAssets(ctx context.Context, healths []Health, now time.Time) error {
 	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO lending_position_assets
 		(chain_id, protocol, account, asset, side, amount, base_value, entered, updated_at)`)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = batch.Abort() }()
-	now := time.Now().UTC()
 	any := false
 	for _, h := range healths {
 		if !h.OK {

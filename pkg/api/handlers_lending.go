@@ -460,25 +460,30 @@ func (s *Server) handleLendingRisk(w http.ResponseWriter, r *http.Request) {
 // floor), and resolves the asset symbol (covering Benqi qiToken markets too).
 func (s *Server) attachRiskByAsset(ctx context.Context, chainID uint32, conds string, args []interface{}, floor string, statsByProto map[string]*riskStat) {
 	q := fmt.Sprintf(`
-		SELECT protocol, asset, side, sum(val) AS total_base FROM (
+		SELECT l.protocol, l.asset, l.side, sum(l.val) AS total_base FROM (
 			SELECT account, protocol, asset, side,
 				argMax(base_value, updated_at) AS val,
-				argMax(entered, updated_at) AS ent
+				argMax(entered, updated_at) AS ent,
+				max(updated_at) AS leg_ts
 			FROM lending_position_assets
 			WHERE %[1]s
 			GROUP BY account, protocol, asset, side
-		)
-		WHERE val > 0 AND (side != 'collateral' OR ent) AND (protocol, account) IN (
-			SELECT protocol, account FROM (
-				SELECT account, protocol, argMax(debt_base, updated_at) AS debt
-				FROM lending_positions WHERE %[1]s GROUP BY account, protocol
-			) WHERE debt > %[2]s
-		)
-		GROUP BY protocol, asset, side
+		) AS l
+		INNER JOIN (
+			SELECT account, protocol,
+				argMax(debt_base, updated_at) AS debt,
+				max(updated_at) AS pos_ts
+			FROM lending_positions WHERE %[1]s GROUP BY account, protocol
+		) AS p ON l.account = p.account AND l.protocol = p.protocol
+		WHERE l.val > 0 AND (l.side != 'collateral' OR l.ent)
+			AND l.leg_ts >= p.pos_ts
+			AND p.debt > %[2]s
+		GROUP BY l.protocol, l.asset, l.side
 		ORDER BY total_base DESC
 	`, conds, floor)
 
-	// conds/args appear twice (legs subquery and the debt-floor subquery).
+	// conds/args appear twice (legs subquery and the positions subquery). Legs
+	// only count if written in the account's latest refresh (see loadLegs).
 	dualArgs := append(append([]interface{}{}, args...), args...)
 	rows, err := s.conn.Query(ctx, q, dualArgs...)
 	if err != nil {
@@ -770,17 +775,28 @@ func (s *Server) loadLegs(ctx context.Context, chainID uint32, accounts []string
 		return out
 	}
 	in := accountInList(accounts)
+	// A leg that drops to zero is never rewritten, so keep only legs written in
+	// the account's latest refresh (leg_ts >= pos_ts). Without this a repaid debt
+	// or withdrawn collateral leg lingers forever and legs overstate the totals.
 	rows, err := s.conn.Query(ctx, fmt.Sprintf(`
-		SELECT account, protocol, asset, side, amt, val, ent FROM (
+		SELECT l.account, l.protocol, l.asset, l.side, l.amt, l.val, l.ent FROM (
 			SELECT account, protocol, asset, side,
 				argMax(amount, updated_at) AS amt,
 				argMax(base_value, updated_at) AS val,
-				argMax(entered, updated_at) AS ent
+				argMax(entered, updated_at) AS ent,
+				max(updated_at) AS leg_ts
 			FROM lending_position_assets
-			WHERE chain_id = ? AND account IN (%s)
+			WHERE chain_id = ? AND account IN (%[1]s)
 			GROUP BY account, protocol, asset, side
-		) WHERE amt > 0
-	`, in), chainID)
+		) AS l
+		INNER JOIN (
+			SELECT account, protocol, max(updated_at) AS pos_ts
+			FROM lending_positions
+			WHERE chain_id = ? AND account IN (%[1]s)
+			GROUP BY account, protocol
+		) AS p ON l.account = p.account AND l.protocol = p.protocol
+		WHERE l.amt > 0 AND l.leg_ts >= p.pos_ts
+	`, in), chainID, chainID)
 	if err != nil {
 		return out
 	}
