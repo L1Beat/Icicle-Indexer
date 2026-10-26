@@ -128,7 +128,7 @@ func (s *Server) handleLendingPositions(w http.ResponseWriter, r *http.Request) 
 			WHERE %s
 			GROUP BY account, protocol
 		) WHERE debt > %s
-		ORDER BY liq DESC, hf ASC, debt DESC
+		ORDER BY liq DESC, hf ASC, debt DESC, account, protocol
 		LIMIT ? OFFSET ?
 	`, strings.Join(conds, " AND "), debtFloor)
 	args = append(args, limit+1, offset)
@@ -662,7 +662,7 @@ func (s *Server) handleLendingAlerts(w http.ResponseWriter, r *http.Request) {
 		SELECT account, protocol, kind, health_factor, collateral_base, debt_base, block_number, created_at
 		FROM lending_alerts
 		WHERE chain_id = ?
-		ORDER BY created_at DESC
+		ORDER BY created_at DESC, account, protocol, kind
 		LIMIT ? OFFSET ?
 	`, chainID, limit+1, offset)
 	if err != nil {

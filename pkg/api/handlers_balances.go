@@ -78,7 +78,7 @@ func (s *Server) handleAddressBalances(w http.ResponseWriter, r *http.Request) {
 		WHERE b.chain_id = ?
 		  AND b.wallet = unhex(?)
 		  AND b.balance > toInt256(0)
-		ORDER BY b.balance DESC
+		ORDER BY b.balance DESC, b.token
 		LIMIT ? OFFSET ?
 	`
 

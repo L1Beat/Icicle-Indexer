@@ -110,10 +110,10 @@ func (s *Server) handleListPChainTxs(w http.ResponseWriter, r *http.Request) {
 			WHERE tx_id IN (
 				SELECT tx_id FROM p_chain_txs FINAL
 				%s
-				ORDER BY block_number DESC
+				ORDER BY block_number DESC, tx_id
 				LIMIT ?
 			)
-			ORDER BY block_number DESC
+			ORDER BY block_number DESC, tx_id
 		`, whereClause)
 		args = append(whereArgs, fetchLimit)
 	} else {
@@ -123,10 +123,10 @@ func (s *Server) handleListPChainTxs(w http.ResponseWriter, r *http.Request) {
 			WHERE tx_id IN (
 				SELECT tx_id FROM p_chain_txs FINAL
 				%s
-				ORDER BY block_number DESC
+				ORDER BY block_number DESC, tx_id
 				LIMIT ? OFFSET ?
 			)
-			ORDER BY block_number DESC
+			ORDER BY block_number DESC, tx_id
 		`, whereClause)
 		args = append(whereArgs, fetchLimit, offset)
 	}

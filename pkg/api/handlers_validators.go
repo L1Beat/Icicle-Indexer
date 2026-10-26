@@ -212,10 +212,11 @@ func formatWeightDiv(weight, factor *big.Int) string {
 // @Router /api/v1/data/validators [get]
 func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	// Validators are a small, bounded set per subnet (the Primary Network — the
-	// largest — has ~3k rows), so allow fetching them all in one request rather
-	// than forcing dozens of paginated round-trips into the rate limiter.
-	limit, offset := getPaginationWithCap(r, 5000)
+	// Validators are a small, bounded set per subnet (the Primary Network, the
+	// largest, has ~5k rows including ended validations), so allow fetching them
+	// all in one request rather than forcing paginated round-trips into the rate
+	// limiter. validation_id breaks weight ties so offset pages never overlap.
+	limit, offset := getPaginationWithCap(r, 10000)
 
 	subnetID := r.URL.Query().Get("subnet_id")
 	activeOnly := r.URL.Query().Get("active") == "true"
@@ -269,7 +270,7 @@ func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 				WHERE subnet_id = '%s'
 			) p ON v.node_id = p.node_id
 			%s
-			ORDER BY p.weight DESC, v.weight DESC
+			ORDER BY p.weight DESC, v.weight DESC, v.validation_id
 			LIMIT ? OFFSET ?
 		`, primaryNetworkSubnetID, whereClause)
 	} else {
@@ -286,7 +287,7 @@ func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 			LEFT JOIN (SELECT * FROM l1_validator_history FINAL) h
 				ON v.validation_id = h.validation_id AND v.subnet_id = h.subnet_id
 			%s
-			ORDER BY v.weight DESC
+			ORDER BY v.weight DESC, v.validation_id
 			LIMIT ? OFFSET ?
 		`, whereClause)
 	}
@@ -623,7 +624,7 @@ func (s *Server) handleValidatorDeposits(w http.ResponseWriter, r *http.Request)
 			SELECT tx_id, tx_type, block_number, block_time, amount
 			FROM l1_validator_balance_txs FINAL
 			WHERE (validation_id = ? OR node_id = ?) AND block_number < ?
-			ORDER BY block_number DESC
+			ORDER BY block_number DESC, tx_id
 			LIMIT ?
 		`
 		args = []interface{}{id, id, cursor.BlockNumber, fetchLimit}
@@ -632,7 +633,7 @@ func (s *Server) handleValidatorDeposits(w http.ResponseWriter, r *http.Request)
 			SELECT tx_id, tx_type, block_number, block_time, amount
 			FROM l1_validator_balance_txs FINAL
 			WHERE validation_id = ? OR node_id = ?
-			ORDER BY block_number DESC
+			ORDER BY block_number DESC, tx_id
 			LIMIT ? OFFSET ?
 		`
 		args = []interface{}{id, id, fetchLimit, offset}

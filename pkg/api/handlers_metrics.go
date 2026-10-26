@@ -105,7 +105,7 @@ func (s *Server) handleFeeMetrics(w http.ResponseWriter, r *http.Request) {
 				total_refunded, current_balance, total_fees_paid,
 				deposit_tx_count, validator_count
 			FROM l1_fee_stats FINAL
-			ORDER BY total_fees_paid DESC
+			ORDER BY total_fees_paid DESC, subnet_id
 			LIMIT ? OFFSET ?
 		`
 		args = []interface{}{fetchLimit, offset}
