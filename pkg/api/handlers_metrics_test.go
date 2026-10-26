@@ -282,3 +282,31 @@ func TestHandleFeeMetrics_MethodNotAllowed(t *testing.T) {
 	w := MakeRequest(t, server, "POST", "/api/v1/metrics/fees")
 	require.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
+
+// Without subnet_id the daily fee burn is summed across the primary P-Chain's L1s.
+func TestDailyFeeBurn_NetworkWide(t *testing.T) {
+	var gotQuery string
+	var gotArgs []interface{}
+	conn := &MockConn{QueryFunc: func(ctx context.Context, q string, args ...interface{}) (driver.Rows, error) {
+		gotQuery, gotArgs = q, args
+		return NewMockRows([]string{"day", "validators", "secs"}, [][]interface{}{
+			{time.Date(2026, 10, 25, 0, 0, 0, 0, time.UTC), uint32(3), uint64(86400 * 3)},
+		}), nil
+	}}
+	server := NewTestServer(conn)
+
+	w := MakeRequest(t, server, "GET", "/api/v1/metrics/fees/daily?days=3")
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), `"date":"2026-10-25"`)
+	assert.Contains(t, w.Body.String(), `"total_fees_burned":132710400`)
+	assert.Contains(t, w.Body.String(), `"active_validators":3`)
+	assert.Contains(t, gotQuery, "p_chain_id = 0")
+	assert.Contains(t, gotQuery, "GROUP BY day")
+	assert.Equal(t, []interface{}{3}, gotArgs)
+}
+
+func TestDailyFeeBurn_ValidatorsRequireSubnet(t *testing.T) {
+	server := NewTestServer(&MockConn{})
+	w := MakeRequest(t, server, "GET", "/api/v1/metrics/fees/daily?days=3&validators=true")
+	AssertErrorResponse(t, w, http.StatusBadRequest, ErrInvalidParameter)
+}

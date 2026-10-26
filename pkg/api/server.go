@@ -86,6 +86,7 @@ type Server struct {
 	handler     http.Handler
 	wsHub       *WSHub
 	enrichment  *enrichState
+	stablecoins *stablecoinCache
 }
 
 type Response struct {
@@ -115,6 +116,7 @@ func NewServer(conn driver.Conn, cfg Config) *Server {
 		rateLimiter: NewRateLimiter(cfg.RateLimit),
 		wsHub:       NewWSHub(conn, cfg.WebSocket, nil),
 		enrichment:  newEnrichState(),
+		stablecoins: newStablecoinCache(time.Minute),
 	}
 	s.wsHub.clientIP = s.rateLimiter.ClientIP
 	s.registerRoutes(cfg)

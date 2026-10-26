@@ -428,14 +428,15 @@ type ValidatorDailyFeeBurn struct {
 	ActiveSecs   uint64 `json:"active_seconds" example:"86400"`
 }
 
-// handleDailyFeeBurn returns daily fee burn data for an L1 subnet
+// handleDailyFeeBurn returns daily fee burn data for an L1 subnet, or summed
+// across all L1s when subnet_id is omitted.
 // @Summary Get daily fee burn
-// @Description Get daily L1 validation fee burn computed from validator active periods (512 nAVAX/sec per validator)
+// @Description Get daily L1 validation fee burn computed from validator active periods (512 nAVAX/sec per validator). Omit subnet_id for network-wide totals.
 // @Tags Metrics - Fees
 // @Produce json
-// @Param subnet_id query string true "Subnet ID"
+// @Param subnet_id query string false "Subnet ID (omit for all L1s)"
 // @Param days query int false "Number of days (max 365)" default(90)
-// @Param validators query string false "Include per-validator breakdown (true/false)"
+// @Param validators query string false "Include per-validator breakdown (true/false, requires subnet_id)"
 // @Success 200 {object} Response{data=[]DailyFeeBurn}
 // @Failure 400 {object} ErrorResponse
 // @Failure 500 {object} ErrorResponse
@@ -444,9 +445,17 @@ func (s *Server) handleDailyFeeBurn(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	subnetID := r.URL.Query().Get("subnet_id")
-	if subnetID == "" {
-		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "subnet_id is required")
+	includeValidators := r.URL.Query().Get("validators") == "true"
+	if subnetID == "" && includeValidators {
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "validators=true requires subnet_id")
 		return
+	}
+
+	// Without subnet_id, sum every L1 on the primary P-Chain (p_chain_id = 0),
+	// like the other network-wide P-Chain stats.
+	subnetFilter, filterArgs := "WHERE subnet_id = ?", []any{subnetID}
+	if subnetID == "" {
+		subnetFilter, filterArgs = "WHERE p_chain_id = 0", nil
 	}
 
 	days := 0 // 0 means "all" — computed from earliest validator
@@ -463,16 +472,14 @@ func (s *Server) handleDailyFeeBurn(w http.ResponseWriter, r *http.Request) {
 	if days == 0 {
 		var earliest time.Time
 		_ = s.conn.QueryRow(ctx, `
-			SELECT min(start_time) FROM l1_validator_state FINAL WHERE subnet_id = ?
-		`, subnetID).Scan(&earliest)
+			SELECT min(start_time) FROM l1_validator_state FINAL `+subnetFilter+`
+		`, filterArgs...).Scan(&earliest)
 		if earliest.IsZero() {
 			writeJSON(w, http.StatusOK, Response{Data: []DailyFeeBurn{}})
 			return
 		}
 		days = int(time.Since(earliest).Hours()/24) + 1
 	}
-
-	includeValidators := r.URL.Query().Get("validators") == "true"
 
 	// Query: for each day, for each validator, compute active seconds on that day.
 	// A validator is active from start_time until it gets disabled (refund block_time) or until now if still active.
@@ -497,7 +504,7 @@ func (s *Server) handleDailyFeeBurn(w http.ResponseWriter, r *http.Request) {
 					now(),
 					coalesce(r.disable_time, v.start_time)
 				) AS end_time
-			FROM (SELECT * FROM l1_validator_state FINAL WHERE subnet_id = ?) v
+			FROM (SELECT * FROM l1_validator_state FINAL `+subnetFilter+`) v
 			LEFT JOIN refunds r ON r.validation_id = v.validation_id AND r.subnet_id = v.subnet_id
 		)
 		SELECT
@@ -517,7 +524,43 @@ func (s *Server) handleDailyFeeBurn(w http.ResponseWriter, r *http.Request) {
 		ORDER BY d.day ASC, active_seconds DESC
 	`
 
-	rows, err := s.conn.Query(ctx, query, days, subnetID)
+	if subnetID == "" {
+		// Network-wide: sum in ClickHouse, one row per day rather than one per
+		// (day, validator) across every L1.
+		agg := `SELECT day, toUInt32(count()) AS validators, sum(active_seconds) AS secs
+			FROM (` + query + `) GROUP BY day ORDER BY day ASC`
+		rows, err := s.conn.Query(ctx, agg, append([]any{days}, filterArgs...)...)
+		if err != nil {
+			slog.Error("Network daily fee burn query failed", "error", err)
+			writeInternalError(w, err.Error())
+			return
+		}
+		defer rows.Close()
+
+		result := []DailyFeeBurn{}
+		for rows.Next() {
+			var day time.Time
+			var validators uint32
+			var activeSecs uint64
+			if err := rows.Scan(&day, &validators, &activeSecs); err != nil {
+				writeInternalError(w, err.Error())
+				return
+			}
+			result = append(result, DailyFeeBurn{
+				Date:             day.Format("2006-01-02"),
+				TotalFeesBurned:  activeSecs * 512, // 512 nAVAX/sec
+				ActiveValidators: validators,
+			})
+		}
+		if err := rows.Err(); err != nil {
+			writeInternalError(w, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, Response{Data: result})
+		return
+	}
+
+	rows, err := s.conn.Query(ctx, query, append([]any{days}, filterArgs...)...)
 	if err != nil {
 		slog.Error("Daily fee burn query failed", "subnet_id", subnetID, "error", err)
 		writeInternalError(w, err.Error())

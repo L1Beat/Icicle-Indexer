@@ -1377,14 +1377,14 @@ Get L1 validation fee statistics per subnet, plus an aggregated summary.
 
 ### GET /api/v1/metrics/fees/daily
 
-Get daily fee burn data for an L1 subnet, computed from validator active periods (512 nAVAX/sec per validator).
+Get daily fee burn data for an L1 subnet, computed from validator active periods (512 nAVAX/sec per validator). Omit `subnet_id` for network-wide totals: each day is summed across every L1 on the primary P-Chain, and `active_validators` counts validators across all of them.
 
 **Query Parameters:**
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `subnet_id` | string | **Yes** | Subnet ID (CB58) |
+| `subnet_id` | string | No | Subnet ID (CB58). Omit for all L1s |
 | `days` | int | No | Number of days (default: all days since first validator) |
-| `validators` | string | No | Set to `true` to include per-validator breakdown |
+| `validators` | string | No | Set to `true` to include per-validator breakdown (requires `subnet_id`) |
 
 **Response:**
 ```json
@@ -1856,6 +1856,9 @@ curl "https://api.l1beat.io/api/v1/metrics/fees?subnet_id=2ABC...xyz"
 
 # Get daily fee burn for a subnet
 curl "https://api.l1beat.io/api/v1/metrics/fees/daily?subnet_id=2ABC...xyz"
+
+# Network-wide daily fee burn across all L1s
+curl "https://api.l1beat.io/api/v1/metrics/fees/daily?days=30"
 
 # Get daily fee burn with per-validator breakdown
 curl "https://api.l1beat.io/api/v1/metrics/fees/daily?subnet_id=2ABC...xyz&validators=true&days=30"

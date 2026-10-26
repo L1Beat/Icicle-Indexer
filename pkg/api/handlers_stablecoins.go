@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/hex"
 	"math/big"
 	"net/http"
@@ -46,14 +47,24 @@ type Stablecoin struct {
 // @Failure 500 {object} ErrorResponse
 // @Router /api/v1/data/evm/{chainId}/stablecoins [get]
 func (s *Server) handleListStablecoins(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-
 	chainID, err := getChainIDFromPath(r)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid chain_id")
 		return
 	}
 
+	out, err := s.stablecoins.get(r.Context(), chainID, s.loadStablecoins)
+	if err != nil {
+		writeInternalError(w, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, Response{Data: out})
+}
+
+// loadStablecoins runs the registry, supply and 24h volume queries. Together
+// they take ~8s (measured 2026-10-26), so the handler serves them through
+// stablecoinCache rather than per request.
+func (s *Server) loadStablecoins(ctx context.Context, chainID uint32) ([]Stablecoin, error) {
 	registryQuery := `
 		SELECT token, symbol, name, decimals, peg, issuer, bridged, doublecounted
 		FROM stablecoins FINAL
@@ -61,8 +72,7 @@ func (s *Server) handleListStablecoins(w http.ResponseWriter, r *http.Request) {
 	`
 	rows, err := s.conn.Query(ctx, registryQuery, chainID)
 	if err != nil {
-		writeInternalError(w, err.Error())
-		return
+		return nil, err
 	}
 	defer rows.Close()
 
@@ -75,21 +85,18 @@ func (s *Server) handleListStablecoins(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var e entry
 		if err := rows.Scan(&e.tokenBytes, &e.Symbol, &e.Name, &e.Decimals, &e.Peg, &e.Issuer, &e.Bridged, &e.Doublecounted); err != nil {
-			writeInternalError(w, err.Error())
-			return
+			return nil, err
 		}
 		e.Token = "0x" + hex.EncodeToString(e.tokenBytes)
 		byToken[e.Token] = &e
 		ordered = append(ordered, &e)
 	}
 	if err := rows.Err(); err != nil {
-		writeInternalError(w, err.Error())
-		return
+		return nil, err
 	}
 
 	if len(ordered) == 0 {
-		writeJSON(w, http.StatusOK, Response{Data: []Stablecoin{}})
-		return
+		return []Stablecoin{}, nil
 	}
 
 	supplyQuery := `
@@ -108,8 +115,7 @@ func (s *Server) handleListStablecoins(w http.ResponseWriter, r *http.Request) {
 	`
 	supplyRows, err := s.conn.Query(ctx, supplyQuery, chainID, chainID, chainID)
 	if err != nil {
-		writeInternalError(w, err.Error())
-		return
+		return nil, err
 	}
 	defer supplyRows.Close()
 
@@ -120,8 +126,7 @@ func (s *Server) handleListStablecoins(w http.ResponseWriter, r *http.Request) {
 			holders    uint64
 		)
 		if err := supplyRows.Scan(&tokenBytes, &supply, &holders); err != nil {
-			writeInternalError(w, err.Error())
-			return
+			return nil, err
 		}
 		key := "0x" + hex.EncodeToString(tokenBytes)
 		if e, ok := byToken[key]; ok {
@@ -130,8 +135,7 @@ func (s *Server) handleListStablecoins(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := supplyRows.Err(); err != nil {
-		writeInternalError(w, err.Error())
-		return
+		return nil, err
 	}
 
 	volumeQuery := `
@@ -149,8 +153,7 @@ func (s *Server) handleListStablecoins(w http.ResponseWriter, r *http.Request) {
 	`
 	volRows, err := s.conn.Query(ctx, volumeQuery, chainID, chainID)
 	if err != nil {
-		writeInternalError(w, err.Error())
-		return
+		return nil, err
 	}
 	defer volRows.Close()
 
@@ -161,8 +164,7 @@ func (s *Server) handleListStablecoins(w http.ResponseWriter, r *http.Request) {
 			transfers24h uint64
 		)
 		if err := volRows.Scan(&tokenBytes, &volume24h, &transfers24h); err != nil {
-			writeInternalError(w, err.Error())
-			return
+			return nil, err
 		}
 		key := "0x" + hex.EncodeToString(tokenBytes)
 		if e, ok := byToken[key]; ok {
@@ -171,8 +173,7 @@ func (s *Server) handleListStablecoins(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := volRows.Err(); err != nil {
-		writeInternalError(w, err.Error())
-		return
+		return nil, err
 	}
 
 	sort.Slice(ordered, func(i, j int) bool {
@@ -192,7 +193,7 @@ func (s *Server) handleListStablecoins(w http.ResponseWriter, r *http.Request) {
 		out = append(out, e.Stablecoin)
 	}
 
-	writeJSON(w, http.StatusOK, Response{Data: out})
+	return out, nil
 }
 
 type StablecoinMetricDataPoint struct {
