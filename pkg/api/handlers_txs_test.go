@@ -187,10 +187,11 @@ func TestHandleAddressTxs_DatabaseError(t *testing.T) {
 func TestHandleAddressTxs_Pagination(t *testing.T) {
 	mock := &MockConn{
 		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
-			// UNION ALL args: chainID, addrHex, innerLimit, chainID, addrHex, addrHex, innerLimit, fetchLimit, offset
-			require.Len(t, args, 9)
-			assert.Equal(t, 11, args[7]) // fetchLimit = limit+1
-			assert.Equal(t, 20, args[8])
+			// args: chainID, addrHex, fetchLimit, offset
+			require.Len(t, args, 4)
+			assert.Contains(t, query, "FROM address_txs")
+			assert.Equal(t, 11, args[2]) // fetchLimit = limit+1
+			assert.Equal(t, 20, args[3])
 			return NewMockRows([]string{"chain_id", "hash", "block_number", "block_time", "transaction_index", "from", "to", "value", "gas_limit", "gas_price", "gas_used", "success", "type"}, [][]interface{}{}), nil
 		},
 	}
@@ -210,4 +211,60 @@ func TestHandleListTxs_MethodNotAllowed(t *testing.T) {
 
 	w := MakeRequest(t, server, "POST", "/api/v1/data/evm/43114/txs")
 	require.Equal(t, http.StatusMethodNotAllowed, w.Code)
+}
+
+// The address lookup reads address_txs ordered by its whole sorting key, so
+// ClickHouse reads newest-first and stops after one page.
+func TestHandleAddressTxs_ReadsLookupInKeyOrder(t *testing.T) {
+	var gotQuery string
+	var gotArgs []interface{}
+	mock := &MockConn{QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
+		gotQuery, gotArgs = query, args
+		return NewMockRows(nil, nil), nil
+	}}
+	server := NewTestServer(mock)
+
+	w := MakeRequest(t, server, "GET", "/api/v1/data/evm/43114/address/0x742d35Cc6634C0532925a3b844Bc9e7595f0A521/txs?limit=10&cursor=500:3")
+	AssertJSONResponse(t, w, http.StatusOK)
+	assert.Contains(t, gotQuery, "FROM address_txs")
+	assert.Contains(t, gotQuery, "ORDER BY chain_id DESC, address DESC, block_number DESC, transaction_index DESC")
+	assert.Contains(t, gotQuery, "(block_number, transaction_index) < (?, ?)")
+	assert.NotContains(t, gotQuery, "raw_txs")
+	assert.Equal(t, []interface{}{uint32(43114), "742d35cc6634c0532925a3b844bc9e7595f0a521", uint64(500), uint16(3), 11, 0}, gotArgs)
+}
+
+// Internal txs page by (block, tx index, trace position): next_cursor carries
+// all three, so a page ending inside a tx resumes at its next trace.
+func TestHandleAddressInternalTxs_TraceCursor(t *testing.T) {
+	var gotQuery string
+	var gotArgs []interface{}
+	from := [20]byte{1}
+	mock := &MockConn{QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
+		gotQuery, gotArgs = query, args
+		row := func(trace []uint16) []interface{} {
+			return []interface{}{[32]byte{9}, uint32(500), time.Now(), uint16(3), trace, from, []byte{}, *big.NewInt(1), uint32(0), "CALL", true}
+		}
+		return NewMockRows(nil, [][]interface{}{row([]uint16{0, 1}), row([]uint16{0})}), nil
+	}}
+	server := NewTestServer(mock)
+	base := "/api/v1/data/evm/43114/address/0x742d35Cc6634C0532925a3b844Bc9e7595f0A521/internal-txs?limit=1"
+
+	w := MakeRequest(t, server, "GET", base)
+	AssertJSONResponse(t, w, http.StatusOK)
+	assert.Contains(t, gotQuery, "FROM address_traces")
+	assert.Contains(t, gotQuery, "trace_address DESC")
+	assert.Contains(t, w.Body.String(), `"next_cursor":"500:3:0.1"`)
+
+	MakeRequest(t, server, "GET", base+"&cursor=500:3:0.1")
+	assert.Contains(t, gotQuery, "(block_number, transaction_index, trace_address) < (?, ?, ?)")
+	assert.Equal(t, []interface{}{uint32(43114), "742d35cc6634c0532925a3b844bc9e7595f0a521", uint32(500), uint16(3), []uint16{0, 1}, 2, 0}, gotArgs)
+
+	// A top-level call has an empty trace position.
+	MakeRequest(t, server, "GET", base+"&cursor=500:3:")
+	assert.Equal(t, []uint16{}, gotArgs[4])
+
+	// The old <block>:<tx_index> cursor still works.
+	MakeRequest(t, server, "GET", base+"&cursor=500:3")
+	assert.Contains(t, gotQuery, "(block_number, transaction_index) < (?, ?)")
+	assert.Equal(t, []interface{}{uint32(43114), "742d35cc6634c0532925a3b844bc9e7595f0a521", uint32(500), uint16(3), 2, 0}, gotArgs)
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
@@ -49,6 +50,12 @@ WHERE (value > 0 OR call_type IN ('CREATE', 'CREATE2'))`},
 // interrupted midway is copied again; ReplacingMergeTree merges the duplicates.
 // Runs alongside the live indexer.
 func RunAddressBackfill(ctx context.Context, opts AddressBackfillOptions) {
+	// An INSERT ... SELECT sends nothing back until it finishes, so a chunk on
+	// busy history outlasts the client's default 120s read timeout (blocks 39M+
+	// on C-Chain). Raise it unless the operator set one.
+	if os.Getenv("CH_READ_TIMEOUT_SEC") == "" {
+		os.Setenv("CH_READ_TIMEOUT_SEC", "3600")
+	}
 	conn, err := chwrapper.Connect()
 	if err != nil {
 		log.Fatalf("Failed to connect to ClickHouse: %v", err)

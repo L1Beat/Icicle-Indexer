@@ -599,57 +599,27 @@ func (s *Server) handleAddressTxs(w http.ResponseWriter, r *http.Request) {
 
 	fetchLimit := limit + 1
 
-	var query string
-	var args []interface{}
-
+	// address_txs has one row per (address, tx), sorted by address, so a page
+	// is one short read from the newest end (see raw_tables.sql). The ORDER BY
+	// spells out the whole sorting key so ClickHouse reads in order.
+	where := "chain_id = ? AND address = unhex(?)"
+	args := []interface{}{chainID, addrHex}
+	queryOffset := offset
 	if cursor != nil && cursor.HasTxIndex {
-		// Cursor-based: no offset needed, more efficient UNION ALL
-		query = `
-			SELECT chain_id, hash, block_number, block_time, transaction_index,
-				from, to, value, gas_limit, gas_price, gas_used, success, type, selector, input_len
-			FROM (
-				SELECT ` + txSelectCols + `
-				FROM raw_txs WHERE chain_id = ? AND from = unhex(?)
-				  AND (block_number, transaction_index) < (?, ?)
-				ORDER BY block_number DESC, transaction_index DESC
-				LIMIT ?
-				UNION ALL
-				SELECT ` + txSelectCols + `
-				FROM raw_txs WHERE chain_id = ? AND to = unhex(?) AND from != unhex(?)
-				  AND (block_number, transaction_index) < (?, ?)
-				ORDER BY block_number DESC, transaction_index DESC
-				LIMIT ?
-			)
-			ORDER BY block_number DESC, transaction_index DESC
-			LIMIT ?
-		`
-		args = []interface{}{
-			chainID, addrHex, cursor.BlockNumber, cursor.TxIndex, fetchLimit,
-			chainID, addrHex, addrHex, cursor.BlockNumber, cursor.TxIndex, fetchLimit,
-			fetchLimit,
-		}
-	} else {
-		// Offset-based
-		innerLimit := fetchLimit + offset
-		query = `
-			SELECT chain_id, hash, block_number, block_time, transaction_index,
-				from, to, value, gas_limit, gas_price, gas_used, success, type, selector, input_len
-			FROM (
-				SELECT ` + txSelectCols + `
-				FROM raw_txs WHERE chain_id = ? AND from = unhex(?)
-				ORDER BY block_number DESC, transaction_index DESC
-				LIMIT ?
-				UNION ALL
-				SELECT ` + txSelectCols + `
-				FROM raw_txs WHERE chain_id = ? AND to = unhex(?) AND from != unhex(?)
-				ORDER BY block_number DESC, transaction_index DESC
-				LIMIT ?
-			)
-			ORDER BY block_number DESC, transaction_index DESC
-			LIMIT ? OFFSET ?
-		`
-		args = []interface{}{chainID, addrHex, innerLimit, chainID, addrHex, addrHex, innerLimit, fetchLimit, offset}
+		where += " AND (block_number, transaction_index) < (?, ?)"
+		args = append(args, cursor.BlockNumber, cursor.TxIndex)
+		queryOffset = 0
 	}
+	query := `
+		SELECT chain_id, hash, block_number, block_time, transaction_index,
+			from, to, value, gas_limit, gas_price, gas_used, success, type,
+			selector, toUInt64(input_len) AS input_len
+		FROM address_txs
+		WHERE ` + where + `
+		ORDER BY chain_id DESC, address DESC, block_number DESC, transaction_index DESC
+		LIMIT ? OFFSET ?
+	`
+	args = append(args, fetchLimit, queryOffset)
 
 	rows, err := s.conn.Query(ctx, query, args...)
 	if err != nil {
@@ -686,12 +656,8 @@ func (s *Server) handleAddressTxs(w http.ResponseWriter, r *http.Request) {
 	if wantCount {
 		var total int64
 		_ = s.conn.QueryRow(ctx, `
-			SELECT sum(cnt) FROM (
-				SELECT toInt64(count()) as cnt FROM raw_txs WHERE chain_id = ? AND from = unhex(?)
-				UNION ALL
-				SELECT toInt64(count()) as cnt FROM raw_txs WHERE chain_id = ? AND to = unhex(?) AND from != unhex(?)
-			)
-		`, chainID, addrHex, chainID, addrHex, addrHex).Scan(&total)
+			SELECT toInt64(count()) FROM address_txs WHERE chain_id = ? AND address = unhex(?)
+		`, chainID, addrHex).Scan(&total)
 		meta.Total = total
 	}
 
@@ -699,6 +665,67 @@ func (s *Server) handleAddressTxs(w http.ResponseWriter, r *http.Request) {
 		Data: s.finishTxList(ctx, chainID, txs, inputLens, includeTransfers, "0x"+addrHex),
 		Meta: meta,
 	})
+}
+
+// traceCursor is the keyset cursor for an address's internal transactions,
+// ordered by (block, tx index, trace position) descending. It is written as
+// <block>:<tx_index>:<trace position joined by ".">, with an empty position
+// for a tx's top-level call. The old <block>:<tx_index> form still parses and
+// resumes before that whole tx.
+type traceCursor struct {
+	Block    uint32
+	TxIndex  uint16
+	Trace    []uint16
+	HasTrace bool
+}
+
+func getTraceCursor(r *http.Request) *traceCursor {
+	raw := r.URL.Query().Get("cursor")
+	if raw == "" {
+		return nil
+	}
+	parts := strings.SplitN(raw, ":", 3)
+	if len(parts) < 2 {
+		return nil
+	}
+	bn, err := strconv.ParseUint(parts[0], 10, 32)
+	if err != nil {
+		return nil
+	}
+	idx, err := strconv.ParseUint(parts[1], 10, 16)
+	if err != nil {
+		return nil
+	}
+	c := &traceCursor{Block: uint32(bn), TxIndex: uint16(idx), Trace: []uint16{}}
+	if len(parts) == 3 {
+		c.HasTrace = true
+		if parts[2] != "" {
+			for _, p := range strings.Split(parts[2], ".") {
+				v, err := strconv.ParseUint(p, 10, 16)
+				if err != nil {
+					return nil
+				}
+				c.Trace = append(c.Trace, uint16(v))
+			}
+		}
+	}
+	return c
+}
+
+// condition returns the WHERE fragment selecting rows after the cursor.
+func (c *traceCursor) condition() (string, []interface{}) {
+	if !c.HasTrace {
+		return "(block_number, transaction_index) < (?, ?)", []interface{}{c.Block, c.TxIndex}
+	}
+	return "(block_number, transaction_index, trace_address) < (?, ?, ?)", []interface{}{c.Block, c.TxIndex, c.Trace}
+}
+
+func (c traceCursor) String() string {
+	parts := make([]string, len(c.Trace))
+	for i, v := range c.Trace {
+		parts[i] = strconv.Itoa(int(v))
+	}
+	return fmt.Sprintf("%d:%d:%s", c.Block, c.TxIndex, strings.Join(parts, "."))
 }
 
 // handleAddressInternalTxs returns internal transactions for an address
@@ -717,7 +744,7 @@ func (s *Server) handleAddressTxs(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAddressInternalTxs(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	limit, offset := getPagination(r)
-	cursor := getCursor(r)
+	cursor := getTraceCursor(r)
 	wantCount := getCountParam(r)
 
 	chainID, err := getChainIDFromPath(r)
@@ -734,67 +761,29 @@ func (s *Server) handleAddressInternalTxs(w http.ResponseWriter, r *http.Request
 
 	fetchLimit := limit + 1
 
-	var query string
-	var args []interface{}
-
-	if cursor != nil && cursor.HasTxIndex {
-		query = `
-			SELECT tx_hash, block_number, block_time, trace_address,
-				from, to, value, gas_used, call_type, tx_success
-			FROM (
-				SELECT tx_hash, block_number, block_time, trace_address, transaction_index,
-					from, to, value, gas_used, call_type, tx_success
-				FROM raw_traces
-				WHERE chain_id = ? AND from = unhex(?)
-				  AND (value > 0 OR call_type IN ('CREATE', 'CREATE2'))
-				  AND (block_number, transaction_index) < (?, ?)
-				ORDER BY block_number DESC, transaction_index DESC
-				LIMIT ?
-				UNION ALL
-				SELECT tx_hash, block_number, block_time, trace_address, transaction_index,
-					from, to, value, gas_used, call_type, tx_success
-				FROM raw_traces
-				WHERE chain_id = ? AND to = unhex(?) AND from != unhex(?)
-				  AND (value > 0 OR call_type IN ('CREATE', 'CREATE2'))
-				  AND (block_number, transaction_index) < (?, ?)
-				ORDER BY block_number DESC, transaction_index DESC
-				LIMIT ?
-			)
-			ORDER BY block_number DESC, transaction_index DESC
-			LIMIT ?
-		`
-		args = []interface{}{
-			chainID, addrHex, cursor.BlockNumber, cursor.TxIndex, fetchLimit,
-			chainID, addrHex, addrHex, cursor.BlockNumber, cursor.TxIndex, fetchLimit,
-			fetchLimit,
-		}
-	} else {
-		innerLimit := fetchLimit + offset
-		query = `
-			SELECT tx_hash, block_number, block_time, trace_address,
-				from, to, value, gas_used, call_type, tx_success
-			FROM (
-				SELECT tx_hash, block_number, block_time, trace_address, transaction_index,
-					from, to, value, gas_used, call_type, tx_success
-				FROM raw_traces
-				WHERE chain_id = ? AND from = unhex(?)
-				  AND (value > 0 OR call_type IN ('CREATE', 'CREATE2'))
-				ORDER BY block_number DESC, transaction_index DESC
-				LIMIT ?
-				UNION ALL
-				SELECT tx_hash, block_number, block_time, trace_address, transaction_index,
-					from, to, value, gas_used, call_type, tx_success
-				FROM raw_traces
-				WHERE chain_id = ? AND to = unhex(?) AND from != unhex(?)
-				  AND (value > 0 OR call_type IN ('CREATE', 'CREATE2'))
-				ORDER BY block_number DESC, transaction_index DESC
-				LIMIT ?
-			)
-			ORDER BY block_number DESC, transaction_index DESC
-			LIMIT ? OFFSET ?
-		`
-		args = []interface{}{chainID, addrHex, innerLimit, chainID, addrHex, addrHex, innerLimit, fetchLimit, offset}
+	// address_traces has one row per (address, trace) for value transfers and
+	// creations, sorted by address, so a page is one short read from the
+	// newest end (see raw_tables.sql). The ORDER BY spells out the whole
+	// sorting key so ClickHouse reads in order, and trace_address makes it
+	// unique so pages never overlap.
+	where := "chain_id = ? AND address = unhex(?)"
+	args := []interface{}{chainID, addrHex}
+	queryOffset := offset
+	if cursor != nil {
+		cond, cursorArgs := cursor.condition()
+		where += " AND " + cond
+		args = append(args, cursorArgs...)
+		queryOffset = 0
 	}
+	query := `
+		SELECT tx_hash, block_number, block_time, transaction_index, trace_address,
+			from, to, value, gas_used, call_type, tx_success
+		FROM address_traces
+		WHERE ` + where + `
+		ORDER BY chain_id DESC, address DESC, block_number DESC, transaction_index DESC, trace_address DESC
+		LIMIT ? OFFSET ?
+	`
+	args = append(args, fetchLimit, queryOffset)
 
 	rows, err := s.conn.Query(ctx, query, args...)
 	if err != nil {
@@ -804,6 +793,7 @@ func (s *Server) handleAddressInternalTxs(w http.ResponseWriter, r *http.Request
 	defer rows.Close()
 
 	internalTxs := []InternalTransaction{}
+	var positions []traceCursor // each row's sort key, for next_cursor
 	for rows.Next() {
 		var itx InternalTransaction
 		var txHashBytes [32]byte
@@ -812,8 +802,9 @@ func (s *Server) handleAddressInternalTxs(w http.ResponseWriter, r *http.Request
 		var valueBig big.Int
 		var traceAddr []uint16
 
+		var txIndex uint16
 		if err := rows.Scan(
-			&txHashBytes, &itx.BlockNumber, &itx.BlockTime, &traceAddr,
+			&txHashBytes, &itx.BlockNumber, &itx.BlockTime, &txIndex, &traceAddr,
 			&fromBytes, &toBytes, &valueBig, &itx.GasUsed, &itx.CallType, &itx.Success,
 		); err != nil {
 			writeInternalError(w, err.Error())
@@ -835,6 +826,7 @@ func (s *Server) handleAddressInternalTxs(w http.ResponseWriter, r *http.Request
 		itx.TraceIndex = strings.Join(traceStrs, ",")
 
 		internalTxs = append(internalTxs, itx)
+		positions = append(positions, traceCursor{Block: itx.BlockNumber, TxIndex: txIndex, Trace: traceAddr, HasTrace: true})
 	}
 	if err := rows.Err(); err != nil {
 		writeInternalError(w, err.Error())
@@ -845,19 +837,14 @@ func (s *Server) handleAddressInternalTxs(w http.ResponseWriter, r *http.Request
 
 	meta := &Meta{Limit: limit, Offset: offset, HasMore: hasMore}
 	if hasMore && len(internalTxs) > 0 {
-		last := internalTxs[len(internalTxs)-1]
-		meta.NextCursor = cursorBlockTx(last.BlockNumber, 0) // traces don't expose tx_index in result
+		meta.NextCursor = positions[len(internalTxs)-1].String()
 	}
 
 	if wantCount {
 		var total int64
 		_ = s.conn.QueryRow(ctx, `
-			SELECT sum(cnt) FROM (
-				SELECT toInt64(count()) as cnt FROM raw_traces WHERE chain_id = ? AND from = unhex(?) AND (value > 0 OR call_type IN ('CREATE', 'CREATE2'))
-				UNION ALL
-				SELECT toInt64(count()) as cnt FROM raw_traces WHERE chain_id = ? AND to = unhex(?) AND from != unhex(?) AND (value > 0 OR call_type IN ('CREATE', 'CREATE2'))
-			)
-		`, chainID, addrHex, chainID, addrHex, addrHex).Scan(&total)
+			SELECT toInt64(count()) FROM address_traces WHERE chain_id = ? AND address = unhex(?)
+		`, chainID, addrHex).Scan(&total)
 		meta.Total = total
 	}
 

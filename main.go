@@ -317,7 +317,7 @@ func main() {
 	}
 	addressBackfillCmd.Flags().StringSlice("tables", []string{"txs", "traces"}, "Lookup tables to fill: txs, traces")
 	addressBackfillCmd.Flags().Uint32("chain", 0, "EVM chain ID (0 = every indexed chain)")
-	addressBackfillCmd.Flags().Uint32("chunk", 500000, "Blocks per INSERT ... SELECT")
+	addressBackfillCmd.Flags().Uint32("chunk", 250000, "Blocks per INSERT ... SELECT")
 	addressBackfillCmd.Flags().Int("threads", 8, "ClickHouse threads per chunk")
 
 	root.AddCommand(

@@ -104,7 +104,7 @@ Most endpoints also support **cursor-based** pagination, which is more efficient
 
 **Cursor-eligible endpoints:** blocks, transactions, address transactions, address internal transactions, P-Chain transactions, chains, validator deposits.
 
-Treat `next_cursor` as opaque and pass it back unchanged. P-Chain transactions, validator deposits and chains return `<block>:<id>`, so a page that ends partway through a block resumes after its last row. A bare block number is still accepted on those endpoints, but it resumes at the next block and skips the rest of the current one.
+Treat `next_cursor` as opaque and pass it back unchanged. P-Chain transactions, validator deposits and chains return `<block>:<id>`, so a page that ends partway through a block resumes after its last row. A bare block number is still accepted on those endpoints, but it resumes at the next block and skips the rest of the current one. Address internal transactions return `<block>:<tx_index>:<trace position>` for the same reason.
 
 **Offset-only endpoints** (sorted by non-monotonic fields): validators, fee metrics, token balances.
 
@@ -528,6 +528,7 @@ Get internal transactions (traces) for a specific address.
 - Only includes traces with value > 0 or CREATE/CREATE2 types
 - `trace_index` shows the path in the call tree (e.g., "0,1" = first call's second subcall)
 - `to` is `null` for CREATE/CREATE2
+- `next_cursor` is `<block>:<tx_index>:<trace position>` (e.g. `54000000:12:0.1`, with an empty position for a tx's top-level call), so a page that ends inside a transaction resumes at its next trace. The older `<block>:<tx_index>` form is still accepted but resumes before that whole transaction.
 
 ---
 
