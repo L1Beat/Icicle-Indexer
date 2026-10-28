@@ -1723,32 +1723,35 @@ func UpdatePerValidatorFeeStats(ctx context.Context, conn clickhouse.Conn, pchai
 	// We calculate: initial_deposit, total_topups, refund_amount, fees_paid
 	query := `
 		WITH
+		-- Everything is keyed by validation_id, not node_id: a node that
+		-- re-registers gets a new validation, and its old deposits, top-ups
+		-- and refunds must not leak into the new one.
 		-- Get initial deposits from history
 		initial AS (
 			SELECT
-				subnet_id,
-				node_id,
-				initial_balance as initial_deposit
+				validation_id,
+				any(initial_balance) as initial_deposit
 			FROM l1_validator_history FINAL
-			WHERE p_chain_id = ?
+			WHERE p_chain_id = ? AND validation_id != ''
+			GROUP BY validation_id
 		),
-		-- Get top-ups per validator
+		-- Get top-ups per validation
 		topups AS (
 			SELECT
-				subnet_id,
-				node_id,
+				validation_id,
 				sum(amount) as total_topups
 			FROM l1_validator_balance_txs FINAL
-			WHERE p_chain_id = ? AND tx_type = 'IncreaseL1ValidatorBalance'
-			GROUP BY subnet_id, node_id
+			WHERE p_chain_id = ? AND tx_type = 'IncreaseL1ValidatorBalance' AND validation_id != ''
+			GROUP BY validation_id
 		),
 		-- Get refunds per validator (use validation_id to join)
 		refunds AS (
 			SELECT
 				validation_id,
-				refund_amount
-			FROM l1_validator_refunds
+				sum(refund_amount) as refund_amount
+			FROM l1_validator_refunds FINAL
 			WHERE p_chain_id = ?
+			GROUP BY validation_id
 		)
 		SELECT
 			v.subnet_id,
@@ -1764,8 +1767,8 @@ func UpdatePerValidatorFeeStats(ctx context.Context, conn clickhouse.Conn, pchai
 			COALESCE(t.total_topups, 0) as total_topups,
 			COALESCE(rf.refund_amount, 0) as refund_amount
 		FROM l1_validator_state v FINAL
-		LEFT JOIN initial i ON v.subnet_id = i.subnet_id AND v.node_id = i.node_id
-		LEFT JOIN topups t ON v.subnet_id = t.subnet_id AND v.node_id = t.node_id
+		LEFT JOIN initial i ON v.validation_id = i.validation_id
+		LEFT JOIN topups t ON v.validation_id = t.validation_id
 		LEFT JOIN refunds rf ON v.validation_id = rf.validation_id
 		WHERE v.p_chain_id = ?
 		  AND v.subnet_id != '11111111111111111111111111111111LpoYY'
