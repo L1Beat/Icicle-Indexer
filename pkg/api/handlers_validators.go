@@ -205,6 +205,7 @@ func formatWeightDiv(weight, factor *big.Int) string {
 // @Produce json
 // @Param subnet_id query string false "Filter by subnet ID"
 // @Param active query boolean false "Filter by active status (true/false)"
+// @Param node_id query string false "Filter by node ID (all of the node's validations)"
 // @Param limit query int false "Number of results (max 100)" default(20)
 // @Param offset query int false "Pagination offset" default(0)
 // @Success 200 {object} Response{data=[]Validator,meta=Meta}
@@ -220,6 +221,7 @@ func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 
 	subnetID := r.URL.Query().Get("subnet_id")
 	activeOnly := r.URL.Query().Get("active") == "true"
+	nodeID := r.URL.Query().Get("node_id")
 
 	fetchLimit := limit + 1
 
@@ -242,6 +244,10 @@ func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 	}
 	if activeOnly {
 		whereParts = append(whereParts, "v.active = true")
+	}
+	if nodeID != "" {
+		whereParts = append(whereParts, "v.node_id = ?")
+		whereArgs = append(whereArgs, nodeID)
 	}
 
 	whereClause := ""
@@ -396,7 +402,7 @@ func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 
 // handleGetValidator returns a single validator
 // @Summary Get validator by ID
-// @Description Get details for a specific validator by validation ID or node ID. Legacy subnet validators include Primary Network stake and uptime.
+// @Description Get details for a specific validator by validation ID or node ID. A node ID resolves to the node's active validation, else its most recent one. Legacy subnet validators include Primary Network stake and uptime.
 // @Tags Data - Validators
 // @Produce json
 // @Param id path string true "Validation ID or Node ID"
@@ -411,6 +417,9 @@ func (s *Server) handleGetValidator(w http.ResponseWriter, r *http.Request) {
 
 	var v Validator
 
+	// A node ID can match many validations over time (re-registrations, renewed
+	// Primary Network stakes), so prefer an exact validation_id match, then the
+	// active validation, then the most recent one.
 	// If subnet_id is provided, get that specific entry
 	var query string
 	var args []interface{}
@@ -426,9 +435,10 @@ func (s *Server) handleGetValidator(w http.ResponseWriter, r *http.Request) {
 			LEFT JOIN (SELECT * FROM l1_validator_history FINAL) h
 				ON v.validation_id = h.validation_id AND v.subnet_id = h.subnet_id
 			WHERE (v.validation_id = ? OR v.node_id = ?) AND v.subnet_id = ?
+			ORDER BY v.validation_id = ? DESC, v.active DESC, v.start_time DESC, v.validation_id
 			LIMIT 1
 		`
-		args = []interface{}{id, id, subnetID}
+		args = []interface{}{id, id, subnetID, id}
 	} else {
 		query = `
 			SELECT
@@ -441,9 +451,10 @@ func (s *Server) handleGetValidator(w http.ResponseWriter, r *http.Request) {
 			LEFT JOIN (SELECT * FROM l1_validator_history FINAL) h
 				ON v.validation_id = h.validation_id AND v.subnet_id = h.subnet_id
 			WHERE v.validation_id = ? OR v.node_id = ?
+			ORDER BY v.validation_id = ? DESC, v.active DESC, v.start_time DESC, v.validation_id
 			LIMIT 1
 		`
-		args = []interface{}{id, id}
+		args = []interface{}{id, id, id}
 	}
 
 	var endTime time.Time

@@ -434,3 +434,47 @@ func TestValidatorDeposits_CursorResumesWithinBlock(t *testing.T) {
 	assert.Contains(t, gotQuery, "(block_number < ? OR (block_number = ? AND tx_id > ?))")
 	assert.Equal(t, []interface{}{"v1", "v1", uint64(100), uint64(100), "txA", 2}, gotArgs)
 }
+
+// A node can have many validations (re-registrations, renewed Primary Network
+// stakes). A NodeID lookup must pick the active one, else the newest, while an
+// exact validation_id match still wins.
+func TestHandleGetValidator_NodeIDPrefersActiveThenNewest(t *testing.T) {
+	for _, path := range []string{
+		"/api/v1/data/validators/NodeID-AGUTF7pTPysaw8vJzpYwD2WDwn7w59XB8",
+		"/api/v1/data/validators/NodeID-AGUTF7pTPysaw8vJzpYwD2WDwn7w59XB8?subnet_id=subnet123",
+	} {
+		var lookupQuery string
+		var lookupArgs []interface{}
+		mock := &MockConn{
+			QueryRowFunc: func(ctx context.Context, query string, args ...interface{}) driver.Row {
+				if strings.Contains(query, "v.validation_id = ? OR v.node_id = ?") {
+					lookupQuery, lookupArgs = query, args
+				}
+				return &MockRow{err: ErrMockDB}
+			},
+		}
+
+		MakeRequest(t, NewTestServer(mock), "GET", path)
+
+		require.NotEmpty(t, lookupQuery, path)
+		assert.Contains(t, lookupQuery, "ORDER BY v.validation_id = ? DESC, v.active DESC, v.start_time DESC", path)
+		assert.Equal(t, "NodeID-AGUTF7pTPysaw8vJzpYwD2WDwn7w59XB8", lookupArgs[len(lookupArgs)-1], path)
+	}
+}
+
+func TestHandleListValidators_FilterByNodeID(t *testing.T) {
+	mock := &MockConn{
+		QueryRowFunc: func(ctx context.Context, query string, args ...interface{}) driver.Row {
+			return &MockRow{err: ErrMockDB}
+		},
+		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
+			require.Contains(t, query, "v.node_id = ?")
+			assert.Equal(t, "NodeID-8su1eeSjb4emswAx453du7ya3Pp8p2wSe", args[0])
+			return NewMockRows(validatorColumns, [][]interface{}{}), nil
+		},
+	}
+
+	w := MakeRequest(t, NewTestServer(mock), "GET", "/api/v1/data/validators?node_id=NodeID-8su1eeSjb4emswAx453du7ya3Pp8p2wSe")
+
+	AssertJSONResponse(t, w, http.StatusOK)
+}

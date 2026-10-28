@@ -1175,6 +1175,7 @@ List validators (L1 and legacy subnet validators).
 |-----------|------|-------------|
 | `subnet_id` | string | Filter by subnet ID (CB58) |
 | `active` | string | Set to `true` for active only |
+| `node_id` | string | Filter by node ID (returns all of the node's validations) |
 | `limit` | int | Results per page |
 | `offset` | int | Pagination offset |
 | `count` | string | Set to `true` to include total count |
@@ -1222,7 +1223,7 @@ List validators (L1 and legacy subnet validators).
 
 ### GET /api/v1/data/validators/{id}
 
-Get detailed validator info by validation ID or node ID.
+Get detailed validator info by validation ID or node ID. A node ID can match several validations over time (re-registrations, renewed stakes); it resolves to the node's active validation, else its most recent one. Use `/validators?node_id=` to list them all.
 
 **Path Parameters:**
 | Parameter | Type | Description |
