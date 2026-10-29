@@ -65,10 +65,10 @@ All origins are allowed (`Access-Control-Allow-Origin: *`). No authentication is
 
 ## Rate Limiting
 
-All endpoints are rate limited to 60 requests/minute per IP (burst of 10) by default.
+All endpoints are rate limited to 180 requests/minute per IP (burst of 30) by default.
 
 Every response carries the current quota (per-IP token bucket):
-- `X-RateLimit-Limit` — burst capacity (10 by default)
+- `X-RateLimit-Limit` — burst capacity (30 by default)
 - `X-RateLimit-Remaining` — tokens left right now
 - `X-RateLimit-Reset` — epoch seconds at which the bucket refills to full
 

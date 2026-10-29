@@ -30,8 +30,8 @@ type APIOptions struct {
 func DefaultAPIOptions() APIOptions {
 	return APIOptions{
 		Port:                     8080,
-		RateLimitPerMin:          60,
-		RateLimitBurst:           10,
+		RateLimitPerMin:          180,
+		RateLimitBurst:           30,
 		ExemptLoopback:           true,
 		MetricsToken:             os.Getenv("ICICLE_METRICS_TOKEN"),
 		WSMaxConnections:         1000,

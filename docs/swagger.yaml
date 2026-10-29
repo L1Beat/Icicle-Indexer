@@ -457,7 +457,7 @@ info:
     - **Metrics API** (`/api/v1/metrics/*`): Fee statistics, chain metrics, time series data
 
     ## Rate Limiting
-    All endpoints are rate limited to 60 requests/minute per IP with a burst of 10.
+    All endpoints are rate limited to 180 requests/minute per IP with a burst of 30.
   title: Icicle API
   version: "1.0"
 paths:

@@ -24,7 +24,7 @@ import (
 // @description - **Metrics API** (`/api/v1/metrics/*`): Fee statistics, chain metrics, time series data
 // @description
 // @description ## Rate Limiting
-// @description All endpoints are rate limited to 60 requests/minute per IP (burst of 10) by default. Configurable via CLI flags.
+// @description All endpoints are rate limited to 180 requests/minute per IP (burst of 30) by default. Configurable via CLI flags.
 
 // @host localhost:8080
 // @BasePath /

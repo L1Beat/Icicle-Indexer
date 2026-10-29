@@ -86,8 +86,8 @@ func main() {
 		},
 	}
 	apiCmd.Flags().Int("port", 8080, "Port to listen on")
-	apiCmd.Flags().Int("rate-limit", 60, "Rate limit requests per minute per IP")
-	apiCmd.Flags().Int("burst", 10, "Rate limit burst size")
+	apiCmd.Flags().Int("rate-limit", 180, "Rate limit requests per minute per IP")
+	apiCmd.Flags().Int("burst", 30, "Rate limit burst size")
 	apiCmd.Flags().String("trusted-proxies", "", "Comma-separated trusted proxy IPs/CIDRs for X-Forwarded-For/X-Real-IP")
 	apiCmd.Flags().Bool("exempt-loopback", true, "Skip rate limiting for same-box direct callers (loopback peer, no forwarding header)")
 	apiCmd.Flags().String("metrics-token", os.Getenv("ICICLE_METRICS_TOKEN"), "Bearer token required to enable and access /metrics")

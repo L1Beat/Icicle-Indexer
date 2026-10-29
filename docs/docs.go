@@ -1931,7 +1931,7 @@ var SwaggerInfo = &swag.Spec{
 	BasePath:         "/",
 	Schemes:          []string{"http", "https"},
 	Title:            "Icicle API",
-	Description:      "Avalanche P-Chain and EVM Indexer API\n\n## Overview\nThis API provides access to indexed Avalanche blockchain data including:\n- **Data API** (`/api/v1/data/*`): Blocks, transactions, subnets, validators, P-chain data\n- **Metrics API** (`/api/v1/metrics/*`): Fee statistics, chain metrics, time series data\n\n## Rate Limiting\nAll endpoints are rate limited to 60 requests/minute per IP with a burst of 10.",
+	Description:      "Avalanche P-Chain and EVM Indexer API\n\n## Overview\nThis API provides access to indexed Avalanche blockchain data including:\n- **Data API** (`/api/v1/data/*`): Blocks, transactions, subnets, validators, P-chain data\n- **Metrics API** (`/api/v1/metrics/*`): Fee statistics, chain metrics, time series data\n\n## Rate Limiting\nAll endpoints are rate limited to 180 requests/minute per IP with a burst of 30.",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",

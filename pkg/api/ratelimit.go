@@ -28,8 +28,8 @@ type RateLimitConfig struct {
 // DefaultRateLimitConfig returns sensible defaults
 func DefaultRateLimitConfig() RateLimitConfig {
 	return RateLimitConfig{
-		RequestsPerMinute: 60,
-		BurstSize:         10,
+		RequestsPerMinute: 180,
+		BurstSize:         30,
 		CleanupInterval:   5 * time.Minute,
 		ExemptLoopback:    true,
 	}
