@@ -1086,7 +1086,9 @@ List all blockchains with enriched subnet, L1 registry, and validator data. This
       "active_validators": 8,
       "total_staked": 5000000,
       "total_staked_tokens": "5000",
-      "total_fees_paid": 1500000000000
+      "total_fees_paid": 1500000000000,
+      "staking_model": "pos",
+      "staked_token": "MTK"
     }
   ],
   "meta": {
@@ -1102,7 +1104,8 @@ List all blockchains with enriched subnet, L1 registry, and validator data. This
 - All registry fields (`name`, `description`, `logo_url`, `website_url`, `evm_chain_id`, `categories`, `socials`, `rpc_url`, `explorer_url`, `sybil_resistance_type`, `network_token`, `network`) are optional — only present if registry metadata exists
 - `converted_block`, `converted_time` only present for L1-converted subnets
 - `validator_count`, `active_validators`, `total_staked`, `total_fees_paid` only present for L1 chains
-- `total_staked` is the raw sum of validator weights; `total_staked_tokens` is that sum converted to **whole tokens** (decimal string), present only for Proof-of-Stake chains with a configured staking factor. Pair it with `network_token.symbol` for display.
+- `staking_model` — always present: `pos`, `poa` or `unknown`. Taken from the on-chain ValidatorManager type, else the registry's `sybil_resistance_type`, else `pos` when a staking factor is configured. Primary Network chains are `pos`. `staked_token` is the staked token's symbol, present only for `pos`.
+- `total_staked` is the raw sum of **active** validator weights (meaningless for `poa`, hide it there); `total_staked_tokens` is that sum converted to **whole tokens** (decimal string), present only for Proof-of-Stake chains with a configured staking factor. Pair it with `network_token.symbol` for display.
 - `socials` is an array of `{"name": string, "url": string}` objects
 - `network_token` includes native token info when available
 
@@ -1176,6 +1179,8 @@ List validators (L1 and legacy subnet validators).
 | `subnet_id` | string | Filter by subnet ID (CB58) |
 | `active` | string | Set to `true` for active only |
 | `node_id` | string | Filter by node ID (returns all of the node's validations) |
+| `sort` | string | `weight` (default), `total_stake`, `total_delegated`, `delegator_count`, `delegation_fee_percent`, `end_time` |
+| `order` | string | `desc` (default) or `asc` |
 | `limit` | int | Results per page |
 | `offset` | int | Pagination offset |
 | `count` | string | Set to `true` to include total count |
@@ -1218,6 +1223,8 @@ List validators (L1 and legacy subnet validators).
 - `balance`, `initial_deposit`, `total_topups`, `refund_amount`, `fees_paid` — only present for L1 validators
 - Offset-only pagination (no cursor support)
 - Legacy subnet validators may include `primary_stake` and `primary_uptime` from Primary Network
+- Active Primary Network validators also carry `delegation_fee_percent`, `delegator_count`, `total_delegated` and `total_stake` (own + delegated, nAVAX), refreshed from `platform.getCurrentValidators` every 5 minutes. `delegator_count` counts active delegations, not unique delegator addresses.
+- `sort`/`order` apply to non-legacy listings. Legacy subnet listings sort by Primary Network stake.
 
 ---
 
@@ -1278,8 +1285,8 @@ Get detailed validator info by validation ID or node ID. A node ID can match sev
 - `days_remaining` — Days until balance runs out at 512 nAVAX/sec burn rate
 - `estimated_days_left` — Estimated days remaining based on current balance
 - `daily_fee_burn` — Daily fee burn in nAVAX (512 nAVAX/sec = 44,236,800 nAVAX/day per validator)
-- `network_share_percent` — This validator's weight as % of subnet total
-- `delegation_fee_percent`, `delegator_count`, `total_delegated`, `total_stake` — Primary Network delegation data (only for Primary Network validators)
+- `network_share_percent` — This validator's total stake (own + delegated) as % of the Primary Network's active total (active Primary Network validators only)
+- `delegation_fee_percent`, `delegator_count`, `total_delegated`, `total_stake` — also in the list endpoint (active Primary Network validators)
 
 ---
 
@@ -1503,6 +1510,114 @@ Per-table on-disk size (bytes) and row counts for the indexer's ClickHouse store
   ]
 }
 ```
+
+---
+
+## Metrics API - Staking
+
+Primary Network staking. Validator and delegation numbers are refreshed from `platform.getCurrentValidators` every 5 minutes. All amounts are **nAVAX as decimal strings** (they exceed JS safe integers).
+
+### GET /api/v1/metrics/staking
+
+Staking overview in one request. Cached for 1 minute.
+
+**Response:**
+```json
+{
+  "data": {
+    "as_of": "2026-10-30T12:00:00Z",
+    "validator_count": 568,
+    "delegation_count": 34912,
+    "own_stake": "160695147139964970",
+    "delegated_stake": "42287944243437480",
+    "total_stake": "202983091383402450",
+    "total_supply": "475774638238261125",
+    "staked_supply_percent": 42.66,
+    "delegation_fee": {
+      "median_percent": 4.74,
+      "histogram": [
+        { "label": "2%", "min_percent": 2, "max_percent": 2, "validator_count": 262, "total_stake": "..." },
+        { "label": "2-5%", "min_percent": 2, "max_percent": 5, "validator_count": 74, "total_stake": "..." },
+        { "label": "5-10%", "min_percent": 5, "max_percent": 10, "validator_count": 10, "total_stake": "..." },
+        { "label": "10-20%", "min_percent": 10, "max_percent": 20, "validator_count": 82, "total_stake": "..." },
+        { "label": "20%+", "min_percent": 20, "max_percent": null, "validator_count": 140, "total_stake": "..." }
+      ]
+    },
+    "concentration": {
+      "top10_percent": 14.74,
+      "top50_percent": 54.9,
+      "top100_percent": 77.17,
+      "nakamoto_33": 25,
+      "nakamoto_50": 44
+    }
+  }
+}
+```
+
+**Notes:**
+- `delegation_count` counts active delegations, not unique delegator addresses
+- `total_supply` is AVAX **total** supply from `platform.getCurrentSupply` (not circulating). It and `staked_supply_percent` are null until the first daily snapshot exists
+- Histogram buckets cover `(min_percent, max_percent]`; the first is exactly the 2% protocol minimum, the last is open-ended
+- Concentration and Nakamoto use total stake (own + delegated); Nakamoto is the fewest validators holding **more than** 33% / 50%
+
+### GET /api/v1/metrics/staking/unlocks
+
+Stake whose lock ends in each of the next N weeks (weeks start Monday 00:00 UTC; the first is the current week). Cached for 5 minutes.
+
+**Query Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `weeks` | int | Weeks ahead, 1-53 (default 12) |
+
+**Response:**
+```json
+{
+  "data": [
+    {
+      "week_start": "2026-10-26T00:00:00Z",
+      "validator_stake": "1200000000000000",
+      "delegated_stake": "350000000000000",
+      "validator_count": 9,
+      "delegation_count": 412
+    }
+  ]
+}
+```
+
+Delegations come from still-running `AddDelegator` / `AddPermissionlessDelegator` transactions.
+
+### GET /api/v1/metrics/staking/timeseries
+
+Daily staking snapshots (last sample of each UTC day), oldest first. History starts 2026-10-30.
+
+**Query Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `subnet_id` | string | Subnet ID (default: Primary Network) |
+| `days` | int | Days of history, 1-3650 (default 365) |
+
+**Response:**
+```json
+{
+  "data": [
+    {
+      "date": "2026-10-30",
+      "validator_count": 568,
+      "delegation_count": 34912,
+      "own_stake": "160695147139964970",
+      "delegated_stake": "42287944243437480",
+      "total_stake": "202983091383402450",
+      "total_supply": "475774638238261125",
+      "staked_tokens": "202983091.38340245",
+      "staked_token": "AVAX"
+    }
+  ]
+}
+```
+
+**Notes:**
+- For L1s, `own_stake` is the raw validator weight sum. `delegation_count`, `delegated_stake` are 0 and `total_supply` is omitted
+- `staked_tokens` / `staked_token` are present only for PoS chains with a configured staking factor (and the Primary Network)
 
 ---
 
@@ -1752,6 +1867,9 @@ ws.onmessage = (event) => {
 | GET | `/api/v1/metrics/evm/{chainId}/timeseries/{metric}` | Get time series data |
 | GET | `/api/v1/metrics/evm/{chainId}/fees/burned` | Tx fee burn (total/base/tip) |
 | GET | `/api/v1/metrics/burned/total` | Network-wide AVAX burned |
+| GET | `/api/v1/metrics/staking` | Primary Network staking summary |
+| GET | `/api/v1/metrics/staking/unlocks` | Weekly stake unlock schedule |
+| GET | `/api/v1/metrics/staking/timeseries` | Daily staking snapshots |
 | WS | `/ws/blocks/{chainId}` | Real-time block stream |
 
 ---

@@ -54,7 +54,7 @@ type Validator struct {
 	DailyFeeBurn        *uint64  `json:"daily_fee_burn,omitempty"`
 	NetworkSharePercent *float64 `json:"network_share_percent,omitempty"`
 
-	// Delegation data (Primary Network validators, detail endpoint only)
+	// Delegation data (active Primary Network validators, from getCurrentValidators)
 	DelegationFeePercent *float64 `json:"delegation_fee_percent,omitempty"`
 	DelegatorCount       *uint64  `json:"delegator_count,omitempty"`
 	TotalDelegated       *uint64  `json:"total_delegated,omitempty"`
@@ -198,6 +198,50 @@ func formatWeightDiv(weight, factor *big.Int) string {
 	return q.String() + "." + s
 }
 
+// validatorSortKeys maps the list endpoint's sort parameter to SQL. Delegation
+// keys are only non-zero on active Primary Network rows.
+var validatorSortKeys = map[string]string{
+	"weight":                 "v.weight",
+	"total_stake":            "v.weight + v.delegated_stake",
+	"total_delegated":        "v.delegated_stake",
+	"delegator_count":        "v.delegator_count",
+	"delegation_fee_percent": "v.delegation_fee_percent",
+	"end_time":               "v.end_time",
+}
+
+// validatorSortClause builds the ORDER BY for the validator list from
+// whitelisted keys, with validation_id as a stable tiebreaker.
+func validatorSortClause(sortKey, order string) (string, bool) {
+	if sortKey == "" {
+		sortKey = "weight"
+	}
+	expr, ok := validatorSortKeys[sortKey]
+	if !ok {
+		return "", false
+	}
+	dir := "DESC"
+	switch strings.ToLower(order) {
+	case "", "desc":
+	case "asc":
+		dir = "ASC"
+	default:
+		return "", false
+	}
+	return expr + " " + dir + ", v.validation_id", true
+}
+
+// setDelegation fills the delegation fields of an active Primary Network
+// validator from the l1_validator_state delegation columns.
+func setDelegation(v *Validator, count uint32, delegated uint64, feePercent float64) {
+	c := uint64(count)
+	fee := feePercent
+	total := v.Weight + delegated
+	v.DelegatorCount = &c
+	v.TotalDelegated = &delegated
+	v.DelegationFeePercent = &fee
+	v.TotalStake = &total
+}
+
 // handleListValidators returns a paginated list of validators
 // @Summary List validators
 // @Description Get a paginated list of validators with optional filtering. Legacy subnet validators are enriched with Primary Network stake and uptime.
@@ -206,6 +250,8 @@ func formatWeightDiv(weight, factor *big.Int) string {
 // @Param subnet_id query string false "Filter by subnet ID"
 // @Param active query boolean false "Filter by active status (true/false)"
 // @Param node_id query string false "Filter by node ID (all of the node's validations)"
+// @Param sort query string false "Sort key: weight, total_stake, total_delegated, delegator_count, delegation_fee_percent, end_time" default(weight)
+// @Param order query string false "Sort order: desc or asc" default(desc)
 // @Param limit query int false "Number of results (max 100)" default(20)
 // @Param offset query int false "Pagination offset" default(0)
 // @Success 200 {object} Response{data=[]Validator,meta=Meta}
@@ -222,6 +268,12 @@ func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 	subnetID := r.URL.Query().Get("subnet_id")
 	activeOnly := r.URL.Query().Get("active") == "true"
 	nodeID := r.URL.Query().Get("node_id")
+
+	orderBy, ok := validatorSortClause(r.URL.Query().Get("sort"), r.URL.Query().Get("order"))
+	if !ok {
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid sort or order")
+		return
+	}
 
 	fetchLimit := limit + 1
 
@@ -266,7 +318,8 @@ func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 				h.created_tx_id, h.created_tx_type, h.created_block, h.created_time,
 				h.bls_public_key, h.remaining_balance_owner,
 				p.weight AS primary_stake,
-				p.uptime_percentage AS primary_uptime
+				p.uptime_percentage AS primary_uptime,
+				v.delegator_count, v.delegated_stake, v.delegation_fee_percent
 			FROM (SELECT * FROM l1_validator_state FINAL) v
 			LEFT JOIN (SELECT * FROM l1_validator_history FINAL) h
 				ON v.validation_id = h.validation_id AND v.subnet_id = h.subnet_id
@@ -288,14 +341,15 @@ func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 				h.created_tx_id, h.created_tx_type, h.created_block, h.created_time,
 				h.bls_public_key, h.remaining_balance_owner,
 				toUInt64(0) AS primary_stake,
-				toFloat64(0) AS primary_uptime
+				toFloat64(0) AS primary_uptime,
+				v.delegator_count, v.delegated_stake, v.delegation_fee_percent
 			FROM (SELECT * FROM l1_validator_state FINAL) v
 			LEFT JOIN (SELECT * FROM l1_validator_history FINAL) h
 				ON v.validation_id = h.validation_id AND v.subnet_id = h.subnet_id
 			%s
-			ORDER BY v.weight DESC, v.validation_id
+			ORDER BY %s
 			LIMIT ? OFFSET ?
-		`, whereClause)
+		`, whereClause, orderBy)
 	}
 	args := append(whereArgs, fetchLimit, offset)
 
@@ -316,6 +370,9 @@ func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 		var createdTime time.Time
 		var primaryStake uint64
 		var primaryUptime float64
+		var delegatorCount uint32
+		var delegatedStake uint64
+		var delegationFee float64
 		if err := rows.Scan(
 			&v.SubnetID, &v.ValidationID, &v.NodeID, &balance, &v.Weight,
 			&v.StartTime, &endTime, &uptimePercentage, &v.Active,
@@ -323,6 +380,7 @@ func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 			&v.TxHash, &v.TxType, &createdBlock, &createdTime,
 			&v.BLSPublicKey, &v.RemainingBalanceOwner,
 			&primaryStake, &primaryUptime,
+			&delegatorCount, &delegatedStake, &delegationFee,
 		); err != nil {
 			writeInternalError(w, err.Error())
 			return
@@ -351,6 +409,9 @@ func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 			v.TotalTopups = &totalTopups
 			v.RefundAmount = &refundAmount
 			v.FeesPaid = &feesPaid
+		}
+		if isPrimaryNetwork && v.Active {
+			setDelegation(&v, delegatorCount, delegatedStake, delegationFee)
 		}
 		validators = append(validators, v)
 	}
@@ -430,7 +491,8 @@ func (s *Server) handleGetValidator(w http.ResponseWriter, r *http.Request) {
 				v.start_time, v.end_time, v.uptime_percentage, v.active,
 				v.initial_deposit, v.total_topups, v.refund_amount, v.fees_paid,
 				h.created_tx_id, h.created_tx_type, h.created_block, h.created_time,
-				h.bls_public_key, h.remaining_balance_owner
+				h.bls_public_key, h.remaining_balance_owner,
+				v.delegator_count, v.delegated_stake, v.delegation_fee_percent
 			FROM (SELECT * FROM l1_validator_state FINAL) v
 			LEFT JOIN (SELECT * FROM l1_validator_history FINAL) h
 				ON v.validation_id = h.validation_id AND v.subnet_id = h.subnet_id
@@ -446,7 +508,8 @@ func (s *Server) handleGetValidator(w http.ResponseWriter, r *http.Request) {
 				v.start_time, v.end_time, v.uptime_percentage, v.active,
 				v.initial_deposit, v.total_topups, v.refund_amount, v.fees_paid,
 				h.created_tx_id, h.created_tx_type, h.created_block, h.created_time,
-				h.bls_public_key, h.remaining_balance_owner
+				h.bls_public_key, h.remaining_balance_owner,
+				v.delegator_count, v.delegated_stake, v.delegation_fee_percent
 			FROM (SELECT * FROM l1_validator_state FINAL) v
 			LEFT JOIN (SELECT * FROM l1_validator_history FINAL) h
 				ON v.validation_id = h.validation_id AND v.subnet_id = h.subnet_id
@@ -462,12 +525,16 @@ func (s *Server) handleGetValidator(w http.ResponseWriter, r *http.Request) {
 	var balance, initialDeposit, totalTopups, refundAmount, feesPaid uint64
 	var createdBlock uint64
 	var createdTime time.Time
+	var delegatorCount uint32
+	var delegatedStake uint64
+	var delegationFee float64
 	err := s.conn.QueryRow(ctx, query, args...).Scan(
 		&v.SubnetID, &v.ValidationID, &v.NodeID, &balance, &v.Weight,
 		&v.StartTime, &endTime, &uptimePercentage, &v.Active,
 		&initialDeposit, &totalTopups, &refundAmount, &feesPaid,
 		&v.TxHash, &v.TxType, &createdBlock, &createdTime,
 		&v.BLSPublicKey, &v.RemainingBalanceOwner,
+		&delegatorCount, &delegatedStake, &delegationFee,
 	)
 
 	if err != nil {
@@ -547,52 +614,23 @@ func (s *Server) handleGetValidator(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Delegation data — query from p_chain_txs for Primary Network validators
+	// Delegation data for Primary Network validators, kept current from
+	// getCurrentValidators by the validator syncer.
 	if v.SubnetID == primaryNetworkSubnetID {
-		// Get delegation fee % from the validator's registration tx
-		var shares uint32
-		err := s.conn.QueryRow(ctx, `
-			SELECT toUInt32OrZero(toString(tx_data.shares))
-			FROM p_chain_txs
-			WHERE tx_type IN ('AddValidator', 'AddPermissionlessValidator')
-			AND toString(tx_data.validator.nodeID) = ?
-			ORDER BY block_number DESC
-			LIMIT 1
-		`, v.NodeID).Scan(&shares)
-		if err == nil && shares > 0 {
-			feePercent := float64(shares) / 10000.0 // shares is in basis points (10000 = 1%)
-			v.DelegationFeePercent = &feePercent
+		if v.Active {
+			setDelegation(&v, delegatorCount, delegatedStake, delegationFee)
 		}
 
-		// Get active delegator count and total delegated stake
-		// Only count delegations whose end time is in the future
-		var delegatorCount uint64
-		var totalDelegated uint64
-		err = s.conn.QueryRow(ctx, `
-			SELECT
-				toUInt64(count()) as cnt,
-				toUInt64(sum(toUInt64OrZero(toString(tx_data.validator.weight)))) as total
-			FROM p_chain_txs
-			WHERE tx_type IN ('AddDelegator', 'AddPermissionlessDelegator')
-			AND toString(tx_data.validator.nodeID) = ?
-			AND toUInt64OrZero(toString(tx_data.validator.end)) > toUInt64(now())
-		`, v.NodeID).Scan(&delegatorCount, &totalDelegated)
-		if err == nil && delegatorCount > 0 {
-			v.DelegatorCount = &delegatorCount
-			v.TotalDelegated = &totalDelegated
-			totalStake := v.Weight + totalDelegated
-			v.TotalStake = &totalStake
-		}
-
-		// Network share
+		// Network share of total active stake (own + delegated). Ended
+		// validations are excluded: their last weight is not at stake.
 		var totalNetworkStake uint64
 		_ = s.conn.QueryRow(ctx, `
-			SELECT toUInt64(sum(weight))
+			SELECT toUInt64(sum(weight + delegated_stake))
 			FROM (SELECT * FROM l1_validator_state FINAL)
-			WHERE subnet_id = ?
+			WHERE subnet_id = ? AND active = true
 		`, primaryNetworkSubnetID).Scan(&totalNetworkStake)
-		if totalNetworkStake > 0 {
-			share := (float64(v.Weight) / float64(totalNetworkStake)) * 100
+		if totalNetworkStake > 0 && v.Active {
+			share := (float64(v.Weight+delegatedStake) / float64(totalNetworkStake)) * 100
 			v.NetworkSharePercent = &share
 		}
 	}

@@ -102,11 +102,18 @@ type ChainInfo struct {
 	// L1 stats (only for L1s)
 	ValidatorCount   *uint32 `json:"validator_count,omitempty"`
 	ActiveValidators *uint32 `json:"active_validators,omitempty"`
-	TotalStaked      *uint64 `json:"total_staked,omitempty"`
+	TotalStaked      *uint64 `json:"total_staked,omitempty"` // raw weight of ACTIVE validators
 	// TotalStakedTokens is total_staked converted to WHOLE tokens (PoS only;
 	// omitted for PoA / unresolved chains). Decimal string, full precision.
 	TotalStakedTokens *string `json:"total_staked_tokens,omitempty"`
 	TotalFeesPaid     *uint64 `json:"total_fees_paid,omitempty"`
+
+	// StakingModel is "pos", "poa" or "unknown": from the on-chain
+	// ValidatorManager type, else the registry's sybil_resistance_type, else
+	// "pos" when the registry has a staking factor. The Primary Network is pos.
+	StakingModel string `json:"staking_model"`
+	// StakedToken is the symbol of the staked token (PoS only).
+	StakedToken string `json:"staked_token,omitempty"`
 
 	// Decentralization summary (compact; only for chains with active L1 validators)
 	Decentralization *Decentralization `json:"decentralization,omitempty"`
@@ -195,7 +202,7 @@ type EconomicSecurity struct {
 const decentralizationSubquery = `(
 		SELECT subnet_id,
 			toUInt32(countIf(active = true)) AS active_validators,
-			sum(weight) AS total_staked,
+			sumIf(weight, active = true) AS total_staked,
 			arrayReverseSort(groupArrayIf(weight, active = true)) AS sorted_weights,
 			arraySum(sorted_weights) AS active_weight,
 			toUInt32(arrayFirstIndex(x -> x > active_weight * 0.33, arrayCumSum(sorted_weights))) AS nakamoto_33,
@@ -203,6 +210,39 @@ const decentralizationSubquery = `(
 		FROM l1_validator_state FINAL
 		GROUP BY subnet_id
 	)`
+
+// stakingModel classifies a chain as "pos", "poa" or "unknown". The on-chain
+// ValidatorManager type wins, then the registry's sybil_resistance_type, then a
+// curated staking factor (only PoS chains have one).
+func stakingModel(subnetID, managerType, sybilType string, hasStakingFactor bool) string {
+	if subnetID == primaryNetworkSubnetID {
+		return "pos"
+	}
+	switch managerType {
+	case "PoA":
+		return "poa"
+	case "PoS-native", "PoS-erc20":
+		return "pos"
+	}
+	switch sybilType {
+	case "Proof of Authority":
+		return "poa"
+	case "Proof of Stake":
+		return "pos"
+	}
+	if hasStakingFactor {
+		return "pos"
+	}
+	return "unknown"
+}
+
+// deref returns the pointed-to string, or "" for nil.
+func deref(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
 
 // handleGetSubnet returns details for a specific subnet
 // @Summary Get subnet by ID
@@ -362,12 +402,13 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 			r.network,
 			f.validator_count, f.total_fees_paid,
 			v.active_validators, v.total_staked, v.active_weight, v.nakamoto_33, v.nakamoto_50,
-			r.staking_weight_factor
+			r.staking_weight_factor, r.staking_token_symbol, cr.manager_type
 		FROM (SELECT * FROM subnet_chains FINAL) c
 		INNER JOIN (SELECT * FROM subnets FINAL) s ON c.subnet_id = s.subnet_id
 		LEFT JOIN (SELECT * FROM l1_registry FINAL) r ON c.chain_id = r.blockchain_id
 		LEFT JOIN (SELECT * FROM l1_fee_stats FINAL) f ON c.subnet_id = f.subnet_id
 		LEFT JOIN %s v ON c.subnet_id = v.subnet_id
+		LEFT JOIN (SELECT chain_id, manager_type FROM chain_risk FINAL) cr ON c.chain_id = cr.chain_id
 		%s
 		ORDER BY c.created_block DESC, c.chain_id ASC
 		LIMIT ?
@@ -404,6 +445,7 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 		var validatorCount, activeValidators, nakamoto33, nakamoto50 *uint32
 		var totalFeesPaid, totalStaked, activeWeight *uint64
 		var stakingFactor *uint64
+		var stakingToken, managerType *string
 
 		if err := rows.Scan(
 			&ci.ChainID, &ci.ChainName, &ci.VMID, &ci.CreatedBlock, &ci.CreatedTime,
@@ -415,7 +457,7 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 			&network,
 			&validatorCount, &totalFeesPaid,
 			&activeValidators, &totalStaked, &activeWeight, &nakamoto33, &nakamoto50,
-			&stakingFactor,
+			&stakingFactor, &stakingToken, &managerType,
 		); err != nil {
 			writeInternalError(w, err.Error())
 			return
@@ -503,6 +545,18 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 		}
 		if totalFeesPaid != nil && *totalFeesPaid > 0 {
 			ci.TotalFeesPaid = totalFeesPaid
+		}
+
+		ci.StakingModel = stakingModel(ci.SubnetID, deref(managerType), ci.SybilResistanceType, stakingFactor != nil && *stakingFactor > 0)
+		if ci.StakingModel == "pos" {
+			switch {
+			case ci.SubnetID == primaryNetworkSubnetID:
+				ci.StakedToken = "AVAX"
+			case deref(stakingToken) != "":
+				ci.StakedToken = *stakingToken
+			case ci.NetworkToken != nil:
+				ci.StakedToken = ci.NetworkToken.Symbol
+			}
 		}
 
 		// Decentralization summary: only meaningful when the chain has active L1 validators.
