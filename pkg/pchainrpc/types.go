@@ -162,6 +162,11 @@ type ValidatorState struct {
 	EndTime      time.Time
 	Uptime       float64 // Percentage 0-100
 	Active       bool
+
+	// Delegation (Primary Network validators only, zero elsewhere)
+	DelegatorCount       uint32  // Active delegations to this validator
+	DelegatedStake       uint64  // Sum of active delegated stake (nAVAX)
+	DelegationFeePercent float64 // Fee charged to delegators, percent (2 = 2%)
 }
 
 // GetCurrentValidatorsResponse represents the response from platform.getCurrentValidators
@@ -184,4 +189,6 @@ type ValidatorInfo struct {
 	DelegationFee    string          `json:"delegationFee,omitempty"`
 	PotentialReward  string          `json:"potentialReward,omitempty"`
 	AccruedDelegatee string          `json:"accruedDelegatee,omitempty"`
+	DelegatorCount   string          `json:"delegatorCount,omitempty"`  // Primary Network only
+	DelegatorWeight  string          `json:"delegatorWeight,omitempty"` // Primary Network only, nAVAX
 }

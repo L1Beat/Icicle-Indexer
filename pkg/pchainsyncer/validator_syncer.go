@@ -248,6 +248,11 @@ func (vs *ValidatorSyncer) syncOnce(ctx context.Context) error {
 		slog.Warn("Failed to sample daily validator counts", "error", err)
 	}
 
+	// Step 13: Refresh today's staking snapshot (stake, delegation, supply).
+	if err := SnapshotStakingToday(ctx, vs.conn, vs.fetcher, vs.config.PChainID); err != nil {
+		slog.Warn("Failed to snapshot staking", "error", err)
+	}
+
 	duration := time.Since(startTime)
 	slog.Info("Validator state sync completed", "total_validators", totalValidators, "primary_network", primaryValidatorCount, "l1_validators", l1ValidatorCount, "l1_subnets", len(l1Subnets), "regular_validators", regularValidatorCount, "regular_subnets", len(regularSubnets), "duration", duration)
 

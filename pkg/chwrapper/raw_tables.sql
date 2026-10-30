@@ -201,11 +201,21 @@ CREATE TABLE IF NOT EXISTS l1_validator_state (
     refund_amount UInt64 DEFAULT 0,  -- Refund when disabled (in nAVAX)
     fees_paid UInt64 DEFAULT 0,  -- Total fees consumed (deposited - refunded - balance)
 
+    -- Delegation (Primary Network only, from getCurrentValidators, 0 elsewhere)
+    delegator_count UInt32 DEFAULT 0,  -- Active delegations to this validator
+    delegated_stake UInt64 DEFAULT 0,  -- Sum of active delegated stake (nAVAX)
+    delegation_fee_percent Float64 DEFAULT 0,  -- Fee charged to delegators, percent (2 = 2%)
+
     -- Metadata
     last_updated DateTime64(3, 'UTC'),  -- When this state was last updated
     p_chain_id UInt32  -- Which P-chain instance (mainnet vs testnet)
 ) ENGINE = ReplacingMergeTree(last_updated)
 ORDER BY (p_chain_id, subnet_id, validation_id);
+
+-- Migrate existing l1_validator_state deployments to add delegation fields (idempotent, no-op on fresh installs)
+ALTER TABLE l1_validator_state ADD COLUMN IF NOT EXISTS delegator_count UInt32 DEFAULT 0 AFTER fees_paid;
+ALTER TABLE l1_validator_state ADD COLUMN IF NOT EXISTS delegated_stake UInt64 DEFAULT 0 AFTER delegator_count;
+ALTER TABLE l1_validator_state ADD COLUMN IF NOT EXISTS delegation_fee_percent Float64 DEFAULT 0 AFTER delegated_stake;
 
 -- L1 Subnets table - tracks which subnets are L1 and should be monitored
 CREATE TABLE IF NOT EXISTS l1_subnets (
@@ -509,6 +519,25 @@ CREATE TABLE IF NOT EXISTS validator_count_snapshots (
     subnet_id String,  -- Primary Network = 11111111111111111111111111111111LpoYY, else the L1 subnet ID (CB58)
     p_chain_height UInt64,  -- P-Chain height the sample was taken at
     validator_count UInt32,  -- Exact active validator count at that height
+    p_chain_id UInt32,  -- Which P-chain instance (mainnet vs testnet)
+    sampled_at DateTime64(3, 'UTC') DEFAULT now64(3)
+) ENGINE = ReplacingMergeTree(sampled_at)
+ORDER BY (p_chain_id, subnet_id, snapshot_date);
+
+-- Staking snapshots - one row per (subnet, day) of active stake, written by
+-- every validator sync cycle (the last cycle of a UTC day wins via
+-- ReplacingMergeTree), so history starts on deploy day. Primary Network rows
+-- carry delegation and AVAX total supply. L1 rows carry own_stake as the raw
+-- validator weight sum (delegation and supply stay 0), converted to tokens at
+-- read time with the registry staking factor.
+CREATE TABLE IF NOT EXISTS staking_snapshots (
+    snapshot_date Date,  -- UTC day
+    subnet_id String,  -- Primary Network = 11111111111111111111111111111111LpoYY, else the L1 subnet ID (CB58)
+    validator_count UInt32,  -- Active validators
+    delegation_count UInt32 DEFAULT 0,  -- Active delegations (Primary Network only)
+    own_stake UInt64,  -- Sum of active validator weight (nAVAX for the Primary Network)
+    delegated_stake UInt64 DEFAULT 0,  -- Sum of active delegated stake, nAVAX (Primary Network only)
+    total_supply UInt64 DEFAULT 0,  -- AVAX total supply from platform.getCurrentSupply, nAVAX (Primary Network only)
     p_chain_id UInt32,  -- Which P-chain instance (mainnet vs testnet)
     sampled_at DateTime64(3, 'UTC') DEFAULT now64(3)
 ) ENGINE = ReplacingMergeTree(sampled_at)

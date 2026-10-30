@@ -238,7 +238,8 @@ func InsertValidatorStates(ctx context.Context, conn clickhouse.Conn, pchainID u
 
 	batch, err := conn.PrepareBatch(ctx, `INSERT INTO l1_validator_state (
 		subnet_id, validation_id, node_id, balance, weight,
-		start_time, end_time, uptime_percentage, active, last_updated, p_chain_id
+		start_time, end_time, uptime_percentage, active, last_updated, p_chain_id,
+		delegator_count, delegated_stake, delegation_fee_percent
 	)`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare batch: %w", err)
@@ -259,6 +260,9 @@ func InsertValidatorStates(ctx context.Context, conn clickhouse.Conn, pchainID u
 			state.Active,
 			now,
 			pchainID,
+			state.DelegatorCount,
+			state.DelegatedStake,
+			state.DelegationFeePercent,
 		)
 		if err != nil {
 			return fmt.Errorf("failed to append validator state %s: %w", state.ValidationID, err)

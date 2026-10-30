@@ -1086,6 +1086,39 @@ func (f *Fetcher) GetCurrentValidators(ctx context.Context, subnetID string) (*G
 	return nil, fmt.Errorf("failed to get current validators for subnet %s after %d retries: %w", subnetID, f.maxRetries, lastErr)
 }
 
+// GetCurrentSupply returns the upper bound on the Primary Network's AVAX
+// supply (platform.getCurrentSupply, nAVAX). This is total supply - minted
+// minus burned - not circulating supply.
+func (f *Fetcher) GetCurrentSupply(ctx context.Context) (uint64, error) {
+	var lastErr error
+	for attempt := 0; attempt <= f.maxRetries; attempt++ {
+		if attempt > 0 {
+			delay := f.retryDelay * time.Duration(1<<uint(attempt-1))
+			if delay > 10*time.Second {
+				delay = 10 * time.Second
+			}
+			time.Sleep(delay)
+		}
+
+		var response struct {
+			Supply string `json:"supply"`
+		}
+		err := f.client.Requester.SendRequest(
+			ctx,
+			"platform.getCurrentSupply",
+			map[string]interface{}{},
+			&response,
+		)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		return parseUint64Field(response.Supply, "supply")
+	}
+
+	return 0, fmt.Errorf("failed to get current supply after %d retries: %w", f.maxRetries, lastErr)
+}
+
 // ValidatorAtInfo is one entry of platform.getValidatorsAt, keyed by NodeID.
 // publicKey is null for pre-BLS (Apricot-era) validators.
 type ValidatorAtInfo struct {
@@ -1304,6 +1337,19 @@ func ParseValidatorInfo(info ValidatorInfo, subnetID ids.ID) (*ValidatorState, e
 			return nil, err
 		}
 		state.EndTime = time.Unix(int64(endTime), 0)
+	}
+
+	// Delegation fields (Primary Network only - L1 validators omit them)
+	delegatorCount, err := parseUint64Field(info.DelegatorCount, "delegatorCount")
+	if err != nil {
+		return nil, err
+	}
+	state.DelegatorCount = uint32(delegatorCount)
+	if state.DelegatedStake, err = parseUint64Field(info.DelegatorWeight, "delegatorWeight"); err != nil {
+		return nil, err
+	}
+	if state.DelegationFeePercent, err = parseFloat64Field(info.DelegationFee, "delegationFee"); err != nil {
+		return nil, err
 	}
 
 	return state, nil
