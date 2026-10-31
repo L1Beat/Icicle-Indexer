@@ -18,10 +18,10 @@ func TestHandleValidatorDelegations(t *testing.T) {
 		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
 			queries++
 			require.Equal(t, "NodeID-Test1", args[0])
-			return NewMockRows([]string{"tx_id", "owners", "stake", "start", "end"}, [][]interface{}{
-				{"a", `["4hXFR9YmCfVr6PjcUaQN9MN4uKQHgpKdf"]`, uint64(100), uint64(now - 100), uint64(now + 100)},
-				{"b", "", uint64(300), uint64(now - 200), uint64(now + 50)},
-				{"c", `["4hXFR9YmCfVr6PjcUaQN9MN4uKQHgpKdf",null]`, uint64(200), uint64(now - 900), uint64(now - 10)},
+			return NewMockRows([]string{"tx_id", "node_id", "owners", "stake", "start", "end"}, [][]interface{}{
+				{"a", "NodeID-Test1", `["4hXFR9YmCfVr6PjcUaQN9MN4uKQHgpKdf"]`, uint64(100), uint64(now - 100), uint64(now + 100)},
+				{"b", "NodeID-Test1", "", uint64(300), uint64(now - 200), uint64(now + 50)},
+				{"c", "NodeID-Test1", `["4hXFR9YmCfVr6PjcUaQN9MN4uKQHgpKdf",null]`, uint64(200), uint64(now - 900), uint64(now - 10)},
 			}), nil
 		},
 	}
@@ -61,4 +61,49 @@ func TestHandleValidatorDelegations_BadParams(t *testing.T) {
 		w := MakeRequest(t, server, "GET", path)
 		require.Equal(t, http.StatusBadRequest, w.Code, path)
 	}
+}
+
+func TestHandleDelegatorDelegations(t *testing.T) {
+	now := time.Now().Unix()
+	mock := &MockConn{
+		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
+			require.Equal(t, `"4hXFR9YmCfVr6PjcUaQN9MN4uKQHgpKdf"`, args[0])
+			return NewMockRows([]string{"tx_id", "node_id", "owners", "stake", "start", "end"}, [][]interface{}{
+				{"a", "NodeID-A", `["4hXFR9YmCfVr6PjcUaQN9MN4uKQHgpKdf"]`, uint64(100), uint64(now - 100), uint64(now + 100)},
+				{"b", "NodeID-A", `["4hXFR9YmCfVr6PjcUaQN9MN4uKQHgpKdf"]`, uint64(300), uint64(now - 200), uint64(now + 50)},
+				{"c", "NodeID-B", `["4hXFR9YmCfVr6PjcUaQN9MN4uKQHgpKdf"]`, uint64(200), uint64(now - 900), uint64(now - 10)},
+			}), nil
+		},
+	}
+	server := NewTestServer(mock)
+
+	w := MakeRequest(t, server, "GET", "/api/v1/data/delegators/avax19zfygxaf59stehzedhxjesads0p5jdvfeedal0/delegations?active=true")
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp DelegatorResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(t, resp.Data, 2)
+	require.Equal(t, "b", resp.Data[0].TxID)
+	require.Equal(t, "NodeID-A", resp.Data[0].NodeID)
+	require.Equal(t, int64(2), resp.Meta.Total)
+	sum := resp.Meta.Summary
+	require.Equal(t, 2, sum.ActiveCount)
+	require.Equal(t, "400", sum.ActiveStake)
+	require.Equal(t, 1, sum.ValidatorCount)
+	require.Equal(t, now-900, sum.FirstDelegationTime.Unix())
+}
+
+func TestHandleDelegatorDelegations_Empty(t *testing.T) {
+	mock := &MockConn{
+		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
+			return NewMockRows([]string{"tx_id"}, nil), nil
+		},
+	}
+	server := NewTestServer(mock)
+	w := MakeRequest(t, server, "GET", "/api/v1/data/delegators/P-avax1yuf4ywcqq8ddfsnghk3qml8a5lnz8q7ejt9s7f/delegations")
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, w.Body.String(), `"data":[]`)
+	require.Contains(t, w.Body.String(), `"first_delegation_time":null`)
+
+	w = MakeRequest(t, server, "GET", "/api/v1/data/delegators/P-avax1notanaddress/delegations")
+	require.Equal(t, http.StatusBadRequest, w.Code)
 }

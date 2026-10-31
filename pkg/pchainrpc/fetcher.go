@@ -50,6 +50,19 @@ func ConvertCB58ToPChainAddress(shortAddr string) (string, error) {
 	return "P-" + bech32Addr, nil
 }
 
+// ConvertPChainAddressToCB58 converts a mainnet P-Chain bech32 address, with or
+// without the "P-" prefix, to the short CB58 form stored in tx_data.
+func ConvertPChainAddressToCB58(addr string) (string, error) {
+	hrp, addrBytes, err := address.ParseBech32(strings.TrimPrefix(addr, "P-"))
+	if err != nil {
+		return "", fmt.Errorf("failed to parse bech32 address %s: %w", addr, err)
+	}
+	if hrp != "avax" || len(addrBytes) != 20 {
+		return "", fmt.Errorf("not a mainnet P-Chain address: %s", addr)
+	}
+	return cb58.Encode(addrBytes)
+}
+
 // ConvertCB58ToPChainAddressFuji converts a short CB58 address to P-Chain bech32 format for Fuji testnet
 func ConvertCB58ToPChainAddressFuji(shortAddr string) (string, error) {
 	if strings.HasPrefix(shortAddr, "P-") {

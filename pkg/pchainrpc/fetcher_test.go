@@ -36,3 +36,17 @@ func TestParseValidatorInfo_Delegation(t *testing.T) {
 		t.Fatalf("expected zero delegation, got %+v", st)
 	}
 }
+
+func TestConvertPChainAddressToCB58(t *testing.T) {
+	for _, in := range []string{"P-avax19zfygxaf59stehzedhxjesads0p5jdvfeedal0", "avax19zfygxaf59stehzedhxjesads0p5jdvfeedal0"} {
+		got, err := ConvertPChainAddressToCB58(in)
+		if err != nil || got != "4hXFR9YmCfVr6PjcUaQN9MN4uKQHgpKdf" {
+			t.Fatalf("%s: got %q, %v", in, got, err)
+		}
+	}
+	for _, in := range []string{"", "P-avax1bad", "P-fuji19zfygxaf59stehzedhxjesads0p5jdvfeedal0"} {
+		if _, err := ConvertPChainAddressToCB58(in); err == nil {
+			t.Fatalf("%q: expected error", in)
+		}
+	}
+}

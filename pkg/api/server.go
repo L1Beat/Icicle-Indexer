@@ -209,6 +209,7 @@ func (s *Server) registerRoutes(cfg Config) {
 	s.router.HandleFunc("GET /api/v1/data/validators/{id}", s.handleGetValidator)
 	s.router.HandleFunc("GET /api/v1/data/validators/{id}/deposits", s.handleValidatorDeposits)
 	s.router.HandleFunc("GET /api/v1/data/validators/{id}/delegations", s.handleValidatorDelegations)
+	s.router.HandleFunc("GET /api/v1/data/delegators/{address}/delegations", s.handleDelegatorDelegations)
 
 	// ==========================================
 	// Metrics API - /api/v1/metrics/*

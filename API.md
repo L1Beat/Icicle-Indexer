@@ -1331,6 +1331,47 @@ List the delegations to a Primary Network validator (AddDelegator and AddPermiss
 
 ---
 
+### GET /api/v1/data/delegators/{address}/delegations
+
+List every Primary Network delegation whose reward owner includes this address, across all validators. Cached for 5 minutes.
+
+**Path Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `address` | string | P-Chain address, `P-avax1...` or `avax1...` |
+
+**Query Parameters:** same as `/validators/{id}/delegations` (`active`, `sort`, `order`, `limit` max 500, `offset`).
+
+**Response:**
+```json
+{
+  "data": [
+    {
+      "tx_id": "26Qm4E54ge2Qs8nT6d9RAkCj7FUojQhmnm7ray61C5y4Vcos2A",
+      "node_id": "NodeID-EmyEA3mdxUZibCy8heBSV1hj52zphK3J6",
+      "stake": "227146366379315",
+      "start_time": "2026-10-25T16:11:04Z",
+      "end_time": "2026-11-09T11:12:22Z",
+      "active": true
+    }
+  ],
+  "meta": {
+    "total": 1204, "limit": 20, "offset": 0, "has_more": true,
+    "summary": {
+      "active_count": 410,
+      "active_stake": "1250000000000000",
+      "validator_count": 37,
+      "first_delegation_time": "2024-02-11T09:30:00Z"
+    }
+  }
+}
+```
+
+- `summary` covers all of the address's delegations, whatever the `active` filter. `validator_count` counts distinct nodes among active delegations. `first_delegation_time` is null when there are none.
+- A malformed or non-mainnet address returns 400. An address with no delegations returns 200 with an empty list.
+
+---
+
 ### GET /api/v1/data/validators/{id}/deposits
 
 Get deposit history for a validator.
@@ -1902,6 +1943,7 @@ ws.onmessage = (event) => {
 | GET | `/api/v1/data/validators/{id}` | Get validator detail |
 | GET | `/api/v1/data/validators/{id}/deposits` | Validator deposit history |
 | GET | `/api/v1/data/validators/{id}/delegations` | Delegations to a Primary Network validator |
+| GET | `/api/v1/data/delegators/{address}/delegations` | Delegations by reward address |
 | GET | `/api/v1/metrics/fees` | L1 fee statistics |
 | GET | `/api/v1/metrics/fees/daily` | Daily fee burn |
 | GET | `/api/v1/metrics/evm/{chainId}/stats` | Chain aggregate stats |
