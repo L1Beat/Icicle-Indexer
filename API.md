@@ -1104,7 +1104,7 @@ List all blockchains with enriched subnet, L1 registry, and validator data. This
 - All registry fields (`name`, `description`, `logo_url`, `website_url`, `evm_chain_id`, `categories`, `socials`, `rpc_url`, `explorer_url`, `sybil_resistance_type`, `network_token`, `network`) are optional — only present if registry metadata exists
 - `converted_block`, `converted_time` only present for L1-converted subnets
 - `validator_count`, `active_validators`, `total_staked`, `total_fees_paid` only present for L1 chains
-- `staking_model` — always present: `pos`, `poa` or `unknown`. Taken from the on-chain ValidatorManager type, else the registry's `sybil_resistance_type`, else `pos` when a staking factor is configured. Primary Network chains are `pos`. `staked_token` is the staked token's symbol, present only for `pos`.
+- `staking_model` — always present: `pos`, `poa`, `none` or `unknown`. `none` means the conversion named a placeholder manager address (empty, zero or a precompile such as `0x...0001`), so the validator set can't change. Otherwise taken from the on-chain ValidatorManager type, else the registry's `sybil_resistance_type`, else `pos` when a staking factor is configured. Primary Network chains are `pos`. `staked_token` is the staked token's symbol, present only for `pos`.
 - `total_staked` is the raw sum of **active** validator weights (meaningless for `poa`, hide it there); `total_staked_tokens` is that sum converted to **whole tokens** (decimal string), present only for Proof-of-Stake chains with a configured staking factor. Pair it with `network_token.symbol` for display.
 - `socials` is an array of `{"name": string, "url": string}` objects
 - `network_token` includes native token info when available
@@ -1157,7 +1157,7 @@ Per-chain decentralization and ValidatorManager risk profile (L2Beat-style). Key
 ```
 
 **Notes:**
-- `validator_manager.type` — `PoA`, `PoS-native`, `PoS-erc20`, or `unknown`
+- `validator_manager.type` — `PoA`, `PoS-native`, `PoS-erc20`, `placeholder`, or `unknown`. `placeholder` means the address is empty, zero or an EVM precompile (`0x01`-`0x09`), which can never sign a validator-set change. `unknown` usually means the manager lives on the L1 itself and we have no RPC for that chain
 - `deployed_on` — `c-chain` (manager reachable even if the L1 halts), `self` (lives on the L1, unreachable if stuck), or `unknown`
 - `owner.kind` — `eoa`, `multisig`, `timelock`, `dao`, `contract`, or `unknown`; `multisig` populated only for detected Gnosis Safes
 - `proxy.upgrade_delay_seconds` — `0` means upgrades are instant; a timelock delay otherwise
@@ -1287,6 +1287,47 @@ Get detailed validator info by validation ID or node ID. A node ID can match sev
 - `daily_fee_burn` — Daily fee burn in nAVAX (512 nAVAX/sec = 44,236,800 nAVAX/day per validator)
 - `network_share_percent` — This validator's total stake (own + delegated) as % of the Primary Network's active total (active Primary Network validators only)
 - `delegation_fee_percent`, `delegator_count`, `total_delegated`, `total_stake` — also in the list endpoint (active Primary Network validators)
+
+---
+
+### GET /api/v1/data/validators/{id}/delegations
+
+List the delegations to a Primary Network validator (AddDelegator and AddPermissionlessDelegator transactions). Cached for 5 minutes.
+
+**Path Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `id` | string | Node ID (`NodeID-...`) |
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `active` | bool | - | `true` = running, `false` = ended, omitted = both |
+| `sort` | string | `stake` | `stake`, `end_time` or `start_time` |
+| `order` | string | `desc` | `desc` or `asc` |
+| `limit` | int | 20 | Page size, max 500 |
+| `offset` | int | 0 | Offset |
+
+**Response:**
+```json
+{
+  "data": [
+    {
+      "tx_id": "28E9TkTq8tynDrj8MTwypdvwTAN6TCxS36uuceqk7MVBk42JHW",
+      "reward_owner": ["P-avax1..."],
+      "stake": "398132993099",
+      "start_time": "2026-10-31T20:03:40Z",
+      "end_time": "2026-11-17T20:00:08Z",
+      "active": true
+    }
+  ],
+  "meta": { "total": 312, "limit": 20, "offset": 0, "has_more": true }
+}
+```
+
+- `stake` is nAVAX as a string.
+- `reward_owner` is null when the tx names no reward address.
+- `active` is `end_time` in the future.
 
 ---
 
@@ -1860,6 +1901,7 @@ ws.onmessage = (event) => {
 | GET | `/api/v1/data/validators` | List validators |
 | GET | `/api/v1/data/validators/{id}` | Get validator detail |
 | GET | `/api/v1/data/validators/{id}/deposits` | Validator deposit history |
+| GET | `/api/v1/data/validators/{id}/delegations` | Delegations to a Primary Network validator |
 | GET | `/api/v1/metrics/fees` | L1 fee statistics |
 | GET | `/api/v1/metrics/fees/daily` | Daily fee burn |
 | GET | `/api/v1/metrics/evm/{chainId}/stats` | Chain aggregate stats |

@@ -108,6 +108,14 @@ func (c *ttlCache) get(ctx context.Context, key string, load func(context.Contex
 		return nil, err
 	}
 	c.mu.Lock()
+	// Keys can come from request paths, so drop expired entries once the map grows.
+	if len(c.entries) >= 1000 {
+		for k, e := range c.entries {
+			if time.Since(e.fetched) >= c.ttl {
+				delete(c.entries, k)
+			}
+		}
+	}
 	c.entries[key] = ttlEntry{value: v, fetched: time.Now()}
 	c.mu.Unlock()
 	return v, nil
