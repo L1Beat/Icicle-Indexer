@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"sort"
@@ -62,8 +63,9 @@ type delegationRow struct {
 }
 
 var (
-	delegationsCache = newTTLCache(5 * time.Minute)
-	delegatorCache   = newTTLCache(5 * time.Minute)
+	delegationsCache   = newTTLCache(5 * time.Minute)
+	delegatorCache     = newTTLCache(5 * time.Minute)
+	delegatorPageCache = newTTLCache(5 * time.Minute)
 )
 
 // handleValidatorDelegations lists the delegations to a Primary Network validator
@@ -130,7 +132,7 @@ func (s *Server) handleValidatorDelegations(w http.ResponseWriter, r *http.Reque
 
 // handleDelegatorDelegations lists the delegations paying rewards to an address
 // @Summary List delegations by reward address
-// @Description Primary Network AddDelegator / AddPermissionlessDelegator transactions whose reward owner includes this address, across all validators. meta.summary covers all of the address's delegations regardless of the active filter. Stake is a nAVAX string. Cached for 5 minutes.
+// @Description Primary Network AddDelegator / AddPermissionlessDelegator transactions whose reward owner includes this address, across all validators. meta.summary covers all of the address's delegations regardless of the active filter. Sorting and paging run in ClickHouse, so large staking services with millions of rows work. Stake is a nAVAX string. Cached for 5 minutes.
 // @Tags Data - Validators
 // @Produce json
 // @Param address path string true "P-Chain address (P-avax1... or avax1...)"
@@ -149,16 +151,28 @@ func (s *Server) handleDelegatorDelegations(w http.ResponseWriter, r *http.Reque
 		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "address must be a mainnet P-Chain address (P-avax1...)")
 		return
 	}
-	active, less, ok := delegationParams(w, r.URL.Query())
+	active, _, ok := delegationParams(w, r.URL.Query()) // sorting runs in ClickHouse
 	if !ok {
 		return
 	}
 	limit, offset := getPaginationWithCap(r, 500)
 
-	// The summary needs the full history, so there is one cache entry per address.
-	// The quoted CB58 match on the JSON text can't hit a substring of another address.
-	v, err := delegatorCache.get(r.Context(), short, func(ctx context.Context) (interface{}, error) {
-		return s.loadDelegations(ctx, "position(ifNull(toJSONString(tx_data.rewardsOwner.addresses), ''), ?) > 0", `"`+short+`"`, false)
+	sortKey, order := r.URL.Query().Get("sort"), strings.ToLower(r.URL.Query().Get("order"))
+
+	// Large staking services have millions of delegations, so paging, sorting and
+	// the summary all run in ClickHouse rather than over a cached full list.
+	sumV, err := delegatorCache.get(r.Context(), short, func(ctx context.Context) (interface{}, error) {
+		return s.loadDelegatorSummary(ctx, short)
+	})
+	if err != nil {
+		writeInternalError(w, err.Error())
+		return
+	}
+	sum := sumV.(delegatorTotals)
+
+	key := fmt.Sprintf("%s|%v|%s|%s|%d|%d", short, boolKey(active), sortKey, order, limit, offset)
+	pageV, err := delegatorPageCache.get(r.Context(), key, func(ctx context.Context) (interface{}, error) {
+		return s.loadDelegatorPage(ctx, short, active, sortKey, order, limit, offset)
 	})
 	if err != nil {
 		writeInternalError(w, err.Error())
@@ -166,10 +180,8 @@ func (s *Server) handleDelegatorDelegations(w http.ResponseWriter, r *http.Reque
 	}
 
 	now := time.Now().Unix()
-	all := v.([]delegationRow)
-	rows := filterSortDelegations(all, active, less, now)
 	page := []DelegatorDelegation{}
-	for _, d := range pageOf(rows, limit, offset) {
+	for _, d := range pageV.([]delegationRow) {
 		page = append(page, DelegatorDelegation{
 			TxID:      d.txID,
 			NodeID:    d.nodeID,
@@ -180,37 +192,139 @@ func (s *Server) handleDelegatorDelegations(w http.ResponseWriter, r *http.Reque
 		})
 	}
 
+	total := sum.total
+	if active != nil {
+		total = uint64(sum.ActiveCount)
+		if !*active {
+			total = sum.total - uint64(sum.ActiveCount)
+		}
+	}
+
 	writeJSON(w, http.StatusOK, DelegatorResponse{
 		Data: page,
 		Meta: DelegatorMeta{
-			Meta:    Meta{Total: int64(len(rows)), Limit: limit, Offset: offset, HasMore: offset+limit < len(rows)},
-			Summary: summarizeDelegations(all, now),
+			Meta:    Meta{Total: int64(total), Limit: limit, Offset: offset, HasMore: uint64(offset+limit) < total},
+			Summary: sum.DelegatorSummary,
 		},
 	})
 }
 
-func summarizeDelegations(rows []delegationRow, now int64) DelegatorSummary {
-	var out DelegatorSummary
-	var stake uint64
-	nodes := map[string]bool{}
-	var first int64
-	for _, d := range rows {
-		if first == 0 || d.start < first {
-			first = d.start
-		}
-		if d.end > now {
-			out.ActiveCount++
-			stake += d.stake
-			nodes[d.nodeID] = true
-		}
+func boolKey(b *bool) string {
+	if b == nil {
+		return "all"
 	}
-	out.ActiveStake = strconv.FormatUint(stake, 10)
-	out.ValidatorCount = len(nodes)
-	if first > 0 {
-		t := time.Unix(first, 0).UTC()
+	return strconv.FormatBool(*b)
+}
+
+// delegatorTotals is the summary plus the all-history delegation count.
+type delegatorTotals struct {
+	DelegatorSummary
+	total uint64
+}
+
+// Delegation tx columns, shared by the reward-address queries.
+const (
+	delegationBaseWhere = `p_chain_id = 0
+		  AND tx_type IN ('AddDelegator', 'AddPermissionlessDelegator')
+		  AND toString(tx_data.subnetID) IN ('', ?)
+		  AND position(ifNull(toJSONString(tx_data.rewardsOwner.addresses), ''), ?) > 0`
+	delegationStakeExpr = `toUInt64OrZero(toString(tx_data.validator.weight))`
+	delegationStartExpr = `toUInt64OrZero(toString(tx_data.validator.start))`
+	delegationEndExpr   = `toUInt64OrZero(toString(tx_data.validator.end))`
+)
+
+var delegatorSortCols = map[string]string{"": "stake", "stake": "stake", "end_time": "end_ts", "start_time": "start_ts"}
+
+// loadDelegatorSummary computes the all-history count and first delegation, and
+// the active count, stake and validators. The quoted CB58 match on the JSON text
+// can't hit a substring of another address.
+func (s *Server) loadDelegatorSummary(ctx context.Context, short string) (delegatorTotals, error) {
+	var out delegatorTotals
+	quoted := `"` + short + `"`
+
+	var first uint64
+	if err := s.conn.QueryRow(ctx, `
+		SELECT uniqExact(tx_id), minIf(st, st > 0)
+		FROM (
+			SELECT tx_id, `+delegationStartExpr+` AS st
+			FROM p_chain_txs
+			WHERE `+delegationBaseWhere+`
+		)
+	`, primaryNetworkSubnetID, quoted).Scan(&out.total, &first); err != nil {
+		return out, err
+	}
+	if out.total > 0 && first > 0 {
+		t := time.Unix(int64(first), 0).UTC()
 		out.FirstDelegationTime = &t
 	}
-	return out
+
+	// Running delegations started within the last year, so the block_time bound
+	// keeps this to recent txs. GROUP BY tx_id dedupes re-inserted txs.
+	var activeCount, validators uint64
+	if err := s.conn.QueryRow(ctx, `
+		SELECT count(), toString(sum(toUInt128(stake))), uniqExact(node)
+		FROM (
+			SELECT tx_id, any(toString(tx_data.validator.nodeID)) AS node, any(`+delegationStakeExpr+`) AS stake
+			FROM p_chain_txs
+			WHERE `+delegationBaseWhere+`
+			  AND block_time >= now() - INTERVAL 400 DAY
+			  AND `+delegationEndExpr+` > ?
+			GROUP BY tx_id
+		)
+	`, primaryNetworkSubnetID, quoted, time.Now().Unix()).Scan(&activeCount, &out.ActiveStake, &validators); err != nil {
+		return out, err
+	}
+	out.ActiveCount, out.ValidatorCount = int(activeCount), int(validators)
+	return out, nil
+}
+
+// loadDelegatorPage returns one sorted page. LIMIT 1 BY tx_id drops re-inserted
+// duplicates, which sort next to each other because their columns are identical.
+func (s *Server) loadDelegatorPage(ctx context.Context, short string, active *bool, sortKey, order string, limit, offset int) ([]delegationRow, error) {
+	dir := "DESC"
+	if order == "asc" {
+		dir = "ASC"
+	}
+	where := delegationBaseWhere
+	args := []interface{}{primaryNetworkSubnetID, `"` + short + `"`}
+	if active != nil {
+		if *active {
+			where += ` AND block_time >= now() - INTERVAL 400 DAY AND ` + delegationEndExpr + ` > ?`
+		} else {
+			where += ` AND ` + delegationEndExpr + ` <= ?`
+		}
+		args = append(args, time.Now().Unix())
+	}
+	args = append(args, limit, offset)
+
+	rows, err := s.conn.Query(ctx, `
+		SELECT tx_id, node, stake, start_ts, end_ts
+		FROM (
+			SELECT tx_id, toString(tx_data.validator.nodeID) AS node,
+				`+delegationStakeExpr+` AS stake, `+delegationStartExpr+` AS start_ts, `+delegationEndExpr+` AS end_ts
+			FROM p_chain_txs
+			WHERE `+where+`
+		)
+		ORDER BY `+delegatorSortCols[sortKey]+` `+dir+`, tx_id
+		LIMIT 1 BY tx_id
+		LIMIT ? OFFSET ?
+	`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []delegationRow{}
+	for rows.Next() {
+		var d delegationRow
+		var start, end uint64
+		if err := rows.Scan(&d.txID, &d.nodeID, &d.stake, &start, &end); err != nil {
+			return nil, err
+		}
+		d.start, d.end = int64(start), int64(end)
+		out = append(out, d)
+	}
+	return out, rows.Err()
 }
 
 // delegationParams parses active, sort and order, writing a 400 on bad input.
