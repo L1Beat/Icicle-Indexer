@@ -543,6 +543,22 @@ CREATE TABLE IF NOT EXISTS staking_snapshots (
 ) ENGINE = ReplacingMergeTree(sampled_at)
 ORDER BY (p_chain_id, subnet_id, snapshot_date);
 
+-- Liquid staking snapshots - one row per (protocol, UTC day), rewritten every
+-- validator sync cycle (last sample wins). Protocols are listed in
+-- pkg/liquidstaking. Token figures come from the C-Chain contract, delegation
+-- figures from p_chain_txs rows whose rewards owner is a protocol address.
+CREATE TABLE IF NOT EXISTS liquid_staking_snapshots (
+    snapshot_date Date,  -- UTC day
+    protocol_id LowCardinality(String),  -- e.g. benqi-savax
+    pooled_avax UInt256,  -- AVAX backing the token, wei (18 decimals)
+    token_supply UInt256,  -- Token totalSupply(), base units
+    active_delegated UInt64,  -- Running delegated stake, nAVAX
+    active_delegations UInt32,  -- Running delegations
+    validator_count UInt32,  -- Distinct nodes among running delegations
+    sampled_at DateTime64(3, 'UTC') DEFAULT now64(3)
+) ENGINE = ReplacingMergeTree(sampled_at)
+ORDER BY (protocol_id, snapshot_date);
+
 -- Function signatures - 4-byte selector -> canonical signature, filled by the
 -- bundled seed list and demand-driven OpenChain lookups (pkg/enrich). Several
 -- rows per selector are expected (collisions); the API picks one per tx using

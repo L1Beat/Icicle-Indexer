@@ -1703,6 +1703,86 @@ Daily staking snapshots (last sample of each UTC day), oldest first. History sta
 
 ---
 
+### GET /api/v1/metrics/staking/liquid
+
+AVAX liquid staking protocols with their latest figures. The indexer samples each live protocol every validator sync cycle (about 5 minutes):
+- Pooled AVAX and token supply come from the C-Chain token contract.
+- Delegation figures cover running Primary Network delegations whose rewards owner includes one of the protocol's P-Chain addresses.
+
+Cached for 5 minutes.
+
+**Response:**
+```json
+{
+  "data": {
+    "protocols": [
+      {
+        "id": "benqi-savax",
+        "name": "BENQI",
+        "token_symbol": "sAVAX",
+        "token_contract": "0x2b2C81e08f1Af8835a78Bb2A90AE924ACE0eA4bE",
+        "token_decimals": 18,
+        "status": "live",
+        "attribution": "unconfirmed",
+        "p_chain_addresses": ["P-avax19zfygxaf59stehzedhxjesads0p5jdvfeedal0"],
+        "pooled_avax": "24088038797328708",
+        "token_supply": "18630244367219040899253899",
+        "exchange_rate": "1.292953453671",
+        "active_delegated": "22565009736807640",
+        "active_delegations": 27504,
+        "validator_count": 107,
+        "share_of_delegated_percent": 53.37,
+        "as_of": "2026-11-01T10:05:12.345Z"
+      }
+    ],
+    "totals": {
+      "pooled_avax": "24088038797328708",
+      "active_delegated": "22565009736807640",
+      "active_delegations": 27504,
+      "share_of_delegated_percent": 53.37
+    },
+    "network_delegated_stake": "42277000000000000"
+  }
+}
+```
+
+**Notes:**
+- Amounts: `pooled_avax`, `active_delegated` and `network_delegated_stake` are nAVAX. `token_supply` is in token base units (`token_decimals`). `exchange_rate` is AVAX per whole token.
+- `attribution` is `unconfirmed` until the protocol confirms its P-Chain addresses.
+- Live figures are null until the protocol has been sampled. Protocols with status `ended` never have live figures.
+- `share_of_delegated_percent` is `active_delegated` divided by all running Primary Network delegated stake. Totals sum the live protocols.
+
+---
+
+### GET /api/v1/metrics/staking/liquid/timeseries
+
+Daily liquid staking samples (last sample of each UTC day), oldest first. History starts 2026-11-01.
+
+**Query Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `protocol` | string | Protocol id, e.g. `benqi-savax` (default: all) |
+| `days` | int | Days of history, 1-3650 (default 365) |
+
+**Response:**
+```json
+{
+  "data": [
+    {
+      "date": "2026-11-01",
+      "protocol_id": "benqi-savax",
+      "pooled_avax": "24088038797328708",
+      "exchange_rate": "1.292953453671",
+      "active_delegated": "22565009736807640",
+      "active_delegations": 27504,
+      "validator_count": 107
+    }
+  ]
+}
+```
+
+---
+
 ## Metrics API - Chain Stats
 
 ### GET /api/v1/metrics/evm/{chainId}/stats
@@ -1954,6 +2034,8 @@ ws.onmessage = (event) => {
 | GET | `/api/v1/metrics/staking` | Primary Network staking summary |
 | GET | `/api/v1/metrics/staking/unlocks` | Weekly stake unlock schedule |
 | GET | `/api/v1/metrics/staking/timeseries` | Daily staking snapshots |
+| GET | `/api/v1/metrics/staking/liquid` | Liquid staking protocols (BENQI sAVAX) |
+| GET | `/api/v1/metrics/staking/liquid/timeseries` | Daily liquid staking samples |
 | WS | `/ws/blocks/{chainId}` | Real-time block stream |
 
 ---

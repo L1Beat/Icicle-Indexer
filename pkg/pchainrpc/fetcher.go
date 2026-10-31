@@ -219,6 +219,11 @@ func NewFetcher(opts FetcherOptions) *Fetcher {
 	return f
 }
 
+// RpcURL returns the node base URL the fetcher talks to.
+func (f *Fetcher) RpcURL() string {
+	return f.rpcURL
+}
+
 // GetLatestBlock returns the latest block height from the P-chain
 func (f *Fetcher) GetLatestBlock() (int64, error) {
 	if err := f.cb.Allow(); err != nil {

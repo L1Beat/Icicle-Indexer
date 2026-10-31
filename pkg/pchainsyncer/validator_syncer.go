@@ -253,6 +253,11 @@ func (vs *ValidatorSyncer) syncOnce(ctx context.Context) error {
 		slog.Warn("Failed to snapshot staking", "error", err)
 	}
 
+	// Step 14: Refresh today's liquid staking snapshots.
+	if err := SnapshotLiquidStakingToday(ctx, vs.conn, vs.fetcher.RpcURL()); err != nil {
+		slog.Warn("Failed to snapshot liquid staking", "error", err)
+	}
+
 	duration := time.Since(startTime)
 	slog.Info("Validator state sync completed", "total_validators", totalValidators, "primary_network", primaryValidatorCount, "l1_validators", l1ValidatorCount, "l1_subnets", len(l1Subnets), "regular_validators", regularValidatorCount, "regular_subnets", len(regularSubnets), "duration", duration)
 
