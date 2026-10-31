@@ -52,7 +52,7 @@ type riskInput struct {
 type riskRow struct {
 	ChainID             string
 	VMAddress           string
-	ManagerType         string // PoA | PoS-native | PoS-erc20 | unknown
+	ManagerType         string // PoA | PoS-native | PoS-erc20 | placeholder | unknown
 	ManagerLocation     string // c-chain | self | unknown — which chain the manager contract has code on
 	OwnerAddress        *string
 	OwnerKind           string // eoa | multisig | timelock | dao | contract | unknown
@@ -184,6 +184,14 @@ func resolveChainRisk(client *http.Client, in riskInput) riskRow {
 		ManagerType:     "unknown",
 		ManagerLocation: "unknown",
 		OwnerKind:       "unknown",
+	}
+
+	// A conversion that named an empty address or an EVM precompile (0x01-0x09) as
+	// the manager has no contract that can ever sign a validator-set change, so
+	// there is nothing to read and the validator set is fixed.
+	if isPlaceholderManager(in.VMAddress) {
+		row.ManagerType = "placeholder"
+		return row
 	}
 
 	// The ValidatorManager may live on the L1's own chain or on C-Chain. Find the one
@@ -350,6 +358,17 @@ func workingRPC(client *http.Client, in riskInput) (rpcURL, location string) {
 		}
 	}
 	return "", ""
+}
+
+// isPlaceholderManager reports whether addr is empty, zero or one of the standard
+// EVM precompiles (0x01-0x09). None of these can call the Warp precompile.
+func isPlaceholderManager(addr string) bool {
+	h := strings.TrimPrefix(strings.ToLower(addr), "0x")
+	if h == "" {
+		return true
+	}
+	n, ok := new(big.Int).SetString(h, 16)
+	return ok && n.Cmp(big.NewInt(9)) <= 0
 }
 
 // --- ABI / hex helpers ---

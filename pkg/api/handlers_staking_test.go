@@ -79,6 +79,7 @@ func TestStakingModel(t *testing.T) {
 	require.Equal(t, "poa", stakingModel("s", "unknown", "Proof of Authority", false))
 	require.Equal(t, "pos", stakingModel("s", "", "", true))
 	require.Equal(t, "unknown", stakingModel("s", "", "", false))
+	require.Equal(t, "none", stakingModel("s", "placeholder", "Proof of Authority", false))
 }
 
 func TestHandleStakingUnlocks_InvalidWeeks(t *testing.T) {

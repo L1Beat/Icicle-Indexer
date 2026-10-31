@@ -482,7 +482,7 @@ CREATE TABLE IF NOT EXISTS chain_risk (
     validator_manager_address String,  -- The ValidatorManager contract (0x-prefixed hex)
 
     -- Manager type & owner
-    manager_type LowCardinality(String) DEFAULT 'unknown',  -- PoA | PoS-native | PoS-erc20 | unknown
+    manager_type LowCardinality(String) DEFAULT 'unknown',  -- PoA | PoS-native | PoS-erc20 | placeholder | unknown
     manager_location LowCardinality(String) DEFAULT 'unknown',  -- where the manager contract has code: c-chain | self | unknown
     owner_address Nullable(String),  -- ValidatorManager owner() as 0x-prefixed hex, null if unresolved
     owner_kind LowCardinality(String) DEFAULT 'unknown',  -- eoa | multisig | timelock | dao | contract | unknown

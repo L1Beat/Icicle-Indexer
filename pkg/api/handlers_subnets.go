@@ -148,7 +148,7 @@ type RiskResponse struct {
 // contract-reading syncer and remain "unknown"/null until then.
 type ValidatorManagerRisk struct {
 	Address string `json:"address"`
-	Type    string `json:"type"` // "PoA" | "PoS-native" | "PoS-erc20" | "unknown"
+	Type    string `json:"type"` // "PoA" | "PoS-native" | "PoS-erc20" | "placeholder" | "unknown"
 	// DeployedOn is where the manager contract has code: "c-chain" means validators can
 	// still be managed if the L1 halts; "self" means the manager lives on the L1 itself
 	// and is unreachable if the chain is stuck; "unknown" means no contract was found.
@@ -211,14 +211,17 @@ const decentralizationSubquery = `(
 		GROUP BY subnet_id
 	)`
 
-// stakingModel classifies a chain as "pos", "poa" or "unknown". The on-chain
-// ValidatorManager type wins, then the registry's sybil_resistance_type, then a
-// curated staking factor (only PoS chains have one).
+// stakingModel classifies a chain as "pos", "poa", "none" or "unknown". The
+// on-chain ValidatorManager type wins, then the registry's sybil_resistance_type,
+// then a curated staking factor (only PoS chains have one). "none" means the
+// manager address is a placeholder, so the validator set can't change.
 func stakingModel(subnetID, managerType, sybilType string, hasStakingFactor bool) string {
 	if subnetID == primaryNetworkSubnetID {
 		return "pos"
 	}
 	switch managerType {
+	case "placeholder":
+		return "none"
 	case "PoA":
 		return "poa"
 	case "PoS-native", "PoS-erc20":
