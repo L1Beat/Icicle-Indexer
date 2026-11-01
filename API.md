@@ -1959,6 +1959,8 @@ Amounts are wei strings (18 decimals, both assets).
 
 C-Chain DEX swap volume, rolled up per complete UTC day from the swap events in `raw_logs` (`pkg/dexvolume`). The indexer registers pools and rolls up new days every validator sync cycle (about 5 minutes). A day is rolled up once the C-Chain sync has passed its end. The endpoints read only the rollup and are cached for 10 minutes.
 
+**History:** all time, from the first day a tracked factory created a pool. The first run rolls up the last 365 days. Older days are filled backward a few months per cycle, so the full history fills in within about an hour of a fresh deploy.
+
 **What counts:**
 - DEXes: Pharaoh V3 (`pharaoh-v3`), Pharaoh DLMM (`pharaoh-dlmm`), Uniswap V3 (`uniswap-v3`), Blackhole CLMM (`blackhole-clmm`), LFJ V2.1 + V2.2 (`lfj`), Pangolin V3 (`pangolin-v3`). Together that is about 94% of DefiLlama's Avalanche DEX volume. Uniswap V4, WOOFi, DODO, Metric and others are not tracked.
 - Only pools whose creation event was emitted by one of these factories count, so a contract that merely emits a matching Swap event adds nothing:
@@ -1994,7 +1996,7 @@ Volume, swaps and unique addresses per DEX over the window.
 **Query Parameters:**
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `days` | int | Complete UTC days, 1-365 (default 1) |
+| `days` | int | Complete UTC days, 1-3650 (default 1) |
 
 **Response:**
 ```json
@@ -2036,7 +2038,7 @@ Daily volume and swaps, total and per DEX. Oldest first.
 **Query Parameters:**
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `days` | int | Complete UTC days, 1-365 (default 90) |
+| `days` | int | Complete UTC days, 1-3650 (default 90) |
 
 **Response:**
 ```json

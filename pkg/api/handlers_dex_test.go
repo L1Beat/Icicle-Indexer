@@ -122,7 +122,7 @@ func TestHandleDexTimeseriesAndPools(t *testing.T) {
 
 	for _, path := range []string{
 		"/api/v1/metrics/dex?days=0",
-		"/api/v1/metrics/dex?days=366",
+		"/api/v1/metrics/dex?days=3651",
 		"/api/v1/metrics/dex/timeseries?days=x",
 		"/api/v1/metrics/dex/pools?days=31",
 		"/api/v1/metrics/dex/pools?limit=101",

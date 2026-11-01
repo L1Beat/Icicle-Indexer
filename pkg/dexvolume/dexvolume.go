@@ -83,7 +83,8 @@ const WAVAX = "b31f66aa3c1e785363f0875a1b74e27b85fd66c7"
 // flagged_swaps. Flagged swaps stay in the volume.
 const FlagUSD = 1_000_000
 
-// BackfillDays is how far back the first run rolls up.
+// BackfillDays is how far back the first forward run rolls up. Older days, down
+// to the first tracked pool, are filled backward over the following cycles.
 const BackfillDays = 365
 
 // poolScanWindowDays bounds one creation-event scan INSERT.
@@ -92,17 +93,29 @@ const poolScanWindowDays = 90
 // maxDaysPerInsert bounds one rollup INSERT.
 const maxDaysPerInsert = 31
 
+// maxHistoryBatchesPerSync bounds the backward history fill per Sync call, so
+// it does not hold up the validator cycle for long.
+const maxHistoryBatchesPerSync = 4
+
+// historyWatermark names the indexer_watermarks row holding the first day the
+// backward fill has covered (last_period).
+const historyWatermark = "dexvolume/daily_from"
+
 // poolHistoryStart bounds the one-time scan for factory creation events. All
 // tracked factories were deployed after it.
 var poolHistoryStart = time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC)
 
-// Sync registers new pools and rolls up every complete UTC day not yet in
-// dex_daily. It is cheap when there is nothing to do and safe to re-run.
+// Sync registers new pools, rolls up every complete UTC day not yet in
+// dex_daily, then extends history backward toward the first tracked pool a few
+// batches per call. It is cheap when there is nothing to do and safe to re-run.
 func Sync(ctx context.Context, conn driver.Conn) error {
 	if err := syncPools(ctx, conn); err != nil {
 		return fmt.Errorf("pools: %w", err)
 	}
-	return syncDays(ctx, conn)
+	if err := syncDays(ctx, conn); err != nil {
+		return err
+	}
+	return backfillHistory(ctx, conn)
 }
 
 // syncPools scans factory creation events: the full history for any factory
@@ -308,4 +321,67 @@ func rollupSQL() string {
 		)
 		GROUP BY day, dex, pool
 	`, ChainID, WAVAX, topicSwapV3, topicSwapLB, FlagUSD, strings.Join(lb, ", "))
+}
+
+// backfillHistory rolls up days before the oldest covered day, newest first,
+// down to the day the first tracked pool was created. Progress is kept in
+// indexer_watermarks, so days without swaps are not retried.
+func backfillHistory(ctx context.Context, conn driver.Conn) error {
+	var first time.Time
+	if err := conn.QueryRow(ctx, `SELECT toDate(min(created_time)) FROM dex_pools FINAL`).Scan(&first); err != nil {
+		return err
+	}
+	if first.Year() < 2000 {
+		return nil
+	}
+
+	var covered time.Time
+	rows, err := conn.Query(ctx, `
+		SELECT last_period FROM indexer_watermarks FINAL
+		WHERE chain_id = ? AND indexer_name = ?`, uint32(ChainID), historyWatermark)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		if err := rows.Scan(&covered); err != nil {
+			rows.Close()
+			return err
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if covered.IsZero() {
+		if err := conn.QueryRow(ctx, `SELECT min(day) FROM dex_daily`).Scan(&covered); err != nil {
+			return err
+		}
+		if covered.Year() < 2000 {
+			return nil // nothing rolled up forward yet
+		}
+	}
+	covered = covered.UTC().Truncate(24 * time.Hour)
+	first = first.UTC().Truncate(24 * time.Hour)
+
+	for i := 0; i < maxHistoryBatchesPerSync && covered.After(first); i++ {
+		from := covered.AddDate(0, 0, -maxDaysPerInsert)
+		if from.Before(first) {
+			from = first
+		}
+		start := time.Now()
+		if err := rollup(ctx, conn, from, covered); err != nil {
+			return fmt.Errorf("history rollup %s..%s: %w", from.Format("2006-01-02"), covered.Format("2006-01-02"), err)
+		}
+		wctx, cancel := chwrapper.WriteContext(ctx)
+		err := conn.Exec(wctx, `
+			INSERT INTO indexer_watermarks (chain_id, indexer_name, granularity, last_period, last_block_num)
+			VALUES (?, ?, 'day', ?, 0)`, uint32(ChainID), historyWatermark, from)
+		cancel()
+		if err != nil {
+			return err
+		}
+		slog.Info("DEX history rolled up", "from", from.Format("2006-01-02"), "to", covered.Format("2006-01-02"), "duration", time.Since(start))
+		covered = from
+	}
+	return nil
 }

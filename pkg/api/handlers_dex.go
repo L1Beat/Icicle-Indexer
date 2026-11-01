@@ -113,13 +113,13 @@ func (s *Server) dexWindow(ctx context.Context, days int) (DexWindow, time.Time,
 // @Description Swap volume, swaps and unique addresses per DEX (Pharaoh V3, Pharaoh DLMM, Uniswap V3, Blackhole CLMM, LFJ V2.1+V2.2, Pangolin V3) over the last N complete UTC days ending as_of. days=1 is the last complete UTC day (matches DefiLlama's daily numbers), not a rolling 24h. Only pools created by the known factories count. Swaps are priced at a USD stablecoin side ($1) or a WAVAX side (hourly AVAX price from WAVAX/stablecoin swaps), one side each; others are counted but unpriced (see priced_share). unique_addresses counts tx.from, bots included; totals deduplicate across DEXes. Cached for 10 minutes.
 // @Tags Metrics - DEX
 // @Produce json
-// @Param days query int false "Complete UTC days, 1-365" default(1)
+// @Param days query int false "Complete UTC days, 1-3650" default(1)
 // @Success 200 {object} Response{data=DexOverview}
 // @Failure 400 {object} ErrorResponse
 // @Failure 500 {object} ErrorResponse
 // @Router /api/v1/metrics/dex [get]
 func (s *Server) handleDexOverview(w http.ResponseWriter, r *http.Request) {
-	days, err := dexDays(r, 1, 365)
+	days, err := dexDays(r, 1, 3650)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, err.Error())
 		return
@@ -187,13 +187,13 @@ func (s *Server) loadDexOverview(ctx context.Context, days int) (DexOverview, er
 // @Description Daily volume and swaps, total and per DEX, for the last N complete UTC days ending at the newest rolled-up day. Oldest first. Cached for 10 minutes.
 // @Tags Metrics - DEX
 // @Produce json
-// @Param days query int false "Complete UTC days, 1-365" default(90)
+// @Param days query int false "Complete UTC days, 1-3650" default(90)
 // @Success 200 {object} Response{data=[]DexDay}
 // @Failure 400 {object} ErrorResponse
 // @Failure 500 {object} ErrorResponse
 // @Router /api/v1/metrics/dex/timeseries [get]
 func (s *Server) handleDexTimeseries(w http.ResponseWriter, r *http.Request) {
-	days, err := dexDays(r, 90, 365)
+	days, err := dexDays(r, 90, 3650)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, err.Error())
 		return
