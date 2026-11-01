@@ -19,11 +19,15 @@ import (
 var (
 	topicAaveLiquidation  = EventTopic("LiquidationCall(address,address,address,uint256,uint256,address,bool)")
 	topicBenqiLiquidation = EventTopic("LiquidateBorrow(address,address,uint256,address,uint256)")
+	topicV4Liquidation    = EventTopic("LiquidationCall(uint256,uint256,address,address,bool,uint256,uint256,(int256,int256,uint256),uint256,uint256,uint256)")
 	mul1e10liq            = new(big.Int).Exp(big.NewInt(10), big.NewInt(10), nil)
+	ray                   = new(big.Int).Exp(big.NewInt(10), big.NewInt(27), nil)
 )
 
 const (
-	liqWatermark  = "lending_liquidations"
+	// liqWatermark names the scan cursor. Bumped to _v2 when seized_usd and Aave
+	// V4 were added, so history is rescanned and existing rows are replaced.
+	liqWatermark  = "lending_liquidations_v2"
 	liqRangeBatch = 1_000_000 // blocks scanned per cycle while backfilling
 )
 
@@ -34,8 +38,34 @@ type liqSource struct {
 	oracle    string           // head oracle, fallback when block-pinned resolution fails
 	anchor    string           // stable contract to resolve the oracle at a block
 	oracleSig string           // getPriceOracle() (Aave) / oracle() (Benqi)
-	decimals  map[string]uint8 // debt underlying -> decimals (Aave); nil for Benqi
+	decimals  map[string]uint8 // underlying -> decimals (Aave); nil for Benqi
 	isBenqi   bool
+	isV4      bool // Aave V4 spoke: assets are reserve IDs, priced by the spoke oracle
+}
+
+// Aave V4 spokes on the Core Hub (bgd-labs aave-address-book AaveV4Avalanche).
+// Each emits its own LiquidationCall, keyed by its reserve IDs.
+var aaveV4Spokes = []string{
+	"0x435272ceff93a1e657e8abfdf0a13e95900a3a56", // main
+	"0x3b517594277c67307cf2d7cbe6fe1d4399b68c41", // avax correlated
+	"0xaf22446124e566e54845f65b722e4dcbf12b650a", // ethena ecosystem
+	"0x6a37776b5e026dbdf043b4f933c323c84dd1b514", // forex
+}
+
+// AaveV4LiqSources returns one liquidation source per Aave V4 spoke. They need
+// no adapter: reserves and oracle are resolved lazily from the spoke.
+func AaveV4LiqSources() []liqSource {
+	out := make([]liqSource, 0, len(aaveV4Spokes))
+	for _, sp := range aaveV4Spokes {
+		out = append(out, liqSource{protocol: "aave-v4", logAddrs: []string{sp}, isV4: true})
+	}
+	return out
+}
+
+// v4Reserve is a spoke reserve's underlying token.
+type v4Reserve struct {
+	underlying [20]byte
+	decimals   uint8
 }
 
 // LiquidationRow is one decoded, valued liquidation ready to persist.
@@ -47,6 +77,7 @@ type LiquidationRow struct {
 	LogIndex                               uint32
 	Liquidator, Borrower, Collateral, Debt [20]byte
 	RepayAmount, SeizeAmount, RepaidUSD    *big.Int
+	SeizedUnderlying, SeizedUSD            *big.Int // seized collateral in underlying units, and in 1e18 USD
 }
 
 // LiquidationIngester scans, values, and persists executed liquidations.
@@ -57,6 +88,8 @@ type LiquidationIngester struct {
 	addrSet     []string
 	byAddr      map[string]liqSource // log address -> its source (Benqi markets all map to the Benqi source)
 	oracleCache map[string]string    // protocol|block-bucket -> oracle resolved at that block
+	v4Reserves  map[string]v4Reserve // spoke|reserveId -> underlying
+	v4Oracles   map[string]string    // spoke -> oracle
 }
 
 // oracleStride buckets oracle resolution by ~1 day; oracles rotate rarely, so this
@@ -88,7 +121,8 @@ func buildLiqSource(protocol Protocol, addrs Addresses, params []AssetParam) liq
 
 // NewLiquidationIngester builds an ingester from the active protocols' sources.
 func NewLiquidationIngester(store *Store, rpc *Client, chainID uint32, sources []liqSource) *LiquidationIngester {
-	li := &LiquidationIngester{store: store, rpc: rpc, chainID: chainID, byAddr: map[string]liqSource{}, oracleCache: map[string]string{}}
+	li := &LiquidationIngester{store: store, rpc: rpc, chainID: chainID, byAddr: map[string]liqSource{}, oracleCache: map[string]string{},
+		v4Reserves: map[string]v4Reserve{}, v4Oracles: map[string]string{}}
 	for _, s := range sources {
 		for _, a := range s.logAddrs {
 			la := NormalizeAddr(a)
@@ -179,7 +213,7 @@ func (li *LiquidationIngester) scan(ctx context.Context, from, to uint64) ([]Liq
 		WHERE chain_id = ? AND block_number >= ? AND block_number <= ?
 			AND address IN (%s) AND topic0 IN (%s)
 		ORDER BY block_number, log_index
-	`, addrInList(li.addrSet), topicInList([]string{topicAaveLiquidation, topicBenqiLiquidation}))
+	`, addrInList(li.addrSet), topicInList([]string{topicAaveLiquidation, topicBenqiLiquidation, topicV4Liquidation}))
 
 	rows, err := li.store.conn.Query(ctx, q, li.chainID, from, to)
 	if err != nil {
@@ -225,10 +259,38 @@ func (li *LiquidationIngester) scan(ctx context.Context, from, to uint64) ([]Liq
 			r.Collateral = dataAddr(data, 3)
 			r.SeizeAmount = Word(data, 4)
 			r.Debt = addr // emitting qiToken market
+		case topicV4Liquidation:
+			// indexed: collateralReserveId (t1), debtReserveId (t2), user (t3); data:
+			// liquidator(0), receiveShares(1), debtAmountRestored(2),
+			// drawnSharesLiquidated(3), premiumDelta(4-6, restoredPremiumRay at 6),
+			// collateralAmountRemoved(7), collateralSharesLiquidated(8),
+			// collateralSharesToLiquidator(9). Amounts are in asset units.
+			if !src.isV4 {
+				continue
+			}
+			coll, ok1 := li.v4ReserveAt(ctx, la, new(big.Int).SetBytes(t1[:]))
+			debt, ok2 := li.v4ReserveAt(ctx, la, new(big.Int).SetBytes(t2[:]))
+			if !ok1 || !ok2 {
+				slog.Warn("lending: aave v4 reserve unresolved, skipping liquidation", "spoke", la, "tx", hex.EncodeToString(tx[:]))
+				continue
+			}
+			r.Protocol = "aave-v4"
+			r.Collateral = coll.underlying
+			r.Debt = debt.underlying
+			r.Borrower = last20(t3)
+			r.Liquidator = dataAddr(data, 0)
+			r.RepayAmount = new(big.Int).Add(Word(data, 2), new(big.Int).Div(Word(data, 6), ray))
+			r.SeizeAmount = Word(data, 7)
+			r.SeizedUnderlying = r.SeizeAmount
+			usdRepaid, usdSeized := li.valueV4(ctx, la, new(big.Int).SetBytes(t2[:]), new(big.Int).SetBytes(t1[:]), debt, coll, r)
+			r.RepaidUSD, r.SeizedUSD = usdRepaid, usdSeized
+			out = append(out, r)
+			continue
 		default:
 			continue
 		}
 		r.RepaidUSD = li.valueRepaid(ctx, src, r)
+		r.SeizedUnderlying, r.SeizedUSD = li.valueSeized(ctx, src, r)
 		out = append(out, r)
 	}
 	return out, rows.Err()
@@ -310,7 +372,7 @@ func (li *LiquidationIngester) persist(ctx context.Context, rows []LiquidationRo
 	batch, err := li.store.conn.PrepareBatch(ctx, `INSERT INTO lending_liquidations (
 		chain_id, protocol, block_number, block_time, tx_hash, log_index,
 		liquidator, borrower, collateral_asset, debt_asset,
-		repay_amount, seize_amount, repaid_usd
+		repay_amount, seize_amount, repaid_usd, seized_underlying, seized_usd
 	)`)
 	if err != nil {
 		return err
@@ -321,11 +383,109 @@ func (li *LiquidationIngester) persist(ctx context.Context, rows []LiquidationRo
 			li.chainID, r.Protocol, r.Block, r.BlockTime, r.TxHash[:], r.LogIndex,
 			r.Liquidator[:], r.Borrower[:], r.Collateral[:], r.Debt[:],
 			orZero(r.RepayAmount), orZero(r.SeizeAmount), orZero(r.RepaidUSD),
+			orZero(r.SeizedUnderlying), orZero(r.SeizedUSD),
 		); err != nil {
 			return err
 		}
 	}
 	return batch.Send()
+}
+
+// valueSeized converts the seized collateral to underlying units and prices it
+// in USD (1e18) with the oracle at the event block. Aave seizes underlying
+// directly. Benqi seizes qiTokens, converted with the collateral market's
+// exchangeRateStored at the block. Zero when a read fails.
+func (li *LiquidationIngester) valueSeized(ctx context.Context, src liqSource, r LiquidationRow) (*big.Int, *big.Int) {
+	if r.SeizeAmount == nil || r.SeizeAmount.Sign() == 0 {
+		return big.NewInt(0), big.NewInt(0)
+	}
+	bh := "0x" + strconv.FormatUint(uint64(r.Block), 16)
+	coll := "0x" + hex.EncodeToString(r.Collateral[:])
+	underlying := r.SeizeAmount
+	if src.isBenqi {
+		res, err := li.rpc.EthCall(ctx, coll, EncodeCall0("exchangeRateStored()"), bh)
+		if err != nil {
+			return big.NewInt(0), big.NewInt(0)
+		}
+		rate := Word(DecodeHexBytes(res), 0)
+		underlying = new(big.Int).Div(new(big.Int).Mul(r.SeizeAmount, rate), WAD)
+	}
+	oracle := li.oracleAt(ctx, src, uint64(r.Block))
+	if oracle == "" {
+		return underlying, big.NewInt(0)
+	}
+	if src.isBenqi {
+		price := li.callPrice(ctx, oracle, "getUnderlyingPrice(address)", coll, bh)
+		if price == nil || price.Sign() == 0 {
+			return underlying, big.NewInt(0)
+		}
+		return underlying, new(big.Int).Div(new(big.Int).Mul(price, underlying), WAD)
+	}
+	price := li.callPrice(ctx, oracle, "getAssetPrice(address)", coll, bh)
+	if price == nil || price.Sign() == 0 {
+		return underlying, big.NewInt(0)
+	}
+	dec := uint8(18)
+	if d, ok := src.decimals[coll]; ok && d > 0 {
+		dec = d
+	}
+	v := new(big.Int).Mul(underlying, price)
+	v.Mul(v, mul1e10liq)
+	return underlying, v.Div(v, pow10liq(dec))
+}
+
+// v4ReserveAt resolves a spoke reserve's underlying and decimals, cached. The
+// mapping is fixed once a reserve is added, so the head state is used.
+func (li *LiquidationIngester) v4ReserveAt(ctx context.Context, spoke string, id *big.Int) (v4Reserve, bool) {
+	key := spoke + "|" + id.String()
+	if r, ok := li.v4Reserves[key]; ok {
+		return r, true
+	}
+	// getReserve(uint256) returns (underlying, hub, assetId, decimals, ...).
+	data := Selector("getReserve(uint256)") + hex.EncodeToString(id.FillBytes(make([]byte, 32)))
+	res, err := li.rpc.EthCall(ctx, spoke, data, "latest")
+	if err != nil {
+		return v4Reserve{}, false
+	}
+	b := DecodeHexBytes(res)
+	if len(b) < 4*32 {
+		return v4Reserve{}, false
+	}
+	var r v4Reserve
+	copy(r.underlying[:], b[12:32])
+	r.decimals = uint8(WordU64(b, 3))
+	li.v4Reserves[key] = r
+	return r, true
+}
+
+// valueV4 prices repaid debt and seized collateral with the spoke's oracle at
+// the event block. getReservePrice is USD with 8 decimals.
+func (li *LiquidationIngester) valueV4(ctx context.Context, spoke string, debtID, collID *big.Int, debt, coll v4Reserve, r LiquidationRow) (*big.Int, *big.Int) {
+	oracle, ok := li.v4Oracles[spoke]
+	if !ok {
+		res, err := li.rpc.EthCall(ctx, spoke, EncodeCall0("ORACLE()"), "latest")
+		if err != nil {
+			return big.NewInt(0), big.NewInt(0)
+		}
+		oracle = Addr(DecodeHexBytes(res), 0)
+		li.v4Oracles[spoke] = oracle
+	}
+	bh := "0x" + strconv.FormatUint(uint64(r.Block), 16)
+	value := func(id *big.Int, amount *big.Int, dec uint8) *big.Int {
+		if amount == nil || amount.Sign() == 0 {
+			return big.NewInt(0)
+		}
+		data := Selector("getReservePrice(uint256)") + hex.EncodeToString(id.FillBytes(make([]byte, 32)))
+		res, err := li.rpc.EthCall(ctx, oracle, data, bh)
+		if err != nil {
+			return big.NewInt(0)
+		}
+		price := Word(DecodeHexBytes(res), 0)
+		v := new(big.Int).Mul(amount, price)
+		v.Mul(v, mul1e10liq)
+		return v.Div(v, pow10liq(dec))
+	}
+	return value(debtID, r.RepayAmount, debt.decimals), value(collID, r.SeizeAmount, coll.decimals)
 }
 
 // --- helpers ---

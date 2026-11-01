@@ -1927,12 +1927,13 @@ Anchors, verified on-chain 2026-11-01: Aave V3 PoolAddressesProvider `0xa97684ea
 
 ### GET /api/v1/metrics/lending/timeseries
 
-Daily supplied, borrowed and rates of AVAX or sAVAX across the three protocols, from the last sample of each UTC day. History starts 2026-11-01. Oldest first.
+Daily supplied, borrowed and rates of AVAX or sAVAX across the three protocols, from the last sample of each UTC day, about a year back (see `market=` below for how past days are read). Oldest first.
 
 **Query Parameters:**
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `asset` | string | Required. `avax` (WAVAX on Aave, native AVAX on BENQI) or `savax` |
+| `asset` | string | `avax` (WAVAX on Aave, native AVAX on BENQI) or `savax`. Required unless `market` is set |
+| `market` | string | One market, `<protocol_id>:<asset>`. See below |
 | `days` | int | Days back, 1-3650 (default 365) |
 
 **Response:**
@@ -1952,6 +1953,127 @@ Daily supplied, borrowed and rates of AVAX or sAVAX across the three protocols, 
 ```
 
 Amounts are wei strings (18 decimals, both assets).
+
+### GET /api/v1/metrics/lending/timeseries?market=
+
+With `market=<protocol_id>:<asset>` (asset as in `/metrics/lending`, e.g. `aave-v3:0xb31f66aa3c1e785363f0875a1b74e27b85fd66c7`, or `benqi:0x0000000000000000000000000000000000000000` for qiAVAX), `/metrics/lending/timeseries` returns that market's daily history instead of the AVAX/sAVAX view. `days` is 1-3650 (default 365).
+
+Past days are read at each UTC day's last block on our archive node, with the same contract reader as the live snapshot. That covers about a year back (filled by the indexer a couple of weeks per cycle after a deploy). Today's row is the latest live sample. A market appears from the first day it existed (Aave V4 from its launch).
+
+```json
+{
+  "data": [
+    {
+      "date": "2025-11-01",
+      "total_supplied": "18159594657983586977444819",
+      "total_borrowed": "7019569841697407319450460",
+      "supplied_usd": 339836000.1,
+      "borrowed_usd": 131364000.2,
+      "utilization_percent": 38.65,
+      "supply_apy_percent": 1.17,
+      "borrow_apy_percent": 3.44,
+      "price_usd": 18.714
+    }
+  ]
+}
+```
+
+USD fields are null on days the oracle read failed.
+
+### GET /api/v1/metrics/lending/timeseries/totals
+
+Daily supplied and borrowed USD per protocol and overall, from each market's daily sample and its oracle price that day. Markets without a price that day are left out. Cached for 10 minutes. Oldest first.
+
+**Query Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `days` | int | Days back, 1-3650 (default 365) |
+
+```json
+{
+  "data": [
+    {
+      "date": "2026-10-31",
+      "supplied_usd": 683158590.7,
+      "borrowed_usd": 216620019.3,
+      "by_protocol": [
+        { "protocol_id": "aave-v3", "supplied_usd": 431147408.1, "borrowed_usd": 149365627.7 }
+      ]
+    }
+  ]
+}
+```
+
+### Liquidations
+
+Executed liquidations on Aave V3 (Pool `LiquidationCall`), Aave V4 (each spoke's `LiquidationCall`) and BENQI (each qiToken's `LiquidateBorrow`), from `raw_logs`, ingested by the `icicle-lending` service into `lending_liquidations` over the protocols' full history. Values use each protocol's own oracle at the event block: Aave V3 AaveOracle, BENQI PriceOracle (resolved at the block, since it rotates), Aave V4 the spoke's oracle (`getReservePrice`).
+
+- `debt` is what the liquidator repaid: Aave V3 `debtToCover`, BENQI `repayAmount`, Aave V4 `debtAmountRestored` plus restored premium.
+- `collateral` is what was seized, in underlying units: Aave V3 `liquidatedCollateralAmount`, Aave V4 `collateralAmountRemoved`, BENQI `seizeTokens` converted with the collateral market's `exchangeRateStored` at the block (it includes the protocol's seize share).
+- Assets are the underlying tokens (BENQI qiToken markets are mapped to theirs, native AVAX is `0x00..00`). Symbols come from the lending market snapshots and are empty for markets delisted before the snapshots began.
+- USD values are null when the oracle read failed. Daily sums cover priced liquidations only, and `unpriced` counts the rest.
+
+#### GET /api/v1/metrics/lending/liquidations
+
+Per UTC day (today's partial day included): count, repaid and seized USD, by protocol and by collateral asset (the same token across protocols is one row). Cached for 5 minutes. Oldest first.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `days` | int | Days back including today, 1-3650 (default 30) |
+
+```json
+{
+  "data": [
+    {
+      "date": "2026-10-31",
+      "count": 4,
+      "unpriced": 0,
+      "repaid_usd": 12455.2,
+      "seized_usd": 13510.9,
+      "by_protocol": [ { "count": 2, "unpriced": 0, "repaid_usd": 6800.1, "seized_usd": 7480.3, "protocol_id": "benqi" } ],
+      "by_collateral": [ { "count": 3, "unpriced": 0, "repaid_usd": 9800.0, "seized_usd": 10690.2, "asset": "0x2b2c81e08f1af8835a78bb2a90ae924ace0ea4be", "symbol": "sAVAX" } ]
+    }
+  ]
+}
+```
+
+#### GET /api/v1/metrics/lending/liquidations/recent
+
+The latest liquidations, newest first. Cached for 5 minutes.
+
+Sample values are illustrative.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `limit` | int | Rows, 1-500 (default 50) |
+| `min_usd` | number | Keep liquidations whose repaid or seized value is at least this |
+
+```json
+{
+  "data": [
+    {
+      "protocol_id": "aave-v4",
+      "tx_hash": "0x51cac928d36cffc520519fd7cc66c9651ddadfc955ce00adec3a86e05676ca57",
+      "block_number": 99100000,
+      "block_time": "2026-11-01T12:00:00Z",
+      "borrower": "0x...",
+      "liquidator": "0x...",
+      "debt": { "address": "0x9702230a8ea53601f5cd2dc00fdbc13d4df4a8c7", "symbol": "USDt", "decimals": 6, "amount": "2487780258", "usd": 2484.80 },
+      "collateral": { "address": "0xb31f66aa3c1e785363f0875a1b74e27b85fd66c7", "symbol": "WAVAX", "decimals": 18, "amount": "319987725290971256930", "usd": 2708.43 }
+    }
+  ]
+}
+```
+
+#### GET /api/v1/metrics/lending/liquidations/top
+
+The largest liquidations by seized USD over the last N days (today included), same shape as `/recent`. Cached for 5 minutes.
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `days` | int | Days back including today, 1-3650 (default 30) |
+| `limit` | int | Rows, 1-100 (default 20) |
+
 
 ---
 
@@ -2342,7 +2464,11 @@ ws.onmessage = (event) => {
 | GET | `/api/v1/metrics/staking/liquid/timeseries` | Daily liquid staking samples |
 | GET | `/api/v1/metrics/restaking` | Restaked collateral per L1 (Suzaku vaults) |
 | GET | `/api/v1/metrics/lending` | C-Chain lending markets (Aave V3, Aave V4, BENQI) |
-| GET | `/api/v1/metrics/lending/timeseries` | Daily AVAX or sAVAX lending across protocols |
+| GET | `/api/v1/metrics/lending/timeseries` | Daily AVAX or sAVAX lending, or one market (`market=`) |
+| GET | `/api/v1/metrics/lending/timeseries/totals` | Daily lending USD totals per protocol |
+| GET | `/api/v1/metrics/lending/liquidations` | Daily liquidations by protocol and collateral |
+| GET | `/api/v1/metrics/lending/liquidations/recent` | Latest liquidations |
+| GET | `/api/v1/metrics/lending/liquidations/top` | Largest liquidations by seized USD |
 | GET | `/api/v1/metrics/dex` | C-Chain DEX volume per DEX |
 | GET | `/api/v1/metrics/dex/timeseries` | Daily C-Chain DEX volume |
 | GET | `/api/v1/metrics/dex/pools` | Top C-Chain DEX pools by volume |

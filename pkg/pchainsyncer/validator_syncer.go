@@ -268,6 +268,9 @@ func (vs *ValidatorSyncer) syncOnce(ctx context.Context) error {
 	if err := SnapshotLendingMarkets(ctx, vs.conn, vs.fetcher.RpcURL()); err != nil {
 		slog.Warn("Failed to snapshot lending markets", "error", err)
 	}
+	if err := BackfillLendingHistory(ctx, vs.conn, vs.fetcher.RpcURL()); err != nil {
+		slog.Warn("Failed to backfill lending history", "error", err)
+	}
 
 	// Step 17: Register new DEX pools and roll up complete UTC days of swaps.
 	if err := dexvolume.Sync(ctx, vs.conn); err != nil {

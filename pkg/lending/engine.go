@@ -99,6 +99,8 @@ func (e *Engine) Bootstrap(ctx context.Context, adapters []Adapter) error {
 		return errNoProtocols
 	}
 
+	// Aave V4 has no position adapter yet; its spokes only feed liquidations.
+	e.liqSources = append(e.liqSources, AaveV4LiqSources()...)
 	e.liq = NewLiquidationIngester(e.store, e.rpc, e.cfg.ChainID, e.liqSources)
 	e.risk = NewRiskSampler(e.store, e.cfg.ChainID, e.cfg.RiskSnapshotInterval, nil, nil)
 	e.health = NewHealthEngine(e.store, e.rpc, e.active, e.cfg.Health)

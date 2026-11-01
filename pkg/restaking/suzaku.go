@@ -54,12 +54,17 @@ type L1 struct {
 type RPCCaller struct {
 	URL    string
 	Client *http.Client
+	Block  string // block tag or 0x height for historical reads, empty for latest
 }
 
 func (c RPCCaller) Call(ctx context.Context, to string, data []byte) ([]byte, error) {
+	block := c.Block
+	if block == "" {
+		block = "latest"
+	}
 	body, _ := json.Marshal(map[string]interface{}{
 		"jsonrpc": "2.0", "id": 1, "method": "eth_call",
-		"params": []interface{}{map[string]string{"to": to, "data": "0x" + hex.EncodeToString(data)}, "latest"},
+		"params": []interface{}{map[string]string{"to": to, "data": "0x" + hex.EncodeToString(data)}, block},
 	})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.URL, bytes.NewReader(body))
 	if err != nil {

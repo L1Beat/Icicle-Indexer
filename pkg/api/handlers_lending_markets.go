@@ -2,12 +2,15 @@ package api
 
 import (
 	"context"
+	"encoding/hex"
+	"fmt"
 	"math"
 	"math/big"
 	"net/http"
 	"slices"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"icicle/pkg/lendingmarkets"
@@ -295,29 +298,29 @@ type LendingProtocolPoint struct {
 
 // handleLendingTimeseries returns daily lending history for AVAX or sAVAX
 // @Summary Lending history for AVAX or sAVAX
-// @Description Daily supplied, borrowed and rates of AVAX (WAVAX on Aave, native AVAX on BENQI) or sAVAX across Aave V3, Aave V4 and BENQI, from the last sample of each UTC day. Amounts are wei strings (18 decimals). History starts 2026-11-01. Oldest first.
+// @Description Daily supplied, borrowed and rates of AVAX (WAVAX on Aave, native AVAX on BENQI) or sAVAX across Aave V3, Aave V4 and BENQI, from the last sample of each UTC day. Amounts are wei strings (18 decimals). With market=<protocol_id>:<asset>, returns that one market's daily history instead. Past days are read at the day's last block on the archive node, about a year back. Oldest first.
 // @Tags Metrics - Staking
 // @Produce json
-// @Param asset query string true "avax or savax"
+// @Param asset query string false "avax or savax (when market is not set)"
+// @Param market query string false "One market as <protocol_id>:<asset address>, e.g. aave-v3:0xb31f66aa3c1e785363f0875a1b74e27b85fd66c7. Returns []LendingMarketPoint instead"
 // @Param days query int false "Days back, 1-3650" default(365)
 // @Success 200 {object} Response{data=[]LendingPoint}
 // @Failure 400 {object} ErrorResponse
 // @Failure 500 {object} ErrorResponse
 // @Router /api/v1/metrics/lending/timeseries [get]
 func (s *Server) handleLendingTimeseries(w http.ResponseWriter, r *http.Request) {
-	assets, ok := lendingAssetClasses[r.URL.Query().Get("asset")]
+	days, ok := lendingDays(w, r)
 	if !ok {
-		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "asset must be avax or savax")
 		return
 	}
-	days := 365
-	if q := r.URL.Query().Get("days"); q != "" {
-		n, err := strconv.Atoi(q)
-		if err != nil || n < 1 || n > 3650 {
-			writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "days must be 1-3650")
-			return
-		}
-		days = n
+	if m := r.URL.Query().Get("market"); m != "" {
+		s.lendingMarketSeries(w, r, m, days)
+		return
+	}
+	assets, ok := lendingAssetClasses[r.URL.Query().Get("asset")]
+	if !ok {
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "asset must be avax or savax, or pass market=<protocol_id>:<asset>")
+		return
 	}
 
 	rows, err := s.conn.Query(r.Context(), `
@@ -384,4 +387,149 @@ func usdOrZero(v *float64) float64 {
 		return 0
 	}
 	return *v
+}
+
+func lendingDays(w http.ResponseWriter, r *http.Request) (int, bool) {
+	days := 365
+	if q := r.URL.Query().Get("days"); q != "" {
+		n, err := strconv.Atoi(q)
+		if err != nil || n < 1 || n > 3650 {
+			writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "days must be 1-3650")
+			return 0, false
+		}
+		days = n
+	}
+	return days, true
+}
+
+// LendingMarketPoint is one market on one day. Amounts are token base units.
+type LendingMarketPoint struct {
+	Date           string   `json:"date"`
+	TotalSupplied  string   `json:"total_supplied"`
+	TotalBorrowed  string   `json:"total_borrowed"`
+	SuppliedUSD    *float64 `json:"supplied_usd"`
+	BorrowedUSD    *float64 `json:"borrowed_usd"`
+	UtilizationPct *float64 `json:"utilization_percent"`
+	SupplyAPYPct   float64  `json:"supply_apy_percent"`
+	BorrowAPYPct   float64  `json:"borrow_apy_percent"`
+	PriceUSD       *float64 `json:"price_usd"`
+}
+
+func (s *Server) lendingMarketSeries(w http.ResponseWriter, r *http.Request, market string, days int) {
+	protocol, asset, ok := strings.Cut(market, ":")
+	asset = strings.ToLower(asset)
+	if !ok || !isLendingProtocol(protocol) || !isHexAddress(asset) {
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "market must be <protocol_id>:<asset address>")
+		return
+	}
+	rows, err := s.conn.Query(r.Context(), `
+		SELECT toString(snapshot_date), decimals, toString(supplied), toString(borrowed), supply_apr, borrow_apr, price_usd
+		FROM lending_market_snapshots FINAL
+		WHERE protocol_id = ? AND asset = ? AND snapshot_date >= today() - ?
+		ORDER BY snapshot_date
+	`, protocol, asset, days)
+	if err != nil {
+		writeInternalError(w, err.Error())
+		return
+	}
+	defer rows.Close()
+	out := []LendingMarketPoint{}
+	for rows.Next() {
+		var m LendingMarket
+		var date, supplied, borrowed string
+		if err := rows.Scan(&date, &m.Decimals, &supplied, &borrowed, &m.supplyAPR, &m.borrowAPR, &m.PriceUSD); err != nil {
+			writeInternalError(w, err.Error())
+			return
+		}
+		fillLendingMarket(&m, supplied, borrowed)
+		out = append(out, LendingMarketPoint{
+			Date: date, TotalSupplied: m.TotalSupplied, TotalBorrowed: m.TotalBorrowed,
+			SuppliedUSD: m.SuppliedUSD, BorrowedUSD: m.BorrowedUSD, UtilizationPct: m.UtilizationPct,
+			SupplyAPYPct: m.SupplyAPYPct, BorrowAPYPct: m.BorrowAPYPct, PriceUSD: m.PriceUSD,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		writeInternalError(w, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, Response{Data: out})
+}
+
+// LendingTotalsPoint is one day's USD supply and borrow, overall and per
+// protocol. Markets without an oracle price that day are left out.
+type LendingTotalsPoint struct {
+	Date        string            `json:"date"`
+	SuppliedUSD float64           `json:"supplied_usd"`
+	BorrowedUSD float64           `json:"borrowed_usd"`
+	ByProtocol  []LendingUSDTotal `json:"by_protocol"`
+}
+
+// handleLendingTotals returns daily USD supply and borrow per protocol
+// @Summary Lending USD totals history
+// @Description Daily supplied and borrowed USD per protocol (Aave V3, Aave V4, BENQI) and overall, from each market's daily sample and its oracle price that day. Markets without a price are left out. Oldest first. Cached for 10 minutes.
+// @Tags Metrics - Staking
+// @Produce json
+// @Param days query int false "Days back, 1-3650" default(365)
+// @Success 200 {object} Response{data=[]LendingTotalsPoint}
+// @Failure 400 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/metrics/lending/timeseries/totals [get]
+func (s *Server) handleLendingTotals(w http.ResponseWriter, r *http.Request) {
+	days, ok := lendingDays(w, r)
+	if !ok {
+		return
+	}
+	v, err := lendingCache.get(r.Context(), fmt.Sprintf("totals:%d", days), func(ctx context.Context) (interface{}, error) {
+		rows, err := s.conn.Query(ctx, `
+			SELECT toString(snapshot_date), protocol_id,
+				sumIf(toFloat64(supplied) / pow(10, decimals) * assumeNotNull(price_usd), price_usd IS NOT NULL),
+				sumIf(toFloat64(borrowed) / pow(10, decimals) * assumeNotNull(price_usd), price_usd IS NOT NULL)
+			FROM lending_market_snapshots FINAL
+			WHERE snapshot_date >= today() - ?
+			GROUP BY snapshot_date, protocol_id
+			ORDER BY snapshot_date, protocol_id
+		`, days)
+		if err != nil {
+			return nil, err
+		}
+		defer rows.Close()
+		out := []LendingTotalsPoint{}
+		for rows.Next() {
+			var date string
+			var t LendingUSDTotal
+			if err := rows.Scan(&date, &t.ProtocolID, &t.SuppliedUSD, &t.BorrowedUSD); err != nil {
+				return nil, err
+			}
+			if len(out) == 0 || out[len(out)-1].Date != date {
+				out = append(out, LendingTotalsPoint{Date: date, ByProtocol: []LendingUSDTotal{}})
+			}
+			p := &out[len(out)-1]
+			p.SuppliedUSD += t.SuppliedUSD
+			p.BorrowedUSD += t.BorrowedUSD
+			p.ByProtocol = append(p.ByProtocol, t)
+		}
+		return out, rows.Err()
+	})
+	if err != nil {
+		writeInternalError(w, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, Response{Data: v})
+}
+
+func isLendingProtocol(id string) bool {
+	for _, p := range lendingProtocols {
+		if p.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func isHexAddress(s string) bool {
+	if len(s) != 42 || !strings.HasPrefix(s, "0x") {
+		return false
+	}
+	_, err := hex.DecodeString(s[2:])
+	return err == nil
 }

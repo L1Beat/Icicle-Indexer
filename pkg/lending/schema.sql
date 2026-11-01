@@ -115,7 +115,7 @@ ALTER TABLE lending_position_assets ADD COLUMN IF NOT EXISTS entered Bool DEFAUL
 -- so a re-scan replaces rather than duplicates. Serve with FINAL.
 CREATE TABLE IF NOT EXISTS lending_liquidations (
     chain_id UInt32,
-    protocol LowCardinality(String),       -- aave-v3 | benqi
+    protocol LowCardinality(String),       -- aave-v3 | aave-v4 | benqi
     block_number UInt32,
     block_time DateTime64(3, 'UTC'),
     tx_hash FixedString(32),
@@ -125,11 +125,13 @@ CREATE TABLE IF NOT EXISTS lending_liquidations (
     collateral_asset FixedString(20),      -- Aave underlying / Benqi qiToken market
     debt_asset FixedString(20),            -- Aave underlying / Benqi qiToken market
     repay_amount UInt256,                  -- native debt units (Aave debtToCover, Benqi repayAmount)
-    seize_amount UInt256,                  -- native units (Aave liquidatedCollateralAmount, Benqi seizeTokens)
+    seize_amount UInt256,                  -- native units (Aave liquidatedCollateralAmount, Benqi seizeTokens, Aave V4 collateralAmountRemoved)
     repaid_usd UInt256,                    -- 1e18 USD of repaid debt at the block, 0 when unpriced
     updated_at DateTime64(3, 'UTC') DEFAULT now64(3)
 ) ENGINE = ReplacingMergeTree(updated_at)
 ORDER BY (chain_id, block_number, tx_hash, log_index);
+ALTER TABLE lending_liquidations ADD COLUMN IF NOT EXISTS seized_underlying UInt256 DEFAULT 0 AFTER repaid_usd;
+ALTER TABLE lending_liquidations ADD COLUMN IF NOT EXISTS seized_usd UInt256 DEFAULT 0 AFTER seized_underlying;
 
 -- Periodic aggregate-risk snapshots per protocol, for the dashboard's risk-trend
 -- timeseries. Append-only, one row per (protocol, sample time) at a fixed debt
