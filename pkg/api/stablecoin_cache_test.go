@@ -3,11 +3,13 @@ package api
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -101,4 +103,36 @@ func TestStablecoinCache_ErrorsAndEmptyNotCached(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, got, 1)
 	assert.Equal(t, int32(3), calls.Load())
+}
+
+// Warm-up loads every registry chain, so the first request is a cache hit.
+func TestWarmStablecoins(t *testing.T) {
+	var queries atomic.Int32
+	mock := &MockConn{
+		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
+			queries.Add(1)
+			switch {
+			case strings.Contains(query, "DISTINCT chain_id"):
+				return NewMockRows([]string{"chain_id"}, [][]interface{}{{uint32(43114)}}), nil
+			case strings.Contains(query, "SELECT token, symbol"):
+				return NewMockRows([]string{"token", "symbol"}, [][]interface{}{{nil, "USDC"}}), nil
+			}
+			return NewMockRows(nil, nil), nil
+		},
+	}
+	s := NewTestServer(mock)
+	s.WarmStablecoins(context.Background())
+
+	require.Eventually(t, func() bool { return queries.Load() == 4 }, time.Second, 5*time.Millisecond)
+	require.Eventually(t, func() bool {
+		s.stablecoins.mu.Lock()
+		defer s.stablecoins.mu.Unlock()
+		e := s.stablecoins.entries[43114]
+		return e != nil && e.data != nil
+	}, time.Second, 5*time.Millisecond)
+
+	got, err := s.stablecoins.get(context.Background(), 43114, s.loadStablecoins)
+	require.NoError(t, err)
+	assert.Equal(t, "USDC", got[0].Symbol)
+	assert.Equal(t, int32(4), queries.Load())
 }

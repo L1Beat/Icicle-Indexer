@@ -122,3 +122,33 @@ func (c *stablecoinCache) refresh(chainID uint32, load stablecoinLoader) {
 		e.fetched = time.Now()
 	}
 }
+
+// WarmStablecoins loads the stablecoin list for every chain in the registry in
+// the background, so the first visitor after a restart does not wait for the
+// ~8s cold load.
+func (s *Server) WarmStablecoins(ctx context.Context) {
+	go func() {
+		var chains []uint32
+		rows, err := s.conn.Query(ctx, `SELECT DISTINCT chain_id FROM stablecoins FINAL`)
+		if err != nil {
+			slog.Warn("Stablecoin warm-up failed", "error", err)
+			return
+		}
+		for rows.Next() {
+			var id uint32
+			if err := rows.Scan(&id); err != nil {
+				rows.Close()
+				slog.Warn("Stablecoin warm-up failed", "error", err)
+				return
+			}
+			chains = append(chains, id)
+		}
+		rows.Close()
+		for _, id := range chains {
+			if _, err := s.stablecoins.get(ctx, id, s.loadStablecoins); err != nil {
+				slog.Warn("Stablecoin warm-up failed", "chain_id", id, "error", err)
+			}
+		}
+		slog.Info("Stablecoin cache warmed", "chains", len(chains))
+	}()
+}

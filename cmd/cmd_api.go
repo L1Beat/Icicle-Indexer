@@ -78,6 +78,9 @@ func RunAPI(ctx context.Context, opts APIOptions) {
 	// touches the enrichment tables or any third-party service.
 	server.StartEnrichmentRefresh(ctx, 5*time.Minute)
 
+	// Fill the stablecoin list cache now instead of on the first request.
+	server.WarmStablecoins(ctx)
+
 	addr := fmt.Sprintf(":%d", opts.Port)
 	httpServer := &http.Server{
 		Addr:              addr,
