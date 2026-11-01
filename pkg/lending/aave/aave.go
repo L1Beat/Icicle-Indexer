@@ -41,6 +41,7 @@ const (
 	fnGetAllReserves      = "getAllReservesTokens()"
 	fnGetReserveConfig    = "getReserveConfigurationData(address)"
 	fnGetUserReserveData  = "getUserReserveData(address,address)"
+	fnGetUserEMode        = "getUserEMode(address)"
 )
 
 // Adapter implements lending.Adapter for Aave v3.
@@ -190,6 +191,10 @@ func (a *Adapter) BuildProbe(account string, exposure []lending.Exposure) lendin
 		)
 	}
 
+	// E-Mode category last, so the per-asset pairs above keep their positions.
+	emodeIdx := len(calls)
+	calls = append(calls, lending.Call{Target: a.addrs.Pool, AllowFailure: true, Data: lending.EncodeCall1Addr(fnGetUserEMode, account)})
+
 	params := a.params
 	// Aave reports base-currency amounts in BASE_CURRENCY_UNIT (1e8 for USD on
 	// Avalanche). Normalize to 1e18 so collateral and debt values are comparable
@@ -214,11 +219,14 @@ func (a *Adapter) BuildProbe(account string, exposure []lending.Exposure) lendin
 			h.HealthFactor = lending.Word(sum, 5)
 			h.OK = true
 			h.Liquidatable = h.DebtBase.Sign() > 0 && h.HealthFactor.Cmp(lending.WAD) < 0
+			if emodeIdx < len(results) && results[emodeIdx].Success {
+				h.EModeCategory = uint8(lending.WordU64(results[emodeIdx].ReturnData, 0))
+			}
 
 			// Per-asset detail, two results per asset: reserve data then price.
 			idx := 1
 			for _, asset := range assets {
-				if idx+1 >= len(results) {
+				if idx+1 >= emodeIdx {
 					break
 				}
 				rd := results[idx]

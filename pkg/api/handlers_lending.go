@@ -48,6 +48,7 @@ type lendingPosition struct {
 	DebtBase       string           `json:"debt_base"`
 	ShortfallBase  string           `json:"shortfall_base,omitempty"`
 	LiquidityBase  string           `json:"liquidity_base,omitempty"` // Benqi distance-to-liquidation (positive side of getAccountLiquidity)
+	EModeCategory  uint8            `json:"emode_category"`           // Aave V3 E-Mode category id, 0 when not in E-Mode (always 0 for Benqi)
 	Tier           string           `json:"tier"`
 	Collateral     []lendingLeg     `json:"collateral"`
 	Debt           []lendingLeg     `json:"debt"`
@@ -113,13 +114,14 @@ func (s *Server) handleLendingPositions(w http.ResponseWriter, r *http.Request) 
 	}
 
 	query := fmt.Sprintf(`
-		SELECT account, protocol, hf, coll, debt, short, liqd, liq, tier, blk, upd FROM (
+		SELECT account, protocol, hf, coll, debt, short, liqd, em, liq, tier, blk, upd FROM (
 			SELECT account, protocol,
 				argMax(health_factor, updated_at) AS hf,
 				argMax(collateral_base, updated_at) AS coll,
 				argMax(debt_base, updated_at) AS debt,
 				argMax(shortfall_base, updated_at) AS short,
 				argMax(liquidity_base, updated_at) AS liqd,
+				argMax(emode_category, updated_at) AS em,
 				argMax(liquidatable, updated_at) AS liq,
 				argMax(tier, updated_at) AS tier,
 				argMax(block_number, updated_at) AS blk,
@@ -146,10 +148,11 @@ func (s *Server) handleLendingPositions(w http.ResponseWriter, r *http.Request) 
 		var acc [20]byte
 		var proto, tier string
 		var hf, coll, debt, short, liqd *big.Int
+		var em uint8
 		var liq bool
 		var blk uint32
 		var upd time.Time
-		if err := rows.Scan(&acc, &proto, &hf, &coll, &debt, &short, &liqd, &liq, &tier, &blk, &upd); err != nil {
+		if err := rows.Scan(&acc, &proto, &hf, &coll, &debt, &short, &liqd, &em, &liq, &tier, &blk, &upd); err != nil {
 			writeInternalError(w, err.Error())
 			return
 		}
@@ -163,6 +166,7 @@ func (s *Server) handleLendingPositions(w http.ResponseWriter, r *http.Request) 
 			DebtBase:       bigStr(debt),
 			ShortfallBase:  bigStrOmitZero(short),
 			LiquidityBase:  bigStrOmitZero(liqd),
+			EModeCategory:  em,
 			Tier:           tier,
 			BlockNumber:    blk,
 			UpdatedAt:      upd,
@@ -203,13 +207,14 @@ func (s *Server) handleLendingAccount(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := s.conn.Query(ctx, fmt.Sprintf(`
-		SELECT account, protocol, hf, coll, debt, short, liqd, liq, tier, blk, upd FROM (
+		SELECT account, protocol, hf, coll, debt, short, liqd, em, liq, tier, blk, upd FROM (
 			SELECT account, protocol,
 				argMax(health_factor, updated_at) AS hf,
 				argMax(collateral_base, updated_at) AS coll,
 				argMax(debt_base, updated_at) AS debt,
 				argMax(shortfall_base, updated_at) AS short,
 				argMax(liquidity_base, updated_at) AS liqd,
+				argMax(emode_category, updated_at) AS em,
 				argMax(liquidatable, updated_at) AS liq,
 				argMax(tier, updated_at) AS tier,
 				argMax(block_number, updated_at) AS blk,
@@ -231,17 +236,18 @@ func (s *Server) handleLendingAccount(w http.ResponseWriter, r *http.Request) {
 		var acc [20]byte
 		var proto, tier string
 		var hf, coll, debt, short, liqd *big.Int
+		var em uint8
 		var liq bool
 		var blk uint32
 		var upd time.Time
-		if err := rows.Scan(&acc, &proto, &hf, &coll, &debt, &short, &liqd, &liq, &tier, &blk, &upd); err != nil {
+		if err := rows.Scan(&acc, &proto, &hf, &coll, &debt, &short, &liqd, &em, &liq, &tier, &blk, &upd); err != nil {
 			writeInternalError(w, err.Error())
 			return
 		}
 		positions = append(positions, lendingPosition{
 			Account: addr, Protocol: proto, HealthFactor: bigStr(hf), Liquidatable: liq,
 			CollateralBase: bigStr(coll), DebtBase: bigStr(debt), ShortfallBase: bigStrOmitZero(short),
-			LiquidityBase: bigStrOmitZero(liqd), Tier: tier, BlockNumber: blk, UpdatedAt: upd,
+			LiquidityBase: bigStrOmitZero(liqd), EModeCategory: em, Tier: tier, BlockNumber: blk, UpdatedAt: upd,
 		})
 	}
 	if err := rows.Err(); err != nil {

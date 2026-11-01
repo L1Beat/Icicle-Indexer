@@ -91,6 +91,7 @@ ORDER BY (chain_id, protocol, account);
 
 -- Backfill the liquidity_base column onto an already-created table (idempotent).
 ALTER TABLE lending_positions ADD COLUMN IF NOT EXISTS liquidity_base UInt256 AFTER shortfall_base;
+ALTER TABLE lending_positions ADD COLUMN IF NOT EXISTS emode_category UInt8 DEFAULT 0 AFTER liquidity_base;
 
 -- Per-asset breakdown for the feed. Assets that drop to zero are written with
 -- amount 0 on the next refresh so stale legs do not linger.

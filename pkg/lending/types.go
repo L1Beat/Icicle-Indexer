@@ -122,6 +122,7 @@ type Health struct {
 	ShortfallBase  *big.Int // Benqi shortfall, nil or 0 for Aave
 	LiquidityBase  *big.Int // Benqi positive account liquidity (getAccountLiquidity word1), distance to liquidation; nil/0 for Aave
 	Liquidatable   bool     // Aave HF<1e18, Benqi shortfall>0 (rule 3)
+	EModeCategory  uint8    // Aave V3 getUserEMode, 0 when not in E-Mode (always 0 for Benqi)
 	Assets         []AssetPosition
 	BlockNumber    uint64
 	OK             bool // false if the read reverted or failed, so it is skipped not zeroed (rule 5)

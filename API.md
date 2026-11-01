@@ -710,6 +710,10 @@ Each collateral leg has `entered`. It is always `true` for Aave. For Benqi, `fal
 
 Benqi `health_factor` is computed from the Comptroller's own `getAccountLiquidity`: `(debt_base + liquidity_base - shortfall_base) / debt_base`.
 
+### `emode_category`
+
+Each position has `emode_category`, the account's Aave V3 E-Mode category from the Pool's `getUserEMode`, read with the health factor on every refresh. `0` means not in E-Mode, and it is always `0` for Benqi. In E-Mode, an asset in the category's collateral bitmap uses the category's liquidation threshold instead of the reserve's. The categories, with their thresholds and assets, are under `emode_categories` in [`/metrics/lending`](#get-apiv1metricslending). Rows written before this field existed read `0` until their next refresh (at most 20 minutes, see Freshness).
+
 ### Freshness
 
 `health_factor`, `liquidatable`, `tier`, the `*_base` totals, and the per-asset legs are a snapshot read from chain at the row's `block_number` (written at `updated_at`). They are **not** live. How often a position is re-read depends on its tier:

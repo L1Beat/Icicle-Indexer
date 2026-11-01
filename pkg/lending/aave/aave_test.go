@@ -107,3 +107,53 @@ func buildTokenDataArray(t *testing.T, symbol, addr string) []byte {
 	// outer: offset 0x20 to the array.
 	return append(word(0x20), arr...)
 }
+
+func word(n int64) []byte {
+	b := make([]byte, 32)
+	for i := 31; i >= 0 && n > 0; i-- {
+		b[i] = byte(n & 0xff)
+		n >>= 8
+	}
+	return b
+}
+
+// The E-Mode call goes last, so per-asset pairs keep their positions, and its
+// result lands in Health.EModeCategory.
+func TestBuildProbe_EModeCategory(t *testing.T) {
+	a := New("")
+	pool := "0x794a61358d6845594f94dc1db02a252b5b4814ad"
+	asset := "0xb31f66aa3c1e785363f0875a1b74e27b85fd66c7"
+	a.Configure(lending.Addresses{Pool: pool, Oracle: "0x00000000000000000000000000000000000000aa", DataProvider: "0x00000000000000000000000000000000000000bb"},
+		[]lending.AssetParam{{Asset: asset, Decimals: 18}}, lending.GlobalParams{})
+	acct := "0x2222222222222222222222222222222222222222"
+
+	p := a.BuildProbe(acct, []lending.Exposure{{Account: acct, Asset: asset, Side: lending.SideCollateral}})
+	if len(p.Calls) != 4 {
+		t.Fatalf("calls: got %d want 4 (summary, reserve, price, emode)", len(p.Calls))
+	}
+	if p.Calls[3].Target != pool || !strings.HasPrefix(p.Calls[3].Data, "0xeddf1b79") {
+		t.Fatalf("last call should be getUserEMode on the pool, got %s %s", p.Calls[3].Target, p.Calls[3].Data[:10])
+	}
+
+	summary := append(append(append(append(append(word(100), word(50)...), word(0)...), word(0)...), word(0)...), word(2e18)...)
+	reserve := append(append(word(7e18), word(0)...), word(0)...)
+	h := p.Decode([]lending.CallResult{
+		{Success: true, ReturnData: summary},
+		{Success: true, ReturnData: reserve},
+		{Success: true, ReturnData: word(9e8)},
+		{Success: true, ReturnData: word(2)},
+	}, 123)
+	if !h.OK || h.EModeCategory != 2 {
+		t.Fatalf("emode: got ok=%v category=%d", h.OK, h.EModeCategory)
+	}
+	if len(h.Assets) != 1 || h.Assets[0].Amount.Int64() != 7e18 {
+		t.Fatalf("asset leg misread: %+v", h.Assets)
+	}
+
+	// Summary-only probe (cold sweep): the E-Mode call is the second call.
+	p = a.BuildProbe(acct, nil)
+	h = p.Decode([]lending.CallResult{{Success: true, ReturnData: summary}, {Success: false}}, 1)
+	if len(p.Calls) != 2 || h.EModeCategory != 0 || !h.OK {
+		t.Fatalf("summary-only: calls=%d category=%d ok=%v", len(p.Calls), h.EModeCategory, h.OK)
+	}
+}
