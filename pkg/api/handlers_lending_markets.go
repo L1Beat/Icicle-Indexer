@@ -44,8 +44,11 @@ type LendingMarket struct {
 	SupplyCap               *string   `json:"supply_cap"`
 	BorrowCap               *string   `json:"borrow_cap"`
 	SampledAt               time.Time `json:"sampled_at"`
-	supplied, borrowed      *big.Int
-	supplyAPR, borrowAPR    float64
+	// EMode lists the Aave V3 E-Mode categories, or Aave V4 spokes, that
+	// include the asset. Empty when none (always for BENQI).
+	EMode                []LendingMarketEMode `json:"emode"`
+	supplied, borrowed   *big.Int
+	supplyAPR, borrowAPR float64
 }
 
 // LendingAssetFlow is supply and borrow of one asset, in its base units.
@@ -85,12 +88,42 @@ type LendingSummary struct {
 	Totals LendingTotals       `json:"totals"`
 }
 
+// LendingMarketEMode is the asset's setting inside one collateral group: an
+// Aave V3 E-Mode category or an Aave V4 spoke.
+type LendingMarketEMode struct {
+	ID                      string   `json:"id"` // V3 category id, V4 spoke address
+	Label                   string   `json:"label"`
+	LTVPct                  float64  `json:"ltv_percent"`            // effective, 0 when LTV-zeroed
+	ConfiguredLTVPct        float64  `json:"configured_ltv_percent"` // the group's LTV before any LTV-zero
+	LiquidationThresholdPct float64  `json:"liquidation_threshold_percent"`
+	LiquidationBonusPct     float64  `json:"liquidation_bonus_percent"` // above 100%, 1 = 1%
+	AsCollateral            bool     `json:"as_collateral"`
+	Borrowable              bool     `json:"borrowable"`
+	PreviousLTVPct          *float64 `json:"previous_ltv_percent"` // V4: config before the current one, kept by older positions
+}
+
+// LendingEModeCategory is one collateral group. V3 categories share one LTV,
+// threshold and bonus. V4 spokes set them per asset, so those are null here and
+// given on each market's emode entry.
+type LendingEModeCategory struct {
+	ProtocolID              string   `json:"protocol_id"`
+	ID                      string   `json:"id"`
+	Label                   string   `json:"label"`
+	LTVPct                  *float64 `json:"ltv_percent"`
+	LiquidationThresholdPct *float64 `json:"liquidation_threshold_percent"`
+	LiquidationBonusPct     *float64 `json:"liquidation_bonus_percent"`
+	CollateralAssets        []string `json:"collateral_assets"`
+	BorrowableAssets        []string `json:"borrowable_assets"`
+	LTVZeroAssets           []string `json:"ltv_zero_assets"` // collateral assets with effective LTV 0 in the group
+}
+
 // LendingOverview is the /metrics/lending payload.
 type LendingOverview struct {
-	Protocols []LendingProtocol `json:"protocols"`
-	Markets   []LendingMarket   `json:"markets"`
-	Summary   LendingSummary    `json:"summary"`
-	SampledAt *time.Time        `json:"sampled_at"`
+	Protocols       []LendingProtocol      `json:"protocols"`
+	EModeCategories []LendingEModeCategory `json:"emode_categories"`
+	Markets         []LendingMarket        `json:"markets"`
+	Summary         LendingSummary         `json:"summary"`
+	SampledAt       *time.Time             `json:"sampled_at"`
 }
 
 var lendingProtocols = []LendingProtocol{
@@ -157,6 +190,7 @@ func (s *Server) loadLendingMarkets(ctx context.Context) (interface{}, error) {
 		m.SupplyCap, m.BorrowCap = supplyCap, borrowCap
 		m.LTVPct, m.LiquidationThresholdPct = bpsPct(ltv), bpsPct(lt)
 		fillLendingMarket(&m, supplied, borrowed)
+		m.EMode = []LendingMarketEMode{}
 		markets = append(markets, m)
 	}
 	if err := rows.Err(); err != nil {
@@ -179,7 +213,11 @@ func (s *Server) loadLendingMarkets(ctx context.Context) (interface{}, error) {
 		savaxSupply, _ = new(big.Int).SetString(sup, 10)
 	}
 
-	out := LendingOverview{Protocols: lendingProtocols, Markets: markets, Summary: summarizeLending(markets, savaxSupply)}
+	cats, err := s.loadLendingEMode(ctx, markets)
+	if err != nil {
+		return nil, err
+	}
+	out := LendingOverview{Protocols: lendingProtocols, EModeCategories: cats, Markets: markets, Summary: summarizeLending(markets, savaxSupply)}
 	for i := range markets {
 		if out.SampledAt == nil || markets[i].SampledAt.After(*out.SampledAt) {
 			t := markets[i].SampledAt
@@ -532,4 +570,67 @@ func isHexAddress(s string) bool {
 	}
 	_, err := hex.DecodeString(s[2:])
 	return err == nil
+}
+
+// loadLendingEMode reads each protocol's newest collateral-group sample, fills
+// the markets' emode entries and returns the groups.
+func (s *Server) loadLendingEMode(ctx context.Context, markets []LendingMarket) ([]LendingEModeCategory, error) {
+	rows, err := s.conn.Query(ctx, `
+		SELECT protocol_id, group_id, group_label, asset, ltv_bps, configured_ltv_bps,
+			liquidation_threshold_bps, liquidation_bonus_bps, as_collateral, borrowable, previous_ltv_bps
+		FROM (SELECT * FROM lending_emode_snapshots FINAL) t
+		WHERE (protocol_id, sampled_at) IN (
+			SELECT protocol_id, max(sampled_at) FROM lending_emode_snapshots GROUP BY protocol_id)
+		ORDER BY protocol_id, length(group_id), group_id, asset
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	byMarket := map[string]int{}
+	for i, m := range markets {
+		byMarket[m.ProtocolID+"|"+m.Asset] = i
+	}
+	cats := []LendingEModeCategory{}
+	idx := map[string]int{}
+	for rows.Next() {
+		var protocol, asset string
+		var e LendingMarketEMode
+		var ltv, conf, lt, bonus uint16
+		var prev *uint16
+		if err := rows.Scan(&protocol, &e.ID, &e.Label, &asset, &ltv, &conf, &lt, &bonus, &e.AsCollateral, &e.Borrowable, &prev); err != nil {
+			return nil, err
+		}
+		e.LTVPct, e.ConfiguredLTVPct = float64(ltv)/100, float64(conf)/100
+		e.LiquidationThresholdPct, e.LiquidationBonusPct = float64(lt)/100, float64(bonus)/100
+		e.PreviousLTVPct = bpsPct(prev)
+
+		key := protocol + "|" + e.ID
+		ci, ok := idx[key]
+		if !ok {
+			c := LendingEModeCategory{ProtocolID: protocol, ID: e.ID, Label: e.Label,
+				CollateralAssets: []string{}, BorrowableAssets: []string{}, LTVZeroAssets: []string{}}
+			if protocol == lendingmarkets.ProtocolAaveV3 {
+				ltvPct, ltPct, bonusPct := e.ConfiguredLTVPct, e.LiquidationThresholdPct, e.LiquidationBonusPct
+				c.LTVPct, c.LiquidationThresholdPct, c.LiquidationBonusPct = &ltvPct, &ltPct, &bonusPct
+			}
+			cats = append(cats, c)
+			ci = len(cats) - 1
+			idx[key] = ci
+		}
+		c := &cats[ci]
+		if e.AsCollateral {
+			c.CollateralAssets = append(c.CollateralAssets, asset)
+			if ltv == 0 {
+				c.LTVZeroAssets = append(c.LTVZeroAssets, asset)
+			}
+		}
+		if e.Borrowable {
+			c.BorrowableAssets = append(c.BorrowableAssets, asset)
+		}
+		if i, ok := byMarket[protocol+"|"+asset]; ok {
+			markets[i].EMode = append(markets[i].EMode, e)
+		}
+	}
+	return cats, rows.Err()
 }

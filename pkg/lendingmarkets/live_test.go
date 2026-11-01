@@ -51,3 +51,24 @@ func TestReadAll_Live(t *testing.T) {
 		}
 	}
 }
+
+func TestEMode_Live(t *testing.T) {
+	url := os.Getenv("LENDING_LIVE_RPC")
+	if url == "" {
+		t.Skip("LENDING_LIVE_RPC not set")
+	}
+	c := restaking.RPCCaller{URL: url, Client: &http.Client{Timeout: 15 * time.Second}}
+	for _, read := range []func(context.Context, Caller) ([]EModeEntry, error){ReadAaveV3EMode, ReadAaveV4Spokes} {
+		es, err := read(context.Background(), c)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range es {
+			prev := "-"
+			if e.PrevLTVBps != nil {
+				prev = strconv.Itoa(int(*e.PrevLTVBps))
+			}
+			t.Logf("%s %s %q %s ltv=%d conf=%d lt=%d bonus=%d coll=%v borr=%v prev=%s", e.Protocol, e.GroupID[:min(8, len(e.GroupID))], e.GroupLabel, e.Asset[:10], e.LTVBps, e.ConfLTVBps, e.LTBps, e.BonusBps, e.Collateral, e.Borrowable, prev)
+		}
+	}
+}

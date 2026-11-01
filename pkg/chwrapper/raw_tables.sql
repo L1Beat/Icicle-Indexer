@@ -608,6 +608,25 @@ CREATE TABLE IF NOT EXISTS lending_market_snapshots (
 ) ENGINE = ReplacingMergeTree(sampled_at)
 ORDER BY (protocol_id, asset, snapshot_date);
 
+-- Collateral groups per asset, latest sample: Aave V3 E-Mode categories and
+-- Aave V4 spokes (V4 sets collateral per spoke reserve). Read with the market
+-- snapshot each cycle.
+CREATE TABLE IF NOT EXISTS lending_emode_snapshots (
+    protocol_id LowCardinality(String),  -- aave-v3, aave-v4
+    group_id String,  -- V3 E-Mode category id, V4 spoke address
+    group_label String,
+    asset String,  -- Underlying token, lowercase
+    ltv_bps UInt16,  -- Effective LTV, 0 when the asset is LTV-zeroed in the group
+    configured_ltv_bps UInt16,  -- The group's configured LTV
+    liquidation_threshold_bps UInt16,
+    liquidation_bonus_bps UInt16,  -- Bonus above 100 percent
+    as_collateral Bool,
+    borrowable Bool,
+    previous_ltv_bps Nullable(UInt16),  -- V4 config before the current one, kept by older positions
+    sampled_at DateTime64(3, 'UTC')
+) ENGINE = ReplacingMergeTree(sampled_at)
+ORDER BY (protocol_id, group_id, asset);
+
 -- C-Chain DEX pools, registered from their factory's creation event (pkg/dexvolume).
 CREATE TABLE IF NOT EXISTS dex_pools (
     pool FixedString(20),

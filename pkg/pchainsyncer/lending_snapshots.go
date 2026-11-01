@@ -2,6 +2,7 @@ package pchainsyncer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math/big"
@@ -29,10 +30,52 @@ func SnapshotLendingMarkets(ctx context.Context, conn clickhouse.Conn, nodeURL s
 	}
 	// All rows of a cycle share sampled_at, so readers can keep a protocol's
 	// newest sample and drop markets that were delisted.
-	if err := insertLendingMarkets(ctx, conn, markets, time.Now().UTC()); err != nil {
+	now := time.Now().UTC()
+	if err := insertLendingMarkets(ctx, conn, markets, now); err != nil {
 		return err
 	}
+	if err := snapshotEMode(ctx, conn, caller, now); err != nil {
+		readErr = errors.Join(readErr, err)
+	}
 	return readErr
+}
+
+// snapshotEMode writes Aave V3 E-Mode categories and Aave V4 spoke collateral
+// configs. A protocol that fails is skipped, its previous rows stay.
+func snapshotEMode(ctx context.Context, conn clickhouse.Conn, caller lendingmarkets.Caller, sampledAt time.Time) error {
+	var entries []lendingmarkets.EModeEntry
+	var errs []error
+	for _, read := range []func(context.Context, lendingmarkets.Caller) ([]lendingmarkets.EModeEntry, error){
+		lendingmarkets.ReadAaveV3EMode, lendingmarkets.ReadAaveV4Spokes,
+	} {
+		es, err := read(ctx, caller)
+		if err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		entries = append(entries, es...)
+	}
+	if len(entries) == 0 {
+		return errors.Join(errs...)
+	}
+	var tuples []string
+	var args []interface{}
+	for _, e := range entries {
+		tuples = append(tuples, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+		args = append(args, e.Protocol, e.GroupID, e.GroupLabel, e.Asset, e.LTVBps, e.ConfLTVBps, e.LTBps, e.BonusBps,
+			e.Collateral, e.Borrowable, nullable(e.PrevLTVBps), sampledAt)
+	}
+	wctx, cancel := chwrapper.WriteContext(ctx)
+	defer cancel()
+	if err := conn.Exec(wctx, `
+		INSERT INTO lending_emode_snapshots (
+			protocol_id, group_id, group_label, asset, ltv_bps, configured_ltv_bps,
+			liquidation_threshold_bps, liquidation_bonus_bps, as_collateral, borrowable,
+			previous_ltv_bps, sampled_at
+		) VALUES `+strings.Join(tuples, ", "), args...); err != nil {
+		return fmt.Errorf("failed to insert emode snapshots: %w", err)
+	}
+	return errors.Join(errs...)
 }
 
 // Lending history backfill: each past UTC day is read at its last block on the

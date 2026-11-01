@@ -1925,6 +1925,40 @@ Anchors, verified on-chain 2026-11-01: Aave V3 PoolAddressesProvider `0xa97684ea
 - `summary.avax` sums WAVAX on Aave V3 and V4 and native AVAX on BENQI. `summary.savax` sums sAVAX. `share_of_savax_supply_percent` is supplied sAVAX over sAVAX `totalSupply()` from `/metrics/staking/liquid`.
 - When a protocol's read fails, its previous sample is served. `sampled_at` per market says how fresh it is.
 
+**E-Mode and V4 spoke collateral (`emode_categories`, `markets[].emode`):**
+- Aave V3 E-Mode categories are read from the Pool each cycle (`getEModeCategoryCollateralConfig`, `getEModeCategoryLabel`, and the collateral, borrowable and ltvzero bitmaps, where bit i is `getReservesList()[i]`). Each category has one LTV, liquidation threshold and bonus.
+- In E-Mode the borrowable bitmap replaces the reserve's own borrowing flag: an asset can be borrowed in the category only if its bit is set, and a user can enter the category only if all their debt is borrowable in it. An empty borrowable bitmap means nothing can be borrowed in that category.
+- An asset in a category's ltvzero bitmap has LTV 0 there: it backs no new borrows but keeps the liquidation threshold. `ltv_percent` on an emode entry is this effective LTV, and `configured_ltv_percent` is the category's LTV. `ltv_zero_assets` lists the zeroed collateral per category.
+- Aave V4 has no E-Mode. Collateral is set per spoke reserve, so each spoke is listed as a group (`id` = spoke address, `label` = spoke name). The group-level LTV, threshold and bonus are null, and each market's emode entry carries them. V4 uses one collateral factor for both borrowing power and liquidation, so `ltv_percent` equals `liquidation_threshold_percent`. `borrowable` means borrowable and neither paused nor frozen.
+- V4 reserves can get a new config while older positions keep the earlier one. `previous_ltv_percent` is the collateral factor of the config just before the current one (null for a reserve on its first config).
+- `liquidation_bonus_percent` is the bonus above 100% (1 = 1%). For V4 it is the maximum bonus.
+- `emode` is an empty array for markets in no group (always for BENQI).
+
+```json
+"emode_categories": [
+  {
+    "protocol_id": "aave-v3",
+    "id": "2",
+    "label": "AVAX correlated",
+    "ltv_percent": 93,
+    "liquidation_threshold_percent": 95,
+    "liquidation_bonus_percent": 1,
+    "collateral_assets": ["0xb31f66aa3c1e785363f0875a1b74e27b85fd66c7", "0x2b2c81e08f1af8835a78bb2a90ae924ace0ea4be"],
+    "borrowable_assets": ["0xb31f66aa3c1e785363f0875a1b74e27b85fd66c7"],
+    "ltv_zero_assets": ["0xb31f66aa3c1e785363f0875a1b74e27b85fd66c7", "0x2b2c81e08f1af8835a78bb2a90ae924ace0ea4be"]
+  }
+]
+```
+
+A market row's `emode` entry, for Aave V3 sAVAX:
+
+```json
+"emode": [
+  { "id": "2", "label": "AVAX correlated", "ltv_percent": 0, "configured_ltv_percent": 93, "liquidation_threshold_percent": 95,
+    "liquidation_bonus_percent": 1, "as_collateral": true, "borrowable": false, "previous_ltv_percent": null }
+]
+```
+
 ### GET /api/v1/metrics/lending/timeseries
 
 Daily supplied, borrowed and rates of AVAX or sAVAX across the three protocols, from the last sample of each UTC day, about a year back (see `market=` below for how past days are read). Oldest first.

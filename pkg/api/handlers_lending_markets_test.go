@@ -23,6 +23,13 @@ func TestHandleLendingMarkets(t *testing.T) {
 		"supply_apr", "borrow_apr", "collateral_enabled", "ltv_bps", "lt_bps", "price_usd", "supply_cap", "borrow_cap", "sampled_at"}
 	mock := &MockConn{
 		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
+			if strings.Contains(query, "lending_emode_snapshots") {
+				return NewMockRows([]string{"p", "g", "l", "a", "ltv", "conf", "lt", "b", "c", "br", "prev"}, [][]interface{}{
+					{"aave-v3", "2", "AVAX correlated", lendingmarkets.WAVAX, uint16(0), uint16(9300), uint16(9500), uint16(100), true, true, (*uint16)(nil)},
+					{"aave-v3", "2", "AVAX correlated", lendingmarkets.SAVAX, uint16(9300), uint16(9300), uint16(9500), uint16(100), true, false, (*uint16)(nil)},
+					{"aave-v4", "0xspoke", "Main", lendingmarkets.WAVAX, uint16(0), uint16(0), uint16(0), uint16(1000), false, true, ptrOf(uint16(7300))},
+				}), nil
+			}
 			require.Contains(t, query, "lending_market_snapshots")
 			return NewMockRows(cols, [][]interface{}{
 				{"aave-v3", "0xpool", lendingmarkets.WAVAX, "WAVAX", uint8(18), "16000000000000000000000000", "4000000000000000000000000",
@@ -89,6 +96,24 @@ func TestHandleLendingMarkets(t *testing.T) {
 	require.Len(t, s.Totals.ByProtocol, 3)
 	require.Equal(t, at, *d.SampledAt)
 	require.False(t, strings.Contains(w.Body.String(), "share_of_savax_supply_percent\":null"))
+
+	require.Len(t, d.EModeCategories, 2)
+	v3 := d.EModeCategories[0]
+	require.Equal(t, "AVAX correlated", v3.Label)
+	require.InDelta(t, 93.0, *v3.LTVPct, 1e-9)
+	require.Equal(t, []string{lendingmarkets.WAVAX, lendingmarkets.SAVAX}, v3.CollateralAssets)
+	require.Equal(t, []string{lendingmarkets.WAVAX}, v3.BorrowableAssets)
+	require.Equal(t, []string{lendingmarkets.WAVAX}, v3.LTVZeroAssets)
+	require.Nil(t, d.EModeCategories[1].LTVPct) // V4 spokes set it per asset
+	require.Len(t, wavax.EMode, 1)
+	require.Equal(t, 0.0, wavax.EMode[0].LTVPct)
+	require.Equal(t, 93.0, wavax.EMode[0].ConfiguredLTVPct)
+	require.True(t, wavax.EMode[0].Borrowable)
+	require.Len(t, v4.EMode, 1)
+	require.InDelta(t, 73.0, *v4.EMode[0].PreviousLTVPct, 1e-9)
+	require.InDelta(t, 10.0, v4.EMode[0].LiquidationBonusPct, 1e-9)
+	require.NotNil(t, d.Markets[3].EMode) // BENQI: empty array, not null
+	require.Len(t, d.Markets[3].EMode, 0)
 }
 
 func TestHandleLendingTimeseries(t *testing.T) {
