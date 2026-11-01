@@ -1955,6 +1955,136 @@ Amounts are wei strings (18 decimals, both assets).
 
 ---
 
+## Metrics API - DEX
+
+C-Chain DEX swap volume, rolled up per complete UTC day from the swap events in `raw_logs` (`pkg/dexvolume`). The indexer registers pools and rolls up new days every validator sync cycle (about 5 minutes). A day is rolled up once the C-Chain sync has passed its end. The endpoints read only the rollup and are cached for 10 minutes.
+
+**What counts:**
+- DEXes: Pharaoh V3 (`pharaoh-v3`), Pharaoh DLMM (`pharaoh-dlmm`), Uniswap V3 (`uniswap-v3`), Blackhole CLMM (`blackhole-clmm`), LFJ V2.1 + V2.2 (`lfj`), Pangolin V3 (`pangolin-v3`). Together that is about 94% of DefiLlama's Avalanche DEX volume. Uniswap V4, WOOFi, DODO, Metric and others are not tracked.
+- Only pools whose creation event was emitted by one of these factories count, so a contract that merely emits a matching Swap event adds nothing:
+
+| DEX | Factory | Creation event |
+|-----|---------|----------------|
+| pharaoh-v3 | `0xAE6E5c62328ade73ceefD42228528b70c8157D0d` (RamsesV3Factory), `0xAAA32926fcE6bE95ea2c51cB4Fcb60836D320C42` (legacy) | PoolCreated |
+| pharaoh-dlmm | `0xEb480050b016f6c6d45203D2346B68bDDDa23D4D` | LBPairCreated |
+| uniswap-v3 | `0x740b1c1de25031C31FF4fC9A62f554A55cdC1baD` | PoolCreated |
+| blackhole-clmm | `0x512eb749541B7cf294be882D636218c84a5e9E5F` (AlgebraFactory) | CustomPool / Pool |
+| lfj | `0xb43120c4745967fa9b93E79C149E66B0f2D6Fe0c` (V2.1), `0x8e42f2F4101563bF679975178e880FD87d3eFd4e` (V2.2) | LBPairCreated |
+| pangolin-v3 | `0x1128F23D0bc0A8396E9FBC3c0c68f5EA228B8256` | PoolCreated |
+
+- Swap events: the Uniswap V3 layout (Uniswap, Pharaoh V3, Pangolin V3, and Blackhole's Algebra pools emit the same event) and the Liquidity Book layout (Pharaoh DLMM, LFJ).
+
+**Pricing (one side per swap, never both legs):**
+1. If either token is a USD stablecoin from the stablecoin registry (`peg = 'USD'`), volume is that side's amount at $1.
+2. Else if either token is WAVAX, volume is the AVAX amount times the hour's AVAX price. The price is the median AVAX/USD implied by that hour's WAVAX/stablecoin swaps of at least $10 in the same tracked pools (the day's median when an hour has none).
+3. Else the swap is counted but unpriced. `priced_share` is priced swaps / swaps.
+
+Priced swaps above $1,000,000 (`flag_threshold_usd`) are counted in `flagged_swaps`. They stay in the volume.
+
+`unique_addresses` counts distinct `tx.from` of the swaps. That includes MEV and arbitrage bots, and an aggregator trade counts its signer. Totals and multi-day windows deduplicate (exact distinct count, not a sum of daily counts).
+
+**Window:** `days=N` is the last N complete UTC days ending `as_of` (the newest rolled-up day), both inclusive. `days=1` is the last complete UTC day, not a rolling 24h, which matches DefiLlama's daily numbers. Before the first rollup, `as_of` and `from` are null and lists are empty.
+
+**Accuracy check:** a reproduction of 2026-11-01 from our node came within 0.6-4.7% of DefiLlama per DEX (Pharaoh V3 -3.5%, Pharaoh DLMM -4.7%, Uniswap V3 -0.6%, Blackhole -2.9%, LFJ -2%), -3.4% overall.
+
+### GET /api/v1/metrics/dex
+
+Volume, swaps and unique addresses per DEX over the window.
+
+**Query Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `days` | int | Complete UTC days, 1-365 (default 1) |
+
+**Response:**
+```json
+{
+  "data": {
+    "as_of": "2026-11-01",
+    "from": "2026-11-01",
+    "days": 1,
+    "flag_threshold_usd": 1000000,
+    "dexes": [
+      {
+        "id": "pharaoh-v3",
+        "name": "Pharaoh V3",
+        "protocol": "pharaoh",
+        "volume_usd": 45193155.2,
+        "swaps": 19275,
+        "priced_share": 0.9925,
+        "unique_addresses": 1834,
+        "flagged_swaps": 0
+      }
+    ],
+    "totals": {
+      "volume_usd": 67628000.5,
+      "swaps": 63156,
+      "priced_share": 0.989,
+      "unique_addresses": 4120,
+      "flagged_swaps": 0
+    }
+  }
+}
+```
+
+Sample values are illustrative. Every tracked DEX is listed, in a fixed order, with zeros when it had no swaps. `protocol` groups Pharaoh V3 and Pharaoh DLMM under `pharaoh`.
+
+### GET /api/v1/metrics/dex/timeseries
+
+Daily volume and swaps, total and per DEX. Oldest first.
+
+**Query Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `days` | int | Complete UTC days, 1-365 (default 90) |
+
+**Response:**
+```json
+{
+  "data": [
+    {
+      "date": "2026-11-01",
+      "volume_usd": 67628000.5,
+      "swaps": 63156,
+      "dexes": [
+        { "id": "pharaoh-v3", "volume_usd": 45193155.2, "swaps": 19275 }
+      ]
+    }
+  ]
+}
+```
+
+### GET /api/v1/metrics/dex/pools
+
+Pools with the most priced volume over the window.
+
+**Query Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `days` | int | Complete UTC days, 1-30 (default 1) |
+| `limit` | int | Pools, 1-100 (default 20) |
+
+**Response:**
+```json
+{
+  "data": [
+    {
+      "pool": "0x...",
+      "dex": "pharaoh-v3",
+      "protocol": "pharaoh",
+      "token0": { "address": "0xb31f66aa3c1e785363f0875a1b74e27b85fd66c7", "symbol": "WAVAX" },
+      "token1": { "address": "0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e", "symbol": "USDC" },
+      "volume_usd": 21000000.0,
+      "swaps": 5400
+    }
+  ]
+}
+```
+
+`token0`/`token1` are the pool's tokens (Liquidity Book tokenX/tokenY). Symbols come from token metadata and are empty when unknown.
+
+---
+
 ## Metrics API - Chain Stats
 
 ### GET /api/v1/metrics/evm/{chainId}/stats
@@ -2211,6 +2341,9 @@ ws.onmessage = (event) => {
 | GET | `/api/v1/metrics/restaking` | Restaked collateral per L1 (Suzaku vaults) |
 | GET | `/api/v1/metrics/lending` | C-Chain lending markets (Aave V3, Aave V4, BENQI) |
 | GET | `/api/v1/metrics/lending/timeseries` | Daily AVAX or sAVAX lending across protocols |
+| GET | `/api/v1/metrics/dex` | C-Chain DEX volume per DEX |
+| GET | `/api/v1/metrics/dex/timeseries` | Daily C-Chain DEX volume |
+| GET | `/api/v1/metrics/dex/pools` | Top C-Chain DEX pools by volume |
 | WS | `/ws/blocks/{chainId}` | Real-time block stream |
 
 ---

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"icicle/pkg/chwrapper"
+	"icicle/pkg/dexvolume"
 	"icicle/pkg/pchainrpc"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -266,6 +267,11 @@ func (vs *ValidatorSyncer) syncOnce(ctx context.Context) error {
 	// Step 16: Refresh C-Chain lending markets (Aave V3, Aave V4, BENQI).
 	if err := SnapshotLendingMarkets(ctx, vs.conn, vs.fetcher.RpcURL()); err != nil {
 		slog.Warn("Failed to snapshot lending markets", "error", err)
+	}
+
+	// Step 17: Register new DEX pools and roll up complete UTC days of swaps.
+	if err := dexvolume.Sync(ctx, vs.conn); err != nil {
+		slog.Warn("Failed to roll up DEX volume", "error", err)
 	}
 
 	duration := time.Since(startTime)

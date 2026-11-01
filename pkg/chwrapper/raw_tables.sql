@@ -608,6 +608,32 @@ CREATE TABLE IF NOT EXISTS lending_market_snapshots (
 ) ENGINE = ReplacingMergeTree(sampled_at)
 ORDER BY (protocol_id, asset, snapshot_date);
 
+-- C-Chain DEX pools, registered from their factory's creation event (pkg/dexvolume).
+CREATE TABLE IF NOT EXISTS dex_pools (
+    pool FixedString(20),
+    dex LowCardinality(String),  -- pharaoh-v3, pharaoh-dlmm, uniswap-v3, blackhole-clmm, lfj, pangolin-v3
+    factory FixedString(20),  -- Emitter of the creation event
+    token0 FixedString(20),  -- Liquidity Book tokenX
+    token1 FixedString(20),  -- Liquidity Book tokenY
+    created_time DateTime64(3, 'UTC')
+) ENGINE = ReplacingMergeTree
+ORDER BY pool;
+
+-- C-Chain DEX swaps per UTC day and pool. Complete days only, rewritten in
+-- place when a day is rolled up again.
+CREATE TABLE IF NOT EXISTS dex_daily (
+    day Date,
+    dex LowCardinality(String),
+    pool FixedString(20),
+    swaps UInt64,
+    priced_swaps UInt64,  -- Swaps with a USD stablecoin or WAVAX side
+    volume_usd Float64,  -- Priced swaps only, one side each
+    flagged_swaps UInt64,  -- Priced swaps above dexvolume.FlagUSD, still in volume_usd
+    addresses AggregateFunction(uniqExact, FixedString(20)),  -- tx.from of the swaps
+    computed_at DateTime64(3, 'UTC') DEFAULT now64(3)
+) ENGINE = ReplacingMergeTree(computed_at)
+ORDER BY (day, dex, pool);
+
 -- Function signatures - 4-byte selector -> canonical signature, filled by the
 -- bundled seed list and demand-driven OpenChain lookups (pkg/enrich). Several
 -- rows per selector are expected (collisions); the API picks one per tx using
