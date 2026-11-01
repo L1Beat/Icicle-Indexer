@@ -176,7 +176,7 @@ func exchangeRate(pooledWei, supply *big.Int, decimals int) string {
 
 // handleLiquidStakingTimeseries returns daily liquid staking samples
 // @Summary Liquid staking history
-// @Description Daily pooled AVAX, exchange rate and running delegations per liquid staking protocol (last sample of each UTC day). History starts 2026-11-01. Amounts are nAVAX strings. Oldest first.
+// @Description Daily pooled AVAX, exchange rate and running delegations per liquid staking protocol (last sample of each UTC day). History starts 2026-10-31. Amounts are nAVAX strings. Oldest first.
 // @Tags Metrics - Staking
 // @Produce json
 // @Param protocol query string false "Protocol id, e.g. benqi-savax (default: all)"

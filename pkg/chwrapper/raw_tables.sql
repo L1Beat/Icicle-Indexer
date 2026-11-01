@@ -559,6 +559,30 @@ CREATE TABLE IF NOT EXISTS liquid_staking_snapshots (
 ) ENGINE = ReplacingMergeTree(sampled_at)
 ORDER BY (protocol_id, snapshot_date);
 
+-- Restaking collateral securing L1 validators, one row per (protocol, L1,
+-- vault), refreshed by the indexer every validator sync cycle. Each cycle
+-- writes all rows of an L1 with the same sampled_at, so readers keep only an
+-- L1's newest sampled_at to drop vaults that left the middleware.
+CREATE TABLE IF NOT EXISTS restaking_snapshots (
+    protocol_id LowCardinality(String),  -- e.g. suzaku
+    subnet_id String,  -- L1 subnet ID (CB58)
+    vault String,  -- C-Chain vault address
+    balancer String,  -- BalancerValidatorManager, the L1 key in the protocol
+    middleware String,  -- Protocol middleware, a security module of the balancer
+    module_weight UInt64,  -- Middleware's current weight in the balancer
+    operator_count UInt32,  -- Operators with allocated stake in any vault of the L1
+    validation_ids Array(String),  -- L1 validations registered by the middleware (CB58)
+    collateral String,  -- Vault collateral() token, often a DefaultCollateral wrapper
+    token String,  -- Underlying token (wrapper asset(), else collateral)
+    token_symbol String,
+    token_decimals UInt8,
+    deposited UInt256,  -- Vault activeStake(), token base units
+    allocated UInt256,  -- Delegator stake summed over operators, token base units
+    l1_limit UInt256,  -- Delegator l1Limit for this L1, token base units
+    sampled_at DateTime64(3, 'UTC') DEFAULT now64(3)
+) ENGINE = ReplacingMergeTree(sampled_at)
+ORDER BY (protocol_id, subnet_id, vault);
+
 -- Function signatures - 4-byte selector -> canonical signature, filled by the
 -- bundled seed list and demand-driven OpenChain lookups (pkg/enrich). Several
 -- rows per selector are expected (collisions); the API picks one per tx using

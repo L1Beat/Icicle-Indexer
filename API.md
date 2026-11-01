@@ -1756,7 +1756,7 @@ Cached for 5 minutes.
 
 ### GET /api/v1/metrics/staking/liquid/timeseries
 
-Daily liquid staking samples (last sample of each UTC day), oldest first. History starts 2026-11-01.
+Daily liquid staking samples (last sample of each UTC day), oldest first. History starts 2026-10-31.
 
 **Query Parameters:**
 | Parameter | Type | Description |
@@ -1780,6 +1780,71 @@ Daily liquid staking samples (last sample of each UTC day), oldest first. Histor
   ]
 }
 ```
+
+---
+
+### GET /api/v1/metrics/restaking
+
+L1s whose validators are secured by restaking vaults on the C-Chain. Only Suzaku is tracked. Every L1 in Suzaku's L1Registry (`0xaA59b19A7636bf6d821aA124A14eEE6C92746110`) with at least one active vault is listed, active or not, so new L1s appear on their own. The indexer reads the contracts every validator sync cycle (about 5 minutes). Cached for 5 minutes.
+
+**Query Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `subnet_id` | string | Only this L1 subnet ID |
+| `chain_id` | string | Only the L1 with this blockchain ID |
+
+**Response:**
+```json
+{
+  "data": {
+    "protocols": [
+      { "id": "suzaku", "name": "Suzaku", "url": "https://suzaku.network" }
+    ],
+    "l1s": [
+      {
+        "subnet_id": "wenKDikJWAYQs3f2v9JhV86fC6kHZwkFZsuUBftnmgZ4QXPnu",
+        "blockchain_id": "21Ths5Afqi5r4PaoV8r8cruGZWhN11y5rxvy89K8px7pKy3P8E",
+        "protocol_id": "suzaku",
+        "balancer": "0xcff0fc701ef47d6217fdf9def903990b7afa8ac7",
+        "middleware": "0x9411307279456450abf9b5181aa7a02271f0dc34",
+        "is_active": true,
+        "active_validators": 10,
+        "restaked_weight": 5000000,
+        "restaked_validators": 10,
+        "total_pchain_weight": 5000000,
+        "share_of_weight_percent": 100,
+        "module_weight": 5000000,
+        "operator_count": 1,
+        "vaults": [
+          {
+            "address": "0xc9a25f0a8436de76e999787bd509edba0d2471a2",
+            "collateral": {
+              "address": "0x093783055f9047c2bff99c4e414501f8a147bc69",
+              "wrapper": "0x51111e1f63d3341573882c0ed844e0876efd634d",
+              "symbol": "ALOT",
+              "decimals": 18
+            },
+            "deposited": "13684218504272505054021750",
+            "allocated": "5000000000000000000000000",
+            "idle": "8684218504272505054021750",
+            "limit": "5000000000000000000000000"
+          }
+        ],
+        "sampled_at": "2026-11-01T14:05:12.345Z"
+      }
+    ]
+  }
+}
+```
+
+**Notes:**
+- Vault amounts are strings in the collateral token's base units (`collateral.decimals`). `collateral.address` is the underlying token; `wrapper` is the vault's `collateral()` token (a 1:1 DefaultCollateral wrapper), equal to `address` when the vault holds the token directly.
+- `deposited` is the vault's active stake. `allocated` is what the vault delegates to the L1's operators, capped by `limit` (the vault's limit for this L1). `idle` is `deposited - allocated` and secures nothing.
+- `is_active` and `active_validators` use the `/data/chains` definition (L1 validators with a P-Chain balance).
+- `restaked_weight` is the P-Chain weight of active validators the protocol's middleware registered; `total_pchain_weight` is that of all active validators. `share_of_weight_percent` is their ratio, null when the L1 has no active weight.
+- `module_weight` is the middleware's current weight in the L1's BalancerValidatorManager, straight from the contract.
+- `operator_count` counts operators with allocated stake in at least one vault.
+- No USD values.
 
 ---
 
@@ -2036,6 +2101,7 @@ ws.onmessage = (event) => {
 | GET | `/api/v1/metrics/staking/timeseries` | Daily staking snapshots |
 | GET | `/api/v1/metrics/staking/liquid` | Liquid staking protocols (BENQI sAVAX) |
 | GET | `/api/v1/metrics/staking/liquid/timeseries` | Daily liquid staking samples |
+| GET | `/api/v1/metrics/restaking` | Restaked collateral per L1 (Suzaku vaults) |
 | WS | `/ws/blocks/{chainId}` | Real-time block stream |
 
 ---

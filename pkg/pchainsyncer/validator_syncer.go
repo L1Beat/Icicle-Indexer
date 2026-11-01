@@ -258,6 +258,11 @@ func (vs *ValidatorSyncer) syncOnce(ctx context.Context) error {
 		slog.Warn("Failed to snapshot liquid staking", "error", err)
 	}
 
+	// Step 15: Refresh restaking collateral (Suzaku vaults securing L1s).
+	if err := SnapshotRestaking(ctx, vs.conn, vs.fetcher.RpcURL()); err != nil {
+		slog.Warn("Failed to snapshot restaking", "error", err)
+	}
+
 	duration := time.Since(startTime)
 	slog.Info("Validator state sync completed", "total_validators", totalValidators, "primary_network", primaryValidatorCount, "l1_validators", l1ValidatorCount, "l1_subnets", len(l1Subnets), "regular_validators", regularValidatorCount, "regular_subnets", len(regularSubnets), "duration", duration)
 
