@@ -163,6 +163,14 @@ func (r *MockRows) Scan(dest ...interface{}) error {
 				if ptr, ok := v.(*uint8); ok {
 					*d = ptr
 				}
+			case **uint16:
+				if ptr, ok := v.(*uint16); ok {
+					*d = ptr
+				}
+			case **float64:
+				if ptr, ok := v.(*float64); ok {
+					*d = ptr
+				}
 			case **bool:
 				// Handle nullable bool pointers
 				if ptr, ok := v.(*bool); ok {

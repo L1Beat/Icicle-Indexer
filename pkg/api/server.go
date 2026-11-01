@@ -224,6 +224,8 @@ func (s *Server) registerRoutes(cfg Config) {
 	s.router.HandleFunc("GET /api/v1/metrics/staking/liquid", s.handleLiquidStaking)
 	s.router.HandleFunc("GET /api/v1/metrics/staking/liquid/timeseries", s.handleLiquidStakingTimeseries)
 	s.router.HandleFunc("GET /api/v1/metrics/restaking", s.handleRestaking)
+	s.router.HandleFunc("GET /api/v1/metrics/lending", s.handleLendingMarkets)
+	s.router.HandleFunc("GET /api/v1/metrics/lending/timeseries", s.handleLendingTimeseries)
 
 	// EVM Chain Stats & Time Series
 	s.router.HandleFunc("GET /api/v1/metrics/evm/{chainId}/stats", s.handleChainMetrics)

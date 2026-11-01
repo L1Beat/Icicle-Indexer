@@ -585,6 +585,29 @@ CREATE TABLE IF NOT EXISTS restaking_snapshots (
 ) ENGINE = ReplacingMergeTree(sampled_at)
 ORDER BY (protocol_id, subnet_id, vault);
 
+-- C-Chain lending markets (Aave V3, Aave V4, BENQI), read from the contracts by
+-- the validator syncer every cycle. The last sample of each UTC day is kept.
+CREATE TABLE IF NOT EXISTS lending_market_snapshots (
+    snapshot_date Date,  -- UTC day
+    protocol_id LowCardinality(String),  -- aave-v3, aave-v4, benqi
+    asset String,  -- Underlying token, lowercase. 0x00..00 for native AVAX (BENQI qiAVAX)
+    market String,  -- Aave V3 Pool, BENQI qiToken, Aave V4 Hub
+    symbol String,
+    decimals UInt8,
+    supplied UInt256,  -- Token base units
+    borrowed UInt256,  -- Token base units
+    supply_apr Float64,  -- Simple annual rate as a fraction
+    borrow_apr Float64,  -- Variable borrow rate, simple annual fraction
+    collateral_enabled Nullable(Bool),  -- NULL where set per spoke (Aave V4)
+    ltv_bps Nullable(UInt16),
+    liquidation_threshold_bps Nullable(UInt16),
+    price_usd Nullable(Float64),  -- Protocol oracle, NULL when the read failed
+    supply_cap Nullable(UInt256),  -- Token base units, NULL when uncapped
+    borrow_cap Nullable(UInt256),  -- Token base units, NULL when uncapped
+    sampled_at DateTime64(3, 'UTC') DEFAULT now64(3)
+) ENGINE = ReplacingMergeTree(sampled_at)
+ORDER BY (protocol_id, asset, snapshot_date);
+
 -- Function signatures - 4-byte selector -> canonical signature, filled by the
 -- bundled seed list and demand-driven OpenChain lookups (pkg/enrich). Several
 -- rows per selector are expected (collisions); the API picks one per tx using

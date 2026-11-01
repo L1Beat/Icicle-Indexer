@@ -1849,6 +1849,110 @@ L1s whose validators are secured by restaking vaults on the C-Chain. Only Suzaku
 - `operator_count` counts operators with allocated stake in at least one vault.
 - No USD values.
 
+### GET /api/v1/metrics/lending
+
+Market-level supply, borrow, rates and risk parameters of the C-Chain lending protocols: Aave V3, Aave V4 (Core Hub) and BENQI Lending. One row per protocol x asset, every market. The indexer reads the contracts every validator sync cycle (about 5 minutes). Cached for 2 minutes. Positions and liquidation risk are under [Data API - Lending](#data-api---lending).
+
+Anchors, verified on-chain 2026-11-01: Aave V3 PoolAddressesProvider `0xa97684ead0e402dC232d5A977953DF7ECBaB3CDb` (Pool, data provider and oracle resolved from it), BENQI Comptroller `0x486Af39519B4Dc9a7fCcd318217352830E8AD9b4` (markets and oracle resolved from it), Aave V4 Core Hub `0xd07369fAE4A5BB13c9Ce446B052c7867B1AbDf6e` with its main, AVAX-correlated, Ethena and forex spokes (bgd-labs aave-address-book `AaveV4Avalanche`).
+
+**Response:**
+```json
+{
+  "data": {
+    "protocols": [
+      { "id": "aave-v3", "name": "Aave V3", "url": "https://aave.com" },
+      { "id": "aave-v4", "name": "Aave V4", "url": "https://aave.com" },
+      { "id": "benqi", "name": "BENQI Lending", "url": "https://benqi.fi" }
+    ],
+    "markets": [
+      {
+        "protocol_id": "aave-v3",
+        "market": "0x794a61358d6845594f94dc1db02a252b5b4814ad",
+        "asset": "0xb31f66aa3c1e785363f0875a1b74e27b85fd66c7",
+        "symbol": "WAVAX",
+        "decimals": 18,
+        "total_supplied": "16234165023996328671909803",
+        "total_borrowed": "5956815354478002969493270",
+        "utilization_percent": 36.69,
+        "supply_apy_percent": 0.96,
+        "borrow_apy_percent": 3.31,
+        "collateral_enabled": true,
+        "ltv_percent": 0,
+        "liquidation_threshold_percent": 73,
+        "price_usd": 8.6738,
+        "supplied_usd": 140811170.3,
+        "borrowed_usd": 51668000.1,
+        "supply_cap": "14000000000000000000000000",
+        "borrow_cap": "6000000000000000000000000",
+        "sampled_at": "2026-11-01T20:45:00.123Z"
+      }
+    ],
+    "summary": {
+      "avax": {
+        "supplied": "18891060010680541993210619",
+        "borrowed": "6972543286048035173078050",
+        "by_protocol": [
+          { "protocol_id": "aave-v3", "supplied": "16234165023996328671909803", "borrowed": "5956815354478002969493270" },
+          { "protocol_id": "aave-v4", "supplied": "1846953770078008305536448", "borrowed": "665755970692981642713434" },
+          { "protocol_id": "benqi", "supplied": "809941216606205025764368", "borrowed": "349971960877050560871346" }
+        ]
+      },
+      "savax": {
+        "supplied": "15108379190203700096218478",
+        "borrowed": "4207175761426682893209",
+        "share_of_savax_supply_percent": 81.07,
+        "by_protocol": [ { "protocol_id": "aave-v3", "supplied": "6970033295528336495601629", "borrowed": "0" } ]
+      },
+      "totals": {
+        "supplied_usd": 679271270.0,
+        "borrowed_usd": 212842023.0,
+        "by_protocol": [ { "protocol_id": "aave-v3", "supplied_usd": 431048588.0, "borrowed_usd": 149351152.0 } ]
+      }
+    },
+    "sampled_at": "2026-11-01T20:45:00.123Z"
+  }
+}
+```
+
+**Notes:**
+- Amounts are strings in the asset's base units (`decimals`). `asset` is the underlying token; BENQI's qiAVAX holds native AVAX and uses `0x0000000000000000000000000000000000000000` with symbol `AVAX`. `market` is the Aave V3 Pool, the BENQI qiToken, or the Aave V4 Hub.
+- Supplied and borrowed: Aave V3 total aToken supply and stable plus variable debt. BENQI `getCash + totalBorrows - totalReserves` and `totalBorrows`. Aave V4 the hub's `getAddedAssets` and `getAssetTotalOwed` (drawn plus premium debt), summed over all spokes.
+- Rates: Aave V3 reports annual rates in ray (1e27), so APR = rate / 1e27. BENQI reports per-second rates (`supplyRatePerTimestamp`, `borrowRatePerTimestamp`, 1e18-scaled), so APR = rate x 31,536,000 / 1e18. Aave V4 reports the hub's annual drawn rate in ray. All three accrue per second, so APY = (1 + APR / 31,536,000)^31,536,000 - 1 (the same convention as the Aave app). Borrow is the variable rate.
+- Aave V4 specifics: `borrow_apy_percent` is the base drawn rate. Individual borrowers pay more through their risk premium. `supply_apy_percent` is estimated as drawn rate x (owed / added) x (1 - liquidity fee), so it slightly understates supplier yield. Collateral parameters and caps are set per spoke in V4, so `collateral_enabled`, `ltv_percent`, `liquidation_threshold_percent` and the caps are null on aave-v4 rows.
+- BENQI has one collateral factor per market: it caps borrowing and is also the liquidation point, so `ltv_percent` equals `liquidation_threshold_percent`. BENQI has no supply caps (`supply_cap` null). A borrow cap of `1` (base unit) means borrowing is disabled, as on Aave a cap of one whole token marks a market being wound down.
+- Caps are in base units, null when uncapped (Aave stores caps in whole tokens, converted here).
+- `price_usd` comes from each protocol's own oracle (Aave V3 AaveOracle, BENQI PriceOracle, Aave V4 spoke oracles). When the read fails, `price_usd`, `supplied_usd` and `borrowed_usd` are null, not 0, and the market is left out of `summary.totals`.
+- `summary.avax` sums WAVAX on Aave V3 and V4 and native AVAX on BENQI. `summary.savax` sums sAVAX. `share_of_savax_supply_percent` is supplied sAVAX over sAVAX `totalSupply()` from `/metrics/staking/liquid`.
+- When a protocol's read fails, its previous sample is served. `sampled_at` per market says how fresh it is.
+
+### GET /api/v1/metrics/lending/timeseries
+
+Daily supplied, borrowed and rates of AVAX or sAVAX across the three protocols, from the last sample of each UTC day. History starts 2026-11-01. Oldest first.
+
+**Query Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `asset` | string | Required. `avax` (WAVAX on Aave, native AVAX on BENQI) or `savax` |
+| `days` | int | Days back, 1-3650 (default 365) |
+
+**Response:**
+```json
+{
+  "data": [
+    {
+      "date": "2026-11-01",
+      "supplied": "18891060010680541993210619",
+      "borrowed": "6972543286048035173078050",
+      "by_protocol": [
+        { "protocol_id": "aave-v3", "supplied": "16234165023996328671909803", "borrowed": "5956815354478002969493270", "supply_apy_percent": 0.96, "borrow_apy_percent": 3.31 }
+      ]
+    }
+  ]
+}
+```
+
+Amounts are wei strings (18 decimals, both assets).
+
 ---
 
 ## Metrics API - Chain Stats
@@ -2105,6 +2209,8 @@ ws.onmessage = (event) => {
 | GET | `/api/v1/metrics/staking/liquid` | Liquid staking protocols (BENQI sAVAX) |
 | GET | `/api/v1/metrics/staking/liquid/timeseries` | Daily liquid staking samples |
 | GET | `/api/v1/metrics/restaking` | Restaked collateral per L1 (Suzaku vaults) |
+| GET | `/api/v1/metrics/lending` | C-Chain lending markets (Aave V3, Aave V4, BENQI) |
+| GET | `/api/v1/metrics/lending/timeseries` | Daily AVAX or sAVAX lending across protocols |
 | WS | `/ws/blocks/{chainId}` | Real-time block stream |
 
 ---

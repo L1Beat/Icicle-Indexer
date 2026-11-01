@@ -263,6 +263,11 @@ func (vs *ValidatorSyncer) syncOnce(ctx context.Context) error {
 		slog.Warn("Failed to snapshot restaking", "error", err)
 	}
 
+	// Step 16: Refresh C-Chain lending markets (Aave V3, Aave V4, BENQI).
+	if err := SnapshotLendingMarkets(ctx, vs.conn, vs.fetcher.RpcURL()); err != nil {
+		slog.Warn("Failed to snapshot lending markets", "error", err)
+	}
+
 	duration := time.Since(startTime)
 	slog.Info("Validator state sync completed", "total_validators", totalValidators, "primary_network", primaryValidatorCount, "l1_validators", l1ValidatorCount, "l1_subnets", len(l1Subnets), "regular_validators", regularValidatorCount, "regular_subnets", len(regularSubnets), "duration", duration)
 
