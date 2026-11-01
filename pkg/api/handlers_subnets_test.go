@@ -371,6 +371,59 @@ func TestHandleChainRisk_ValidatorManagerPopulated(t *testing.T) {
 	assert.Equal(t, float64(20), churn["max_churn_percentage"])
 }
 
+func TestHandleChainRisk_Balancer(t *testing.T) {
+	balancer := `{"owner":{"address":"0xadd4","kind":"eoa"},"security_modules":[` +
+		`{"address":"0x01da","kind":"poa","weight":0,"max_weight":10000000,"owner":{"address":"0xadd4","kind":"eoa"}},` +
+		`{"address":"0x9411","kind":"suzaku_middleware","weight":5000000,"max_weight":5000000,"owner":null}]}`
+	mock := &MockConn{
+		QueryRowFunc: func(ctx context.Context, query string, args ...interface{}) driver.Row {
+			return &MockRow{
+				scanFunc: func(dest ...interface{}) error {
+					*dest[0].(*string) = "chain123"
+					*dest[1].(*string) = "0x05ad"
+					*dest[8].(*string) = "balancer"
+					*dest[9].(*string) = "c-chain"
+					*dest[10].(**string) = stringPtr("0xcff0")
+					*dest[11].(*string) = "contract"
+					*dest[21].(**string) = stringPtr(balancer)
+					return nil
+				},
+			}
+		},
+	}
+
+	server := NewTestServer(mock)
+	w := MakeRequest(t, server, "GET", "/api/v1/data/chains/chain123/risk")
+	AssertJSONResponse(t, w, http.StatusOK)
+
+	vm := ParseResponse[Response](t, w).Data.(map[string]interface{})["validator_manager"].(map[string]interface{})
+	assert.Equal(t, "balancer", vm["type"])
+	assert.Equal(t, "0xcff0", vm["owner"].(map[string]interface{})["address"])
+	bo := vm["balancer_owner"].(map[string]interface{})
+	assert.Equal(t, "0xadd4", bo["address"])
+	assert.Equal(t, "eoa", bo["kind"])
+	mods := vm["security_modules"].([]interface{})
+	require.Len(t, mods, 2)
+	poa := mods[0].(map[string]interface{})
+	assert.Equal(t, "poa", poa["kind"])
+	assert.Equal(t, float64(0), poa["weight"])
+	assert.Equal(t, float64(10000000), poa["max_weight"])
+	assert.Equal(t, "0xadd4", poa["owner"].(map[string]interface{})["address"])
+	suz := mods[1].(map[string]interface{})
+	assert.Equal(t, "suzaku_middleware", suz["kind"])
+	assert.Equal(t, float64(5000000), suz["weight"])
+	assert.Nil(t, suz["owner"])
+}
+
+func TestApplyBalancer_EmptyOrBadJSON(t *testing.T) {
+	for _, raw := range []string{"", "{not json"} {
+		vm := &ValidatorManagerRisk{}
+		applyBalancer(vm, raw)
+		assert.Nil(t, vm.BalancerOwner)
+		assert.Nil(t, vm.SecurityModules)
+	}
+}
+
 func TestHandleChainRisk_NotFound(t *testing.T) {
 	mock := &MockConn{
 		QueryRowFunc: func(ctx context.Context, query string, args ...interface{}) driver.Row {

@@ -1141,7 +1141,9 @@ Per-chain decentralization and ValidatorManager risk profile (L2Beat-style). Key
         "proxy_admin_owner": "0x9999...",
         "upgrade_delay_seconds": 0
       },
-      "churn": { "period_seconds": 3600, "max_churn_percentage": 20 }
+      "churn": { "period_seconds": 3600, "max_churn_percentage": 20 },
+      "balancer_owner": null,
+      "security_modules": null
     },
     "decentralization": {
       "active_validator_count": 8,
@@ -1157,10 +1159,11 @@ Per-chain decentralization and ValidatorManager risk profile (L2Beat-style). Key
 ```
 
 **Notes:**
-- `validator_manager.type` — `PoA`, `PoS-native`, `PoS-erc20`, `placeholder`, or `unknown`. `placeholder` means the address is empty, zero or an EVM precompile (`0x01`-`0x09`), which can never sign a validator-set change. `unknown` usually means the manager lives on the L1 itself and we have no RPC for that chain
+- `validator_manager.type` — `PoA`, `PoS-native`, `PoS-erc20`, `balancer`, `placeholder`, or `unknown`. `balancer` means the owner is a Suzaku BalancerValidatorManager. `placeholder` means the address is empty, zero or an EVM precompile (`0x01`-`0x09`), which can never sign a validator-set change. `unknown` usually means the manager lives on the L1 itself and we have no RPC for that chain
 - `deployed_on` — `c-chain` (manager reachable even if the L1 halts), `self` (lives on the L1, unreachable if stuck), or `unknown`
 - `owner.kind` — `eoa`, `multisig`, `timelock`, `dao`, `contract`, or `unknown`; `multisig` populated only for detected Gnosis Safes
 - `proxy.upgrade_delay_seconds` — `0` means upgrades are instant; a timelock delay otherwise
+- `balancer_owner` and `security_modules` — null unless `type` is `balancer`. For a balancer, `owner` is the balancer contract, `balancer_owner` is whoever controls it (it sets module weights), and `security_modules` lists each module: `{address, kind, weight, max_weight, owner}`. `kind` is `suzaku_middleware` (validators admitted through Suzaku restaking), `poa` (a module that only points back at its balancer, Suzaku's PoA module), or `unknown`. `weight` is the validator weight the module holds now, `max_weight` its cap. Example (Dexalot): a `poa` module at weight 0 and a `suzaku_middleware` at 5000000, both owned by the same EOA as the balancer.
 - `decentralization` — present only when the chain has active L1 validators; `nakamoto_33`/`nakamoto_50` are the min validators controlling >33%/>50% of active weight; `weights` are raw, sorted descending
 - `economic` — reserved for a later tier; currently always `null`
 - Returns 404 if the chain ID is unknown

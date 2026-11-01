@@ -31,6 +31,12 @@ const (
 	tokenSelector               = "0xfc0c546a" // token()
 	rewardCalculatorSelector    = "0x96769e89" // PoS rewardCalculator()
 	weightToValueFactorSelector = "0x94aafc15" // PoS weightToValueFactor()
+
+	// Suzaku BalancerValidatorManager and its security modules.
+	getSecurityModulesSelector       = "0xbde87e1c" // getSecurityModules() -> address[]
+	getSecurityModuleWeightsSelector = "0xf1130733" // getSecurityModuleWeights(address) -> (uint64 weight, uint64 maxWeight)
+	getVaultManagerSelector          = "0xb9bbb6f5" // AvalancheL1Middleware getVaultManager()
+	balancerValidatorManagerSelector = "0xb36248e8" // balancerValidatorManager(), on every module
 )
 
 // EIP-1967 storage slots.
@@ -52,7 +58,7 @@ type riskInput struct {
 type riskRow struct {
 	ChainID             string
 	VMAddress           string
-	ManagerType         string // PoA | PoS-native | PoS-erc20 | placeholder | unknown
+	ManagerType         string // PoA | PoS-native | PoS-erc20 | balancer | placeholder | unknown
 	ManagerLocation     string // c-chain | self | unknown — which chain the manager contract has code on
 	OwnerAddress        *string
 	OwnerKind           string // eoa | multisig | timelock | dao | contract | unknown
@@ -65,6 +71,32 @@ type riskRow struct {
 	UpgradeDelaySeconds *uint64
 	ChurnPeriodSeconds  *uint64
 	MaxChurnPercentage  *uint8
+	Balancer            *balancerInfo // set when ManagerType is "balancer"
+}
+
+// balancerInfo describes a BalancerValidatorManager that owns the
+// ValidatorManager and splits validator weight across security modules. It is
+// stored as JSON in chain_risk.balancer.
+type balancerInfo struct {
+	Owner   *riskOwner       `json:"owner"`
+	Modules []securityModule `json:"security_modules"`
+}
+
+// riskOwner is a contract's owner() and its classification.
+type riskOwner struct {
+	Address           string  `json:"address"`
+	Kind              string  `json:"kind"` // eoa | multisig | timelock | contract
+	MultisigThreshold *uint16 `json:"multisig_threshold,omitempty"`
+	MultisigOwners    *uint16 `json:"multisig_owners,omitempty"`
+}
+
+// securityModule is one module of a balancer and the validator weight it holds.
+type securityModule struct {
+	Address   string     `json:"address"`
+	Kind      string     `json:"kind"` // poa | suzaku_middleware | unknown
+	Weight    uint64     `json:"weight"`
+	MaxWeight uint64     `json:"max_weight"`
+	Owner     *riskOwner `json:"owner"`
 }
 
 // SyncChainRisk reads each L1's ValidatorManager control & upgradeability state from
@@ -129,7 +161,7 @@ func SyncChainRisk(ctx context.Context, conn driver.Conn) error {
 		chain_id, validator_manager_address,
 		manager_type, manager_location, owner_address, owner_kind, multisig_threshold, multisig_owners,
 		is_proxy, proxy_implementation, proxy_admin, proxy_admin_owner, upgrade_delay_seconds,
-		churn_period_seconds, max_churn_percentage, last_updated
+		churn_period_seconds, max_churn_percentage, balancer, last_updated
 	)`)
 	if err != nil {
 		return fmt.Errorf("failed to prepare chain_risk batch: %w", err)
@@ -143,7 +175,7 @@ func SyncChainRisk(ctx context.Context, conn driver.Conn) error {
 			r.ChainID, r.VMAddress,
 			r.ManagerType, r.ManagerLocation, r.OwnerAddress, r.OwnerKind, r.MultisigThreshold, r.MultisigOwners,
 			r.IsProxy, r.ProxyImplementation, r.ProxyAdmin, r.ProxyAdminOwner, r.UpgradeDelaySeconds,
-			r.ChurnPeriodSeconds, r.MaxChurnPercentage, now,
+			r.ChurnPeriodSeconds, r.MaxChurnPercentage, balancerJSON(r.Balancer), now,
 		); err != nil {
 			slog.Warn("Failed to append chain_risk row", "chain_id", r.ChainID, "error", err)
 			continue
@@ -255,11 +287,90 @@ func resolveChainRisk(client *http.Client, in riskInput) riskRow {
 			row.OwnerKind = kind
 			row.MultisigThreshold = threshold
 			row.MultisigOwners = count
-			row.ManagerType = classifyManagerType(client, rpc, owner, kind)
+			// A Suzaku BalancerValidatorManager owner is checked first, since its
+			// modules (not the balancer) decide who gets validator weight.
+			if b, ok := readBalancer(client, rpc, owner); kind == "contract" && ok {
+				row.ManagerType = "balancer"
+				row.Balancer = b
+			} else {
+				row.ManagerType = classifyManagerType(client, rpc, owner, kind)
+			}
 		}
 	}
 
 	return row
+}
+
+// readBalancer reads a BalancerValidatorManager's owner and security modules.
+// ok is false when addr does not answer getSecurityModules().
+func readBalancer(client *http.Client, rpc, addr string) (*balancerInfo, bool) {
+	res, err := ethCall(client, rpc, addr, getSecurityModulesSelector)
+	if err != nil || !hasResult(res) {
+		return nil, false
+	}
+	n := decodeArrayLen(res)
+	if _, ok := wordAt(res, 1+int(n)); !ok {
+		return nil, false // not a well-formed address[]
+	}
+	b := &balancerInfo{Owner: readOwner(client, rpc, addr), Modules: []securityModule{}}
+	for i := 0; i < int(n); i++ {
+		w, _ := wordAt(res, 2+i)
+		m := securityModule{Address: "0x" + w[24:], Kind: "unknown"}
+		if wr, err := ethCall(client, rpc, addr, getSecurityModuleWeightsSelector+strings.Repeat("0", 24)+w[24:]); err == nil {
+			if v, ok := wordAt(wr, 0); ok {
+				m.Weight = hexWordToUint64(v)
+			}
+			if v, ok := wordAt(wr, 1); ok {
+				m.MaxWeight = hexWordToUint64(v)
+			}
+		}
+		m.Kind = moduleKind(client, rpc, m.Address)
+		m.Owner = readOwner(client, rpc, m.Address)
+		b.Modules = append(b.Modules, m)
+	}
+	return b, true
+}
+
+// moduleKind tells a Suzaku middleware (it has a vault manager) from a PoA
+// module (it only points back at its balancer).
+func moduleKind(client *http.Client, rpc, addr string) string {
+	if res, err := ethCall(client, rpc, addr, getVaultManagerSelector); err == nil {
+		if _, ok := nonZeroAddr(res); ok {
+			return "suzaku_middleware"
+		}
+	}
+	if res, err := ethCall(client, rpc, addr, balancerValidatorManagerSelector); err == nil {
+		if _, ok := nonZeroAddr(res); ok {
+			return "poa"
+		}
+	}
+	return "unknown"
+}
+
+// readOwner returns addr's owner() and its classification, or nil.
+func readOwner(client *http.Client, rpc, addr string) *riskOwner {
+	res, err := ethCall(client, rpc, addr, ownerSelector)
+	if err != nil {
+		return nil
+	}
+	owner, ok := nonZeroAddr(res)
+	if !ok {
+		return nil
+	}
+	kind, threshold, count := classifyOwner(client, rpc, owner)
+	return &riskOwner{Address: owner, Kind: kind, MultisigThreshold: threshold, MultisigOwners: count}
+}
+
+// balancerJSON encodes b for chain_risk.balancer, "" when nil.
+func balancerJSON(b *balancerInfo) string {
+	if b == nil {
+		return ""
+	}
+	out, err := json.Marshal(b)
+	if err != nil {
+		return ""
+	}
+	return string(out)
 }
 
 // classifyOwner determines whether the owner is an EOA, a Gnosis Safe multisig, an

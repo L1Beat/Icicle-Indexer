@@ -15,8 +15,19 @@ import (
 	"icicle/pkg/chwrapper"
 )
 
-const ownerSelector = "0x8da5cb5b"                                    // keccak256("owner()")
-const cChainRPC = "https://api.avax.network/ext/bc/C/rpc" // C-Chain public RPC fallback
+const ownerSelector = "0x8da5cb5b" // keccak256("owner()")
+
+// cChainRPC serves the C-Chain contract reads. It defaults to the public RPC,
+// which rate-limits a full sync; the indexer points it at its own node with
+// SetCChainRPC.
+var cChainRPC = "https://api.avax.network/ext/bc/C/rpc"
+
+// SetCChainRPC sets the C-Chain RPC used for contract reads. Empty is ignored.
+func SetCChainRPC(url string) {
+	if url != "" {
+		cChainRPC = url
+	}
+}
 
 // l1OwnerInfo holds the data needed to fetch and store a validator manager owner
 type l1OwnerInfo struct {

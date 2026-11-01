@@ -482,7 +482,7 @@ CREATE TABLE IF NOT EXISTS chain_risk (
     validator_manager_address String,  -- The ValidatorManager contract (0x-prefixed hex)
 
     -- Manager type & owner
-    manager_type LowCardinality(String) DEFAULT 'unknown',  -- PoA | PoS-native | PoS-erc20 | placeholder | unknown
+    manager_type LowCardinality(String) DEFAULT 'unknown',  -- PoA | PoS-native | PoS-erc20 | balancer | placeholder | unknown
     manager_location LowCardinality(String) DEFAULT 'unknown',  -- where the manager contract has code: c-chain | self | unknown
     owner_address Nullable(String),  -- ValidatorManager owner() as 0x-prefixed hex, null if unresolved
     owner_kind LowCardinality(String) DEFAULT 'unknown',  -- eoa | multisig | timelock | dao | contract | unknown
@@ -507,6 +507,8 @@ ORDER BY chain_id;
 
 -- Migrate existing chain_risk deployments to add manager_location (idempotent, no-op on fresh installs)
 ALTER TABLE chain_risk ADD COLUMN IF NOT EXISTS manager_location LowCardinality(String) DEFAULT 'unknown';
+-- Suzaku BalancerValidatorManager detail as JSON (owner and security modules), empty otherwise
+ALTER TABLE chain_risk ADD COLUMN IF NOT EXISTS balancer String DEFAULT '';
 
 -- Validator count snapshots - exact active validator counts per subnet at a
 -- historical P-Chain height, sampled via platform.getValidatorsAt (the node's

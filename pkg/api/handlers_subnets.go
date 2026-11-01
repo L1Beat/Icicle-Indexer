@@ -148,7 +148,7 @@ type RiskResponse struct {
 // contract-reading syncer and remain "unknown"/null until then.
 type ValidatorManagerRisk struct {
 	Address string `json:"address"`
-	Type    string `json:"type"` // "PoA" | "PoS-native" | "PoS-erc20" | "placeholder" | "unknown"
+	Type    string `json:"type"` // "PoA" | "PoS-native" | "PoS-erc20" | "balancer" | "placeholder" | "unknown"
 	// DeployedOn is where the manager contract has code: "c-chain" means validators can
 	// still be managed if the L1 halts; "self" means the manager lives on the L1 itself
 	// and is unreachable if the chain is stuck; "unknown" means no contract was found.
@@ -156,6 +156,73 @@ type ValidatorManagerRisk struct {
 	Owner      *OwnerInfo `json:"owner"`
 	Proxy      *ProxyInfo `json:"proxy"`
 	Churn      *ChurnInfo `json:"churn"`
+	// Set when Type is "balancer": Owner is then a Suzaku BalancerValidatorManager,
+	// BalancerOwner is who controls it, and SecurityModules are the modules that
+	// split validator weight. Null otherwise.
+	BalancerOwner   *OwnerInfo       `json:"balancer_owner"`
+	SecurityModules []SecurityModule `json:"security_modules"`
+}
+
+// SecurityModule is one module of a BalancerValidatorManager and the validator
+// weight it currently holds.
+type SecurityModule struct {
+	Address   string     `json:"address"`
+	Kind      string     `json:"kind"` // "poa" | "suzaku_middleware" | "unknown"
+	Weight    uint64     `json:"weight"`
+	MaxWeight uint64     `json:"max_weight"`
+	Owner     *OwnerInfo `json:"owner"`
+}
+
+// riskBalancer is the chain_risk.balancer JSON written by the risk syncer.
+type riskBalancer struct {
+	Owner   *riskBalancerOwner `json:"owner"`
+	Modules []struct {
+		Address   string             `json:"address"`
+		Kind      string             `json:"kind"`
+		Weight    uint64             `json:"weight"`
+		MaxWeight uint64             `json:"max_weight"`
+		Owner     *riskBalancerOwner `json:"owner"`
+	} `json:"security_modules"`
+}
+
+type riskBalancerOwner struct {
+	Address           string  `json:"address"`
+	Kind              string  `json:"kind"`
+	MultisigThreshold *uint16 `json:"multisig_threshold"`
+	MultisigOwners    *uint16 `json:"multisig_owners"`
+}
+
+func (o *riskBalancerOwner) info() *OwnerInfo {
+	if o == nil || o.Address == "" {
+		return nil
+	}
+	info := &OwnerInfo{Address: o.Address, Kind: o.Kind}
+	if info.Kind == "" {
+		info.Kind = "unknown"
+	}
+	if o.MultisigThreshold != nil && o.MultisigOwners != nil {
+		info.Multisig = &MultisigInfo{Threshold: int(*o.MultisigThreshold), Owners: int(*o.MultisigOwners)}
+	}
+	return info
+}
+
+// applyBalancer fills the balancer fields of vm from chain_risk.balancer JSON.
+// Empty or malformed JSON leaves them null.
+func applyBalancer(vm *ValidatorManagerRisk, raw string) {
+	if raw == "" {
+		return
+	}
+	var b riskBalancer
+	if err := json.Unmarshal([]byte(raw), &b); err != nil {
+		return
+	}
+	vm.BalancerOwner = b.Owner.info()
+	vm.SecurityModules = make([]SecurityModule, 0, len(b.Modules))
+	for _, m := range b.Modules {
+		vm.SecurityModules = append(vm.SecurityModules, SecurityModule{
+			Address: m.Address, Kind: m.Kind, Weight: m.Weight, MaxWeight: m.MaxWeight, Owner: m.Owner.info(),
+		})
+	}
 }
 
 // OwnerInfo identifies the ValidatorManager owner and (Tier 1) classifies it.
@@ -664,6 +731,7 @@ func (s *Server) handleChainRisk(w http.ResponseWriter, r *http.Request) {
 		crUpgradeDelay    *uint64
 		crChurnPeriod     *uint64
 		crMaxChurn        *uint8
+		crBalancer        *string
 	)
 
 	query := fmt.Sprintf(`
@@ -674,7 +742,7 @@ func (s *Server) handleChainRisk(w http.ResponseWriter, r *http.Request) {
 			v.active_validators, v.active_weight, v.nakamoto_33, v.nakamoto_50, v.sorted_weights,
 			cr.manager_type, cr.manager_location, cr.owner_address, cr.owner_kind, cr.multisig_threshold, cr.multisig_owners,
 			cr.is_proxy, cr.proxy_implementation, cr.proxy_admin, cr.proxy_admin_owner, cr.upgrade_delay_seconds,
-			cr.churn_period_seconds, cr.max_churn_percentage
+			cr.churn_period_seconds, cr.max_churn_percentage, cr.balancer
 		FROM (SELECT * FROM subnet_chains FINAL) c
 		INNER JOIN (SELECT * FROM subnets FINAL) s ON c.subnet_id = s.subnet_id
 		LEFT JOIN %s v ON c.subnet_id = v.subnet_id
@@ -690,7 +758,7 @@ func (s *Server) handleChainRisk(w http.ResponseWriter, r *http.Request) {
 		&activeValidators, &activeWeight, &nakamoto33, &nakamoto50, &sortedWeights,
 		&crManagerType, &crManagerLocation, &crOwnerAddress, &crOwnerKind, &crMultisigThresh, &crMultisigOwners,
 		&crIsProxy, &crProxyImpl, &crProxyAdmin, &crProxyAdminOwner, &crUpgradeDelay,
-		&crChurnPeriod, &crMaxChurn,
+		&crChurnPeriod, &crMaxChurn, &crBalancer,
 	)
 	if err != nil {
 		writeNotFoundError(w, "Chain")
@@ -755,6 +823,10 @@ func (s *Server) handleChainRisk(w http.ResponseWriter, r *http.Request) {
 					c.MaxChurnPercentage = uint32(*crMaxChurn)
 				}
 				vm.Churn = c
+			}
+
+			if crManagerType == "balancer" {
+				applyBalancer(vm, deref(crBalancer))
 			}
 		} else if vmOwner != "" {
 			// No Tier 1 row yet: known owner address only.

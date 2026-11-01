@@ -47,6 +47,14 @@ func RunIngest(ctx context.Context, fast bool, rpcCache bool) {
 		log.Fatalf("Failed to create tables: %v", err)
 	}
 
+	// Contract reads for owners and risk go to our own C-Chain node when it is
+	// configured, not the rate-limited public RPC.
+	for _, c := range configs {
+		if c.VM == "evm" && c.ChainID == 43114 {
+			registrysyncer.SetCChainRPC(c.RpcURL)
+		}
+	}
+
 	// Sync L1 Registry and validator manager owners at startup (in background)
 	go func() {
 		if err := registrysyncer.SyncRegistry(ctx, conn); err != nil {

@@ -11,12 +11,15 @@ import (
 // Dexalot ValidatorManager on C-Chain. Skipped by default (hits the network); run with:
 //
 //	RISK_LIVE_TEST=1 go test ./pkg/registrysyncer/ -run TestResolveChainRisk_LiveDexalot -v
+//
+// RISK_LIVE_CCHAIN_RPC overrides the public C-Chain RPC.
 func TestResolveChainRisk_LiveDexalot(t *testing.T) {
 	if os.Getenv("RISK_LIVE_TEST") != "1" {
 		t.Skip("set RISK_LIVE_TEST=1 to run live network validation")
 	}
 
 	client := &http.Client{Timeout: 15 * time.Second}
+	SetCChainRPC(os.Getenv("RISK_LIVE_CCHAIN_RPC"))
 	in := riskInput{
 		ChainID:   "21Ths5Afqi5r4PaoV8r8cruGZWhN11y5rxvy89K8px7pKy3P8E",
 		VMAddress: "0x05ad6d9cecf4b08e5ee0e636a245776d09810f4c",
@@ -59,5 +62,25 @@ func TestResolveChainRisk_LiveDexalot(t *testing.T) {
 	}
 	if row.MaxChurnPercentage == nil || *row.MaxChurnPercentage != 20 {
 		t.Errorf("max churn: want 20, got %v", row.MaxChurnPercentage)
+	}
+
+	// The owner is a Suzaku BalancerValidatorManager: a PoA module at weight 0
+	// and the Suzaku middleware holding all 5,000,000.
+	if row.ManagerType != "balancer" || row.Balancer == nil {
+		t.Fatalf("manager type: got %s, want balancer", row.ManagerType)
+	}
+	t.Logf("balancer: %s", balancerJSON(row.Balancer))
+	if row.Balancer.Owner == nil || row.Balancer.Owner.Kind != "eoa" {
+		t.Errorf("balancer owner: got %+v, want an eoa", row.Balancer.Owner)
+	}
+	kinds := map[string]uint64{}
+	for _, m := range row.Balancer.Modules {
+		kinds[m.Kind] = m.Weight
+	}
+	if w, ok := kinds["suzaku_middleware"]; !ok || w != 5_000_000 {
+		t.Errorf("suzaku module weight: got %v (present %v), want 5000000", w, ok)
+	}
+	if w, ok := kinds["poa"]; !ok || w != 0 {
+		t.Errorf("poa module weight: got %v (present %v), want 0", w, ok)
 	}
 }
