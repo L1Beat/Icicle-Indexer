@@ -41,6 +41,12 @@ const (
 	DefaultQueryTimeout = 300 * time.Second
 )
 
+// EnvInt reads a positive integer from an environment variable, falling back to
+// defaultVal when unset, unparseable, or non-positive.
+func EnvInt(key string, defaultVal int) int {
+	return getEnvInt(key, defaultVal)
+}
+
 // getEnvInt reads an integer from environment variable with a default value
 func getEnvInt(key string, defaultVal int) int {
 	if val := os.Getenv(key); val != "" {

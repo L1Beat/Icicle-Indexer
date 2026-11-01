@@ -15,8 +15,16 @@ import (
 )
 
 const (
-	// DefaultPChainBufferSize is the maximum number of batches that can be buffered in the channel
-	DefaultPChainBufferSize = 10000
+	// DefaultPChainBufferSize is the maximum number of batches that can be
+	// buffered in the channel. Each batch holds up to FetchBatchSize blocks, so
+	// keep it small enough that a stalled writer cannot buy unbounded fetch-ahead.
+	// Override with PCHAIN_BUFFER_BATCHES.
+	DefaultPChainBufferSize = 64
+	// DefaultPChainMaxPendingBlocks caps the writer's retry buffer. Without a cap
+	// a failing flush keeps its buffer and the writer keeps draining the channel
+	// into it, so memory grows until the write path recovers or the process dies.
+	// Override with PCHAIN_MAX_PENDING_BLOCKS.
+	DefaultPChainMaxPendingBlocks = 20_000
 	// DefaultPChainFlushInterval is how often to flush blocks to ClickHouse
 	DefaultPChainFlushInterval = 1 * time.Second
 	// DefaultPChainMaxRetries is the default max retries for RPC requests
@@ -32,7 +40,8 @@ type Config struct {
 	StartBlock     int64         // Starting block number when no watermark exists
 	MaxConcurrency int           // Maximum concurrent RPC requests
 	FetchBatchSize int           // Blocks per fetch
-	BufferSize     int           // Channel buffer size, default 10000
+	BufferSize     int           // Channel buffer size in batches, default 64
+	MaxPending     int           // Max blocks held in the writer's retry buffer, default 20000
 	FlushInterval  time.Duration // Flush interval, default 1s
 	MaxRetries     int           // Max retries for RPC requests, default 20
 	RetryDelay     time.Duration // Initial retry delay, default 100ms
@@ -55,6 +64,7 @@ type PChainSyncer struct {
 	watermark      uint64                      // Current sync position
 	startBlock     int64                       // Starting block when no watermark
 	fetchBatchSize int
+	maxPending     int // Cap on the writer's retry buffer, in blocks
 	flushInterval  time.Duration
 
 	// Validator syncer
@@ -87,7 +97,10 @@ func NewPChainSyncer(cfg Config) (*PChainSyncer, error) {
 		cfg.Name = fmt.Sprintf("P-Chain-%d", cfg.ChainID)
 	}
 	if cfg.BufferSize == 0 {
-		cfg.BufferSize = DefaultPChainBufferSize
+		cfg.BufferSize = chwrapper.EnvInt("PCHAIN_BUFFER_BATCHES", DefaultPChainBufferSize)
+	}
+	if cfg.MaxPending == 0 {
+		cfg.MaxPending = chwrapper.EnvInt("PCHAIN_MAX_PENDING_BLOCKS", DefaultPChainMaxPendingBlocks)
 	}
 	if cfg.FlushInterval == 0 {
 		cfg.FlushInterval = DefaultPChainFlushInterval
@@ -119,6 +132,7 @@ func NewPChainSyncer(cfg Config) (*PChainSyncer, error) {
 		blockChan:      make(chan []*pchainrpc.JSONBlock, cfg.BufferSize),
 		startBlock:     cfg.StartBlock,
 		fetchBatchSize: cfg.FetchBatchSize,
+		maxPending:     cfg.MaxPending,
 		flushInterval:  cfg.FlushInterval,
 		ctx:            ctx,
 		cancel:         cancel,
@@ -200,8 +214,9 @@ func (ps *PChainSyncer) Stop() {
 		ps.validatorSyncer.Stop()
 	}
 
+	// Do not close blockChan -- see the note in evmsyncer.ChainSyncer.Stop. The
+	// fetcher can be blocked sending, and closing under it panics.
 	ps.cancel()
-	close(ps.blockChan)
 	ps.wg.Wait()
 	slog.Info("Syncer stopped", "chain_id", ps.chainID, "chain_name", ps.chainName)
 }
@@ -334,13 +349,34 @@ func (ps *PChainSyncer) writerLoop() {
 		return nextFlush
 	}
 
+	backpressure := false
+
 	for {
+		// Stop receiving once the retry buffer is full. A nil channel blocks
+		// forever in select, so blockChan fills and the fetcher blocks on send --
+		// backpressure reaches the RPC layer instead of letting a failing write
+		// accumulate blocks in memory without bound.
+		in := ps.blockChan
+		if len(buffer) >= ps.maxPending {
+			in = nil
+			if !backpressure {
+				backpressure = true
+				slog.Warn("Write backpressure engaged, pausing fetch",
+					"chain_id", ps.chainID, "chain_name", ps.chainName,
+					"pending_blocks", len(buffer), "max_pending", ps.maxPending)
+			}
+		} else if backpressure {
+			backpressure = false
+			slog.Info("Write backpressure released",
+				"chain_id", ps.chainID, "chain_name", ps.chainName, "pending_blocks", len(buffer))
+		}
+
 		select {
 		case <-ps.ctx.Done():
 			flush()
 			return
 
-		case blocks, ok := <-ps.blockChan:
+		case blocks, ok := <-in:
 			if !ok {
 				flush()
 				return

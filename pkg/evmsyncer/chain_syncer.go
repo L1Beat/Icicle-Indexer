@@ -18,8 +18,19 @@ import (
 )
 
 const (
-	// DefaultBufferSize is the maximum number of batches that can be buffered in the channel
-	DefaultBufferSize = 200_000
+	// DefaultBufferSize is the maximum number of batches that can be buffered in
+	// the channel. Each batch holds up to FetchBatchSize blocks, so this is a
+	// multiplier: keep it small. The old value of 200_000 batches was ~100M
+	// blocks of headroom, which meant the channel never applied backpressure and
+	// a write outage was bounded only by RAM (2026-08-05: 66 GB RSS).
+	// Override with SYNC_BUFFER_BATCHES.
+	DefaultBufferSize = 16
+	// DefaultMaxPendingBlocks caps the writer's retry buffer. When a flush fails
+	// the buffer is retained for the next attempt; without a cap the writer keeps
+	// draining the channel into it and memory grows without bound. At this limit
+	// the writer stops receiving, the channel fills, and the fetcher blocks.
+	// Override with SYNC_MAX_PENDING_BLOCKS.
+	DefaultMaxPendingBlocks = 5_000
 	// DefaultFlushInterval is how often to flush blocks to ClickHouse
 	DefaultFlushInterval = 1 * time.Second
 	// DefaultMaxRetries is the default max retries for RPC requests
@@ -37,7 +48,8 @@ type Config struct {
 	FetchBatchSize int           // Blocks per fetch, default 500
 	RpcBatchSize   int           // RPC calls per HTTP request, default 100
 	DebugBatchSize int           // Debug/trace calls per HTTP request, default 15
-	BufferSize     int           // Channel buffer size, default 200000
+	BufferSize     int           // Channel buffer size in batches, default 16
+	MaxPending     int           // Max blocks held in the writer's retry buffer, default 5000
 	FlushInterval  time.Duration // Flush interval, default 1s
 	MaxRetries     int           // Max retries for RPC requests, default 20
 	RetryDelay     time.Duration // Initial retry delay, default 100ms
@@ -57,6 +69,7 @@ type ChainSyncer struct {
 	watermark      uint32                         // Current sync position
 	startBlock     int64                          // Starting block when no watermark
 	fetchBatchSize int
+	maxPending     int // Cap on the writer's retry buffer, in blocks
 	flushInterval  time.Duration
 
 	// Max block numbers in each table (queried once at startup)
@@ -99,7 +112,10 @@ func NewChainSyncer(cfg Config) (*ChainSyncer, error) {
 		cfg.DebugBatchSize = 15 // Default: batch 15 trace calls per HTTP request
 	}
 	if cfg.BufferSize == 0 {
-		cfg.BufferSize = DefaultBufferSize
+		cfg.BufferSize = chwrapper.EnvInt("SYNC_BUFFER_BATCHES", DefaultBufferSize)
+	}
+	if cfg.MaxPending == 0 {
+		cfg.MaxPending = chwrapper.EnvInt("SYNC_MAX_PENDING_BLOCKS", DefaultMaxPendingBlocks)
 	}
 	if cfg.FlushInterval == 0 {
 		cfg.FlushInterval = DefaultFlushInterval
@@ -132,6 +148,7 @@ func NewChainSyncer(cfg Config) (*ChainSyncer, error) {
 		blockChan:      make(chan []*evmrpc.NormalizedBlock, cfg.BufferSize),
 		startBlock:     cfg.StartBlock,
 		fetchBatchSize: cfg.FetchBatchSize,
+		maxPending:     cfg.MaxPending,
 		flushInterval:  cfg.FlushInterval,
 		ctx:            ctx,
 		cancel:         cancel,
@@ -243,8 +260,13 @@ func (cs *ChainSyncer) Start() error {
 // Stop gracefully shuts down the syncer
 func (cs *ChainSyncer) Stop() {
 	slog.Info("Stopping syncer", "chain_id", cs.chainId)
+	// Do not close blockChan. The fetcher can be parked in a select on the send,
+	// and closing while a sender is blocked lets select pick the send case and
+	// panic. cancel() alone is sufficient: both loops exit on ctx.Done, and the
+	// writer's final flush runs on a Background-parented deadline so it still
+	// drains. Closing became reachable in practice once the buffer got small
+	// enough for the fetcher to actually block on it.
 	cs.cancel()
-	close(cs.blockChan)
 	cs.wg.Wait()
 	slog.Info("Syncer stopped", "chain_id", cs.chainId)
 }
@@ -393,13 +415,33 @@ func (cs *ChainSyncer) writerLoop() {
 		return nextFlush
 	}
 
+	backpressure := false
+
 	for {
+		// Stop receiving once the retry buffer is full. A nil channel blocks
+		// forever in select, so blockChan fills and the fetcher blocks on send --
+		// backpressure reaches the RPC layer instead of letting a failing write
+		// accumulate blocks in memory without bound (2026-08-05: 138k blocks
+		// buffered, 66 GB RSS, while every flush failed on a wedged conn pool).
+		in := cs.blockChan
+		if len(buffer) >= cs.maxPending {
+			in = nil
+			if !backpressure {
+				backpressure = true
+				slog.Warn("Write backpressure engaged, pausing fetch",
+					"chain_id", cs.chainId, "pending_blocks", len(buffer), "max_pending", cs.maxPending)
+			}
+		} else if backpressure {
+			backpressure = false
+			slog.Info("Write backpressure released", "chain_id", cs.chainId, "pending_blocks", len(buffer))
+		}
+
 		select {
 		case <-cs.ctx.Done():
 			flush()
 			return
 
-		case blocks, ok := <-cs.blockChan:
+		case blocks, ok := <-in:
 			if !ok {
 				flush()
 				return
