@@ -72,7 +72,7 @@ var restakingCache = newTTLCache(5 * time.Minute)
 
 // handleRestaking returns L1s secured by restaking vaults
 // @Summary Restaked collateral per L1
-// @Description L1s whose validators are secured by restaking vaults on the C-Chain (Suzaku). Each L1 lists its vaults with deposited, allocated (delegated to the L1's operators) and idle collateral in token base units, and the share of the L1's active P-Chain validator weight held by validators the protocol registered. Every L1 in the Suzaku L1Registry with at least one vault is included, active or not. Sampled by the indexer every validator sync cycle (about 5 minutes) and cached for 5 minutes.
+// @Description L1s whose validators are secured by restaking vaults on the C-Chain (Suzaku). Each L1 lists its vaults with deposited, allocated (delegated to the L1's operators) and idle collateral in token base units, and the share of the L1's active P-Chain validator weight held by validators the protocol registered. Every L1 in the Suzaku L1Registry with at least one vault is included, active or not. Sampled by the indexer every C-Chain snapshot cycle (5 minutes by default, `cchainSnapshotInterval`) and cached for 5 minutes.
 // @Tags Metrics - Staking
 // @Produce json
 // @Param subnet_id query string false "Only this L1 subnet ID"

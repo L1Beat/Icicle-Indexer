@@ -20,4 +20,7 @@
   enableValidatorSync: true
   # How often to sync validator state in minutes (default: 5)
   validatorSyncInterval: 5
+  # How often to refresh C-Chain snapshots in minutes (default: 5): restaking,
+  # lending markets and history, DEX rollup. Runs only with enableValidatorSync.
+  cchainSnapshotInterval: 5
 

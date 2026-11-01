@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"icicle/pkg/chwrapper"
-	"icicle/pkg/dexvolume"
 	"icicle/pkg/pchainrpc"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -259,23 +258,8 @@ func (vs *ValidatorSyncer) syncOnce(ctx context.Context) error {
 		slog.Warn("Failed to snapshot liquid staking", "error", err)
 	}
 
-	// Step 15: Refresh restaking collateral (Suzaku vaults securing L1s).
-	if err := SnapshotRestaking(ctx, vs.conn, vs.fetcher.RpcURL()); err != nil {
-		slog.Warn("Failed to snapshot restaking", "error", err)
-	}
-
-	// Step 16: Refresh C-Chain lending markets (Aave V3, Aave V4, BENQI).
-	if err := SnapshotLendingMarkets(ctx, vs.conn, vs.fetcher.RpcURL()); err != nil {
-		slog.Warn("Failed to snapshot lending markets", "error", err)
-	}
-	if err := BackfillLendingHistory(ctx, vs.conn, vs.fetcher.RpcURL()); err != nil {
-		slog.Warn("Failed to backfill lending history", "error", err)
-	}
-
-	// Step 17: Register new DEX pools and roll up complete UTC days of swaps.
-	if err := dexvolume.Sync(ctx, vs.conn); err != nil {
-		slog.Warn("Failed to roll up DEX volume", "error", err)
-	}
+	// Restaking, lending and DEX snapshots run in CChainSnapshotter on their
+	// own interval.
 
 	duration := time.Since(startTime)
 	slog.Info("Validator state sync completed", "total_validators", totalValidators, "primary_network", primaryValidatorCount, "l1_validators", l1ValidatorCount, "l1_subnets", len(l1Subnets), "regular_validators", regularValidatorCount, "regular_subnets", len(regularSubnets), "duration", duration)

@@ -1712,7 +1712,7 @@ Daily staking snapshots (last sample of each UTC day), oldest first. History sta
 
 ### GET /api/v1/metrics/staking/liquid
 
-AVAX liquid staking protocols with their latest figures. The indexer samples each live protocol every validator sync cycle (about 5 minutes):
+AVAX liquid staking protocols with their latest figures. The indexer samples each live protocol every validator sync cycle (hourly on api.l1beat.io, set by `validatorSyncInterval`):
 - Pooled AVAX and token supply come from the C-Chain token contract.
 - Delegation figures cover running Primary Network delegations whose rewards owner includes one of the protocol's P-Chain addresses.
 
@@ -1792,7 +1792,7 @@ Daily liquid staking samples (last sample of each UTC day), oldest first. Histor
 
 ### GET /api/v1/metrics/restaking
 
-L1s whose validators are secured by restaking vaults on the C-Chain. Only Suzaku is tracked. Every L1 in Suzaku's L1Registry (`0xaA59b19A7636bf6d821aA124A14eEE6C92746110`) with at least one active vault is listed, active or not, so new L1s appear on their own. The indexer reads the contracts every validator sync cycle (about 5 minutes). Cached for 5 minutes.
+L1s whose validators are secured by restaking vaults on the C-Chain. Only Suzaku is tracked. Every L1 in Suzaku's L1Registry (`0xaA59b19A7636bf6d821aA124A14eEE6C92746110`) with at least one active vault is listed, active or not, so new L1s appear on their own. The indexer reads the contracts every C-Chain snapshot cycle (5 minutes by default, `cchainSnapshotInterval`). Cached for 5 minutes.
 
 **Query Parameters:**
 | Parameter | Type | Description |
@@ -1855,7 +1855,7 @@ L1s whose validators are secured by restaking vaults on the C-Chain. Only Suzaku
 
 ### GET /api/v1/metrics/lending
 
-Market-level supply, borrow, rates and risk parameters of the C-Chain lending protocols: Aave V3, Aave V4 (Core Hub) and BENQI Lending. One row per protocol x asset, every market. The indexer reads the contracts every validator sync cycle (about 5 minutes). Cached for 2 minutes. Positions and liquidation risk are under [Data API - Lending](#data-api---lending).
+Market-level supply, borrow, rates and risk parameters of the C-Chain lending protocols: Aave V3, Aave V4 (Core Hub) and BENQI Lending. One row per protocol x asset, every market. The indexer reads the contracts every C-Chain snapshot cycle (5 minutes by default, `cchainSnapshotInterval`). Cached for 2 minutes. Positions and liquidation risk are under [Data API - Lending](#data-api---lending).
 
 Anchors, verified on-chain 2026-11-01: Aave V3 PoolAddressesProvider `0xa97684ead0e402dC232d5A977953DF7ECBaB3CDb` (Pool, data provider and oracle resolved from it), BENQI Comptroller `0x486Af39519B4Dc9a7fCcd318217352830E8AD9b4` (markets and oracle resolved from it), Aave V4 Core Hub `0xd07369fAE4A5BB13c9Ce446B052c7867B1AbDf6e` with its main, AVAX-correlated, Ethena and forex spokes (bgd-labs aave-address-book `AaveV4Avalanche`).
 
@@ -2117,7 +2117,7 @@ The largest liquidations by seized USD over the last N days (today included), sa
 
 ## Metrics API - DEX
 
-C-Chain DEX swap volume, rolled up per complete UTC day from the swap events in `raw_logs` (`pkg/dexvolume`). The indexer registers pools and rolls up new days every validator sync cycle (about 5 minutes). A day is rolled up once the C-Chain sync has passed its end. The endpoints read only the rollup and are cached for 10 minutes.
+C-Chain DEX swap volume, rolled up per complete UTC day from the swap events in `raw_logs` (`pkg/dexvolume`). The indexer registers pools and rolls up new days every C-Chain snapshot cycle (5 minutes by default, `cchainSnapshotInterval`). A day is rolled up once the C-Chain sync has passed its end. The endpoints read only the rollup and are cached for 10 minutes.
 
 **History:** all time, from the first day a tracked factory created a pool. The first run rolls up the last 365 days. Older days are filled backward a few months per cycle, so the full history fills in within about an hour of a fresh deploy.
 

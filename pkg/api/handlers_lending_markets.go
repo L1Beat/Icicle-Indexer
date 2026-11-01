@@ -143,7 +143,7 @@ var lendingCache = newTTLCache(2 * time.Minute)
 
 // handleLendingMarkets returns C-Chain lending markets
 // @Summary C-Chain lending markets
-// @Description Supply, borrow, rates and risk parameters of every market on Aave V3, Aave V4 (Core Hub) and BENQI Lending, read from the contracts by the indexer every validator sync cycle (about 5 minutes) and cached for 2 minutes. Amounts are token base units. APYs compound the per-second rate. USD values use each protocol's own oracle and are null when its read failed. The summary sums AVAX (WAVAX on Aave, native AVAX on BENQI) and sAVAX across protocols.
+// @Description Supply, borrow, rates and risk parameters of every market on Aave V3, Aave V4 (Core Hub) and BENQI Lending, read from the contracts by the indexer every C-Chain snapshot cycle (5 minutes by default, `cchainSnapshotInterval`) and cached for 2 minutes. Amounts are token base units. APYs compound the per-second rate. USD values use each protocol's own oracle and are null when its read failed. The summary sums AVAX (WAVAX on Aave, native AVAX on BENQI) and sAVAX across protocols.
 // @Tags Metrics - Staking
 // @Produce json
 // @Success 200 {object} Response{data=LendingOverview}

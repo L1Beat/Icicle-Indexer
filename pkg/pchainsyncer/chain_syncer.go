@@ -52,6 +52,9 @@ type Config struct {
 	// Validator syncer config
 	EnableValidatorSync   bool          // Enable L1 validator state syncing
 	ValidatorSyncInterval time.Duration // How often to sync validator state (default: 5min)
+
+	// C-Chain snapshots (restaking, lending, DEX), run with validator sync
+	CChainSnapshotInterval time.Duration // default 5min
 }
 
 // PChainSyncer manages P-chain sync
@@ -67,8 +70,9 @@ type PChainSyncer struct {
 	maxPending     int // Cap on the writer's retry buffer, in blocks
 	flushInterval  time.Duration
 
-	// Validator syncer
-	validatorSyncer *ValidatorSyncer
+	// Validator syncer and the C-Chain snapshotter started with it
+	validatorSyncer   *ValidatorSyncer
+	cchainSnapshotter *CChainSnapshotter
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -151,6 +155,7 @@ func NewPChainSyncer(cfg Config) (*PChainSyncer, error) {
 			fetcher,
 			cfg.CHConn,
 		)
+		ps.cchainSnapshotter = NewCChainSnapshotter(cfg.CHConn, fetcher.RpcURL(), cfg.CChainSnapshotInterval)
 	}
 
 	return ps, nil
@@ -199,6 +204,13 @@ func (ps *PChainSyncer) Start() error {
 		go func() {
 			defer ps.wg.Done()
 			ps.validatorSyncer.Start(ps.ctx)
+		}()
+	}
+	if ps.cchainSnapshotter != nil {
+		ps.wg.Add(1)
+		go func() {
+			defer ps.wg.Done()
+			ps.cchainSnapshotter.Start(ps.ctx)
 		}()
 	}
 

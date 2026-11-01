@@ -29,6 +29,9 @@ type ChainConfig struct {
 	// P-chain specific config
 	EnableValidatorSync   bool `yaml:"enableValidatorSync"`   // Enable L1 validator state syncing
 	ValidatorSyncInterval int  `yaml:"validatorSyncInterval"` // Validator sync interval in minutes (default: 5)
+	// C-Chain snapshot interval in minutes (default: 5): restaking, lending
+	// markets and history, DEX rollup. Runs only with enableValidatorSync.
+	CChainSnapshotInterval int `yaml:"cchainSnapshotInterval"`
 }
 
 // Syncer interface for all chain syncers
@@ -95,16 +98,17 @@ func CreateSyncer(cfg ChainConfig, conn driver.Conn, cacheInstance *cache.Cache,
 		}
 
 		return pchainsyncer.NewPChainSyncer(pchainsyncer.Config{
-			RpcURL:                cfg.RpcURL,
-			StartBlock:            cfg.StartBlock,
-			MaxConcurrency:        cfg.MaxConcurrency,
-			FetchBatchSize:        cfg.FetchBatchSize,
-			CHConn:                conn,
-			Cache:                 cacheInstance,
-			ChainID:               cfg.ChainID,
-			Name:                  cfg.Name,
-			EnableValidatorSync:   cfg.EnableValidatorSync,
-			ValidatorSyncInterval: validatorSyncInterval,
+			RpcURL:                 cfg.RpcURL,
+			StartBlock:             cfg.StartBlock,
+			MaxConcurrency:         cfg.MaxConcurrency,
+			FetchBatchSize:         cfg.FetchBatchSize,
+			CHConn:                 conn,
+			Cache:                  cacheInstance,
+			ChainID:                cfg.ChainID,
+			Name:                   cfg.Name,
+			EnableValidatorSync:    cfg.EnableValidatorSync,
+			ValidatorSyncInterval:  validatorSyncInterval,
+			CChainSnapshotInterval: time.Duration(cfg.CChainSnapshotInterval) * time.Minute,
 		})
 
 	default:

@@ -72,7 +72,7 @@ var weiPerNAVAX = big.NewInt(1_000_000_000)
 
 // handleLiquidStaking returns liquid staking protocols with their latest figures
 // @Summary Liquid staking protocols
-// @Description AVAX liquid staking tokens with pooled AVAX, token supply and exchange rate from the C-Chain contract, and running delegations whose rewards go to the protocol's P-Chain addresses. Sampled by the indexer every validator sync cycle. attribution says whether the P-Chain addresses are confirmed by the protocol. Amounts are nAVAX strings. Cached for 5 minutes.
+// @Description AVAX liquid staking tokens with pooled AVAX, token supply and exchange rate from the C-Chain contract, and running delegations whose rewards go to the protocol's P-Chain addresses. Sampled by the indexer every validator sync cycle (hourly on api.l1beat.io). attribution says whether the P-Chain addresses are confirmed by the protocol. Amounts are nAVAX strings. Cached for 5 minutes.
 // @Tags Metrics - Staking
 // @Produce json
 // @Success 200 {object} Response{data=LiquidStakingOverview}
