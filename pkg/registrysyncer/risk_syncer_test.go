@@ -2,6 +2,7 @@ package registrysyncer
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -128,5 +129,27 @@ func TestBalancerJSON(t *testing.T) {
 	want := `{"owner":null,"security_modules":[{"address":"0xa","kind":"poa","weight":0,"max_weight":1,"owner":null}]}`
 	if got != want {
 		t.Errorf("got %s\nwant %s", got, want)
+	}
+}
+
+func TestFetchOwner_NoContract(t *testing.T) {
+	const (
+		empty = "0x00000000000000000000000000000000000000aa"
+		owned = "0x00000000000000000000000000000000000000bb"
+	)
+	srv := fakeEVM(t, map[string]string{
+		empty + ":" + ownerSelector: "0x",
+		owned + ":" + ownerSelector: "0x" + word("e1"),
+	}, nil)
+
+	if _, err := fetchOwner(srv.Client(), srv.URL, empty); !errors.Is(err, errNoContract) {
+		t.Errorf("empty result: got %v, want errNoContract", err)
+	}
+	if owner, err := fetchOwner(srv.Client(), srv.URL, owned); err != nil || owner != "0x00000000000000000000000000000000000000e1" {
+		t.Errorf("owned: got %q, %v", owner, err)
+	}
+	// A revert is a real error, not errNoContract.
+	if _, err := fetchOwner(srv.Client(), srv.URL, "0x00000000000000000000000000000000000000cc"); err == nil || errors.Is(err, errNoContract) {
+		t.Errorf("revert: got %v", err)
 	}
 }

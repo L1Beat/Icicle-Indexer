@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -110,9 +111,17 @@ func SyncValidatorManagerOwners(ctx context.Context, conn driver.Conn) error {
 		owner, err := fetchOwner(httpClient, info.RpcURL, info.ValidatorManagerAddress)
 		if err != nil {
 			// Fallback: some L1s deploy their ValidatorManager on C-Chain
-			owner, err = fetchOwner(httpClient, cChainRPC, info.ValidatorManagerAddress)
-			if err != nil {
-				slog.Warn("Failed to fetch owner", "subnet_id", info.SubnetID, "error", err)
+			var cErr error
+			owner, cErr = fetchOwner(httpClient, cChainRPC, info.ValidatorManagerAddress)
+			if errors.Is(cErr, errNoContract) {
+				// The manager lives on the L1 and its RPC read failed, usually a
+				// dead L1. Common and not actionable, so keep it out of WARN.
+				slog.Debug("Owner unavailable: L1 RPC failed and manager is not on C-Chain",
+					"subnet_id", info.SubnetID, "l1_error", err)
+				continue
+			}
+			if cErr != nil {
+				slog.Warn("Failed to fetch owner", "subnet_id", info.SubnetID, "l1_error", err, "error", cErr)
 				continue
 			}
 		}
@@ -250,9 +259,16 @@ func fetchOwner(client *http.Client, rpcURL, contractAddr string) (string, error
 	if rpcResp.Error != nil {
 		return "", fmt.Errorf("RPC error: %s", rpcResp.Error.Message)
 	}
+	// eth_call to an address without code succeeds with empty return data.
+	if rpcResp.Result == "" || rpcResp.Result == "0x" {
+		return "", errNoContract
+	}
 
 	return decodeAddress(rpcResp.Result)
 }
+
+// errNoContract means the address has no contract code on the queried chain.
+var errNoContract = errors.New("no contract at address")
 
 // decodeAddress extracts a 0x-prefixed address from an ABI-encoded 32-byte word
 func decodeAddress(hexData string) (string, error) {
