@@ -246,3 +246,84 @@ func TestDerive_ClickHouseLocal(t *testing.T) {
 		"layerzero\tout\tethereum\t1000000000000000000\t2000\t\tfalse\ttrue",
 	}, strings.Split(strings.TrimSpace(string(out)), "\n"))
 }
+
+// TestAEB_ClickHouseLocal covers the AEB legs and the DEX prices used before
+// Chainlink. Set BRIDGES_CH_LOCAL=1 (needs the clickhouse binary).
+func TestAEB_ClickHouseLocal(t *testing.T) {
+	if os.Getenv("BRIDGES_CH_LOCAL") == "" {
+		t.Skip("BRIDGES_CH_LOCAL not set")
+	}
+	schema, err := os.ReadFile("../chwrapper/raw_tables.sql")
+	require.NoError(t, err)
+	schema = regexp.MustCompile(`--[^\n]*`).ReplaceAll(schema, nil)
+	var ddl []string
+	for _, name := range []string{"raw_logs", "stablecoins", "dex_pools", "bridge_logs", "bridge_contracts", "price_hourly", "bridge_transfers"} {
+		m := regexp.MustCompile(`(?s)CREATE TABLE IF NOT EXISTS ` + name + ` \(.*?;`).Find(schema)
+		require.NotNil(t, m, name)
+		ddl = append(ddl, string(m))
+	}
+	const (
+		eth   = "f20d962a6c8f70c731bd838a3a388d7d48fa6e15" // ETH (AEB)
+		usdt  = "de3a24028580884448a5397872046a019649b084" // USDT (AEB)
+		pair  = "00000000000000000000000000000000000000c1" // Pangolin V2 ETH/USDT
+		alice = "00000000000000000000000000000000000000f1"
+	)
+	word := func(h string) string { return strings.Repeat("0", 64-len(h)) + h }
+	u := func(v string) string {
+		n, _ := new(big.Int).SetString(v, 10)
+		return fmt.Sprintf("%064x", n)
+	}
+	n := 0
+	row := func(tx, txTo, addr, ts, topic0, t1, t2, t3, data string) string {
+		nt := func(s string) string {
+			if s == "" {
+				return "NULL"
+			}
+			return "unhex('" + word(s) + "')"
+		}
+		to := "NULL"
+		if txTo != "" {
+			to = "unhex('" + txTo + "')"
+		}
+		n++
+		return fmt.Sprintf("(43114, unhex('%s'), 1, unhex('%s'), '%s', unhex('%s'), 0, %d, unhex('%s'), %s, unhex('%s'), %s, %s, %s, unhex('%s'), false)",
+			addr, strings.Repeat("0", 64), ts, word(tx), n, alice, to, topic0, nt(t1), nt(t2), nt(t3), data)
+	}
+	rows := []string{
+		// Pangolin V2: 2 ETH in for 3,200 USDT out, then 1 ETH out for 1,700 USDT in: median $1,650.
+		row("1", pair, pair, "2021-03-01 09:10:00.000", topicSwapV2, alice, alice, "", u("2000000000000000000")+u("0")+u("0")+u("3200000000")),
+		row("2", pair, pair, "2021-03-01 09:20:00.000", topicSwapV2, alice, alice, "", u("0")+u("1700000000")+u("1000000000000000000")+u("0")),
+		// $50 swap: below the $100 floor, ignored.
+		row("3", pair, pair, "2021-03-01 09:30:00.000", topicSwapV2, alice, alice, "", u("0")+u("50000000")+u("1000000000000000")+u("0")),
+		// Inflow: 3 ETH minted on an executed proposal from Ethereum (chain 1): $4,950.
+		row("a", aebBridge, eth, "2021-03-01 10:00:00.000", topicTransfer, "0", alice, "", u("3000000000000000000")),
+		row("a", aebBridge, aebBridge, "2021-03-01 10:00:00.000", topicAEBProposal, "1", "7", "3", word("0")+word("0")),
+		// Outflow: 500 USDT burnt on a deposit to chain 1.
+		row("b", aebBridge, usdt, "2021-03-01 11:00:00.000", topicTransfer, alice, "0", "", u("500000000")),
+		row("b", aebBridge, aebBridge, "2021-03-01 11:00:00.000", topicAEBDeposit, "1", "aa", "8", ""),
+		// A vote that did not execute, and a burn outside the bridge: ignored.
+		row("c", aebBridge, eth, "2021-03-01 12:00:00.000", topicTransfer, "0", alice, "", u("1")),
+		row("c", aebBridge, aebBridge, "2021-03-01 12:00:00.000", topicAEBProposal, "1", "9", "2", word("0")+word("0")),
+		row("d", "", usdt, "2021-03-01 12:00:00.000", topicTransfer, alice, "0", "", u("700000000")),
+	}
+	from := time.Date(2021, 3, 1, 0, 0, 0, 0, time.UTC)
+	to := from.AddDate(0, 0, 1)
+	script := strings.Join(ddl, "\n") + "\n" +
+		"INSERT INTO dex_pools (pool, dex, factory, token0, token1, created_time) VALUES (unhex('" + pair + "'), 'pangolin-v2', unhex('" + pair + "'), unhex('" + eth + "'), unhex('" + usdt + "'), '2021-02-01 00:00:00');\n" +
+		"INSERT INTO raw_logs VALUES " + strings.Join(rows, ",\n") + ";\n" +
+		captureSQL(from, to) + ";\n" + dexPricesSQL(from, to) + ";\n" + pricesSQL(from, to) + ";\n" + deriveSQL(from, to) + ";\n" +
+		"SELECT feed, toString(hour), price FROM price_hourly FINAL FORMAT TSV;\n" +
+		"SELECT bridge, direction, chain, remote_id, lower(hex(token)), toString(amount), ifNull(toString(round(usd, 2)), 'null') FROM bridge_transfers FINAL ORDER BY block_time FORMAT TSV;\n"
+
+	f, err := os.CreateTemp(t.TempDir(), "q*.sql")
+	require.NoError(t, err)
+	_, _ = f.WriteString(script)
+	f.Close()
+	out, err := exec.Command("clickhouse", "local", "--multiquery", "--queries-file", f.Name()).CombinedOutput()
+	require.NoError(t, err, string(out))
+	require.Equal(t, []string{
+		"ETH\t2021-03-01 09:00:00\t1650",
+		"aeb\tin\tethereum\tchainbridge:1\t" + eth + "\t3000000000000000000\t4950",
+		"aeb\tout\tethereum\tchainbridge:1\t" + usdt + "\t500000000\t500",
+	}, strings.Split(strings.TrimSpace(string(out)), "\n"))
+}

@@ -5,7 +5,8 @@
 //
 // Tracked: Circle CCTP V1 and V2, LayerZero OFTs V1 and V2 (Stargate V2 pools
 // reported apart), the Avalanche Bridge (.e tokens to Ethereum, BTC.b to
-// Bitcoin) and Chainlink CCIP token pools. Each transfer is counted once: a
+// Bitcoin), its 2021 predecessor the Avalanche-Ethereum Bridge (AEB) and
+// Chainlink CCIP token pools. Each transfer is counted once: a
 // CCIP or other leg moving native USDC in a transaction that also has a CCTP
 // leg in the same direction is folded into the CCTP leg (via). Transactions
 // that bridge in and out again are kept but marked passthrough.
@@ -40,6 +41,7 @@ var Bridges = []Bridge{
 	{ID: "stargate", Name: "Stargate"},
 	{ID: "avalanche-bridge", Name: "Avalanche Bridge"},
 	{ID: "ccip", Name: "Chainlink CCIP"},
+	{ID: "aeb", Name: "Avalanche-Ethereum Bridge"},
 }
 
 // Contracts, verified on-chain 2026-11-03 (contract names on Routescan,
@@ -62,6 +64,11 @@ const (
 	lombardMailbox   = "964677f337d6528d659b1892d0045b8b27183fc0"
 	selectorRedeem   = "4e3e5047" // Assets.REDEEM_FROM_NATIVE_TOKEN_SELECTOR
 	redeemSelectorAt = 293        // 1-based byte of the selector in MessageSent data
+
+	// aebBridge is the ChainSafe ChainBridge behind the Avalanche-Ethereum
+	// Bridge (Jan-Aug 2021). Its handler mints a token on an executed
+	// proposal and burns it on a deposit, in the same tx as the Bridge event.
+	aebBridge = "6460777cda22ad67bbb97536ffc446d65761197e"
 
 	// USDC is native USDC, the only token CCTP moves on the C-Chain.
 	USDC = "b97ef9ef8734c71904d8002f8b6bc66dd9c48a6e"
@@ -110,6 +117,9 @@ var pricedTokens = []struct {
 	{"ecac9c5f704e954931349da37f60e39f515c11c1", "BTC", 8},   // LBTC
 	{"b31f66aa3c1e785363f0875a1b74e27b85fd66c7", "AVAX", 18}, // WAVAX
 	{"5947bb275c521040051d82396192181b413227a3", "LINK", 18}, // LINK.e
+	{"f20d962a6c8f70c731bd838a3a388d7d48fa6e15", "ETH", 18},  // ETH (AEB)
+	{"408d4cd0adb7cebd1f1a1c33a0ba2098e1295bab", "BTC", 8},   // WBTC (AEB)
+	{"b3fe5374f67d7a22886a0ee082b2e2f9d2651651", "LINK", 18}, // LINK (AEB)
 }
 
 // legacyUSD are the Avalanche-Ethereum Bridge stablecoins, priced at $1 on top
@@ -120,6 +130,7 @@ var legacyUSD = []struct {
 }{
 	{"de3a24028580884448a5397872046a019649b084", 6},  // USDT (AEB)
 	{"ba7deebbfc5fa1100fb055a87773e1e99cd3507a", 18}, // DAI (AEB)
+	{"aeb044650278731ef3dc244692ab9f64c78ffaea", 18}, // BUSD (AEB)
 }
 
 // Event topics.
@@ -146,15 +157,40 @@ const (
 	topicMailboxSent          = "8784acf2b096380844b252c1cc85752ea2dcccf0fd55ed7a440e0ccd3b56b908" // MessageSent(bytes32,address,bytes32,bytes)
 	topicAnswerUpdated        = "0559884fd3a460db3073b7fc896cc77986f16e378210ded43186175bf646fc5f" // AnswerUpdated(int256,uint256,uint256)
 	topicTransfer             = "ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef" // Transfer(address,address,uint256)
+	topicAEBDeposit           = "dbb69440df8433824a026ef190652f29929eb64b4d1d5d2a69be8afe3e6eaed8" // Deposit(uint8,bytes32,uint64)
+	topicAEBProposal          = "803c5a12f6bde629cea32e63d4b92d1b560816a6fb72e939d3c89e1cab650417" // ProposalEvent(uint8,uint64,uint8,bytes32,bytes32)
+	topicSwapV2               = "d78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822" // Swap(address,uint256,uint256,uint256,uint256,address)
 )
+
+// aebExecuted is ChainBridge's ProposalStatus.Executed.
+const aebExecuted = 3
+
+// aebChains maps ChainBridge chain ids to chain keys. The AEB only had Ethereum.
+var aebChains = map[uint32]string{1: "ethereum"}
 
 // FlagUSD is the transfer size above which a priced transfer is counted in
 // flagged_transfers. Flagged transfers stay in the totals.
 const FlagUSD = 10_000_000
 
-// Start is where the first run begins: the Avalanche Bridge launch, before any
-// other tracked bridge.
-var Start = time.Date(2021, 2, 1, 0, 0, 0, 0, time.UTC)
+// Start is where the first run begins, ahead of every tracked bridge (the
+// AEB's first transfer is on 2021-01-28).
+var Start = time.Date(2021, 1, 25, 0, 0, 0, 0, time.UTC)
+
+// chainlinkStart is the first Chainlink answer on the C-Chain (ETH, BTC, LINK
+// and AVAX feeds, 2021-07-14). Earlier hours are priced from DEX swaps.
+var chainlinkStart = time.Date(2021, 7, 15, 0, 0, 0, 0, time.UTC)
+
+// rescan is a past period scanned again from raw_logs once, after bridges or
+// events were added for it. It keeps its own watermark, so the main fill is
+// not rewound.
+type rescan struct {
+	Name     string
+	From, To time.Time
+}
+
+var rescans = []rescan{
+	{Name: "aeb", From: Start, To: time.Date(2021, 9, 1, 0, 0, 0, 0, time.UTC)},
+}
 
 // windowDays bounds one raw_logs scan.
 const windowDays = 7
@@ -193,27 +229,51 @@ func Sync(ctx context.Context, conn driver.Conn, caller Caller) error {
 	}
 
 	deadline := time.Now().Add(budget)
-	for from.Before(synced) && time.Now().Before(deadline) {
-		to := from.AddDate(0, 0, windowDays)
-		if to.After(synced) {
-			to = synced
+	// A rescan only covers what the main fill has already passed. The rest
+	// the main fill picks up with the current events.
+	for _, r := range rescans {
+		done, err := readWatermark(ctx, conn, watermark+"/rescan/"+r.Name)
+		if err != nil {
+			return err
+		}
+		if done.IsZero() {
+			done = r.From
+		}
+		end := r.To
+		if from.Before(end) {
+			end = from
+		}
+		if err := syncRange(ctx, conn, caller, done, end, deadline, watermark+"/rescan/"+r.Name, "Bridge rescan "+r.Name); err != nil {
+			return err
+		}
+	}
+	return syncRange(ctx, conn, caller, from, synced, deadline, watermark, "Bridge transfers synced")
+}
+
+// syncRange runs windows from from to to until done or past deadline, moving
+// the named watermark after each.
+func syncRange(ctx context.Context, conn driver.Conn, caller Caller, from, to, deadline time.Time, mark, msg string) error {
+	for from.Before(to) && time.Now().Before(deadline) {
+		end := from.AddDate(0, 0, windowDays)
+		if end.After(to) {
+			end = to
 		}
 		start := time.Now()
-		if err := syncWindow(ctx, conn, caller, from, to); err != nil {
-			return fmt.Errorf("window %s..%s: %w", from.Format(time.RFC3339), to.Format(time.RFC3339), err)
+		if err := syncWindow(ctx, conn, caller, from, end); err != nil {
+			return fmt.Errorf("window %s..%s: %w", from.Format(time.RFC3339), end.Format(time.RFC3339), err)
 		}
 		wctx, cancel := chwrapper.WriteContext(ctx)
 		err := conn.Exec(wctx, `
 			INSERT INTO indexer_watermarks (chain_id, indexer_name, granularity, last_period, last_block_num)
-			VALUES (?, ?, 'time', ?, 0)`, uint32(ChainID), watermark, to)
+			VALUES (?, ?, 'time', ?, 0)`, uint32(ChainID), mark, end)
 		cancel()
 		if err != nil {
 			return err
 		}
-		if to.Sub(from) > time.Hour {
-			slog.Info("Bridge transfers synced", "from", from.Format("2006-01-02"), "to", to.Format("2006-01-02"), "duration", time.Since(start))
+		if end.Sub(from) > time.Hour {
+			slog.Info(msg, "from", from.Format("2006-01-02"), "to", end.Format("2006-01-02"), "duration", time.Since(start))
 		}
-		from = to
+		from = end
 	}
 	return nil
 }
@@ -221,10 +281,14 @@ func Sync(ctx context.Context, conn driver.Conn, caller Caller) error {
 // Through is the time up to which bridge transfers are complete, zero before
 // the first window.
 func Through(ctx context.Context, conn driver.Conn) (time.Time, error) {
+	return readWatermark(ctx, conn, watermark)
+}
+
+func readWatermark(ctx context.Context, conn driver.Conn, name string) (time.Time, error) {
 	var t time.Time
 	rows, err := conn.Query(ctx, `
 		SELECT last_period FROM indexer_watermarks FINAL
-		WHERE chain_id = ? AND indexer_name = ?`, uint32(ChainID), watermark)
+		WHERE chain_id = ? AND indexer_name = ?`, uint32(ChainID), name)
 	if err != nil {
 		return t, err
 	}
@@ -243,6 +307,11 @@ func syncWindow(ctx context.Context, conn driver.Conn, caller Caller, from, to t
 	}
 	if err := discover(ctx, conn, caller, from, to); err != nil {
 		return fmt.Errorf("contracts: %w", err)
+	}
+	if from.Before(chainlinkStart) {
+		if err := run(ctx, conn, dexPricesSQL(from, to)); err != nil {
+			return fmt.Errorf("dex prices: %w", err)
+		}
 	}
 	if err := run(ctx, conn, pricesSQL(from, to)); err != nil {
 		return fmt.Errorf("prices: %w", err)
@@ -308,7 +377,9 @@ func captureSQL(from, to time.Time) string {
 			OR address IN (%s)
 			OR (address = unhex('%s') AND topic0 = unhex('%s'))
 			OR (address IN (%s) AND topic0 = unhex('%s'))
-			OR (address = unhex('%s') AND topic0 = unhex('%s') AND topic2 = unhex('%s')))
+			OR (address = unhex('%s') AND topic0 = unhex('%s') AND topic2 = unhex('%s'))
+			OR (address = unhex('%s') AND topic0 IN (%s))
+			OR (topic0 = unhex('%s') AND tx_to = unhex('%s') AND (topic1 = unhex('%s') OR topic2 = unhex('%s'))))
 	`, ChainID, timeLit(from), timeLit(to),
 		unhexList(topicCCTPDepositV1, topicCCTPDepositV2, topicCCTPMintV1, topicCCTPMintV2,
 			topicCCTPReceivedV1, topicCCTPReceivedV2, topicOFTSent, topicOFTReceived,
@@ -318,7 +389,9 @@ func captureSQL(from, to time.Time) string {
 		unhexList(lzV1Libraries...),
 		lombardMailbox, topicMailboxSent,
 		unhexList(aggregators()...), topicAnswerUpdated,
-		BTCb, topicTransfer, zero32)
+		BTCb, topicTransfer, zero32,
+		aebBridge, unhexList(topicAEBDeposit, topicAEBProposal),
+		topicTransfer, aebBridge, zero32, zero32)
 }
 
 // pricesSQL rolls the window's Chainlink answers up to the last one per hour.
@@ -343,6 +416,55 @@ func pricesSQL(from, to time.Time) string {
 		WHERE price > 0
 		GROUP BY feed, hour
 	`, quoted(aggs), quoted(feeds), timeLit(from), timeLit(to), topicAnswerUpdated, unhexList(aggs...))
+}
+
+// dexPricesSQL fills price_hourly for hours before Chainlink from Pangolin V2
+// and LFJ V1 swaps between a feed's token (ETH, WBTC, LINK, WAVAX, bridged or
+// not) and a USD stablecoin: the hour's median price over swaps of at least
+// $100. answered_at is the hour's start, so a Chainlink answer in the same
+// hour wins.
+func dexPricesSQL(from, to time.Time) string {
+	var ft, ff, fd, lt, ld []string
+	for _, p := range pricedTokens {
+		ft = append(ft, "'"+p.Token+"'")
+		ff = append(ff, "'"+p.Feed+"'")
+		fd = append(fd, fmt.Sprintf("toUInt8(%d)", p.Decimals))
+	}
+	for _, t := range legacyUSD {
+		lt = append(lt, "'"+t.Token+"'")
+		ld = append(ld, fmt.Sprintf("toUInt8(%d)", t.Decimals))
+	}
+	w := func(n int) string {
+		return fmt.Sprintf("toFloat64(reinterpretAsUInt256(reverse(substring(l.data, %d, 32))))", 32*n+1)
+	}
+	return fmt.Sprintf(`
+		INSERT INTO price_hourly (feed, hour, price, answered_at)
+		WITH
+			(SELECT groupArray((lower(hex(token)), decimals)) FROM stablecoins FINAL WHERE chain_id = %[1]d AND peg = 'USD') AS st,
+			arrayConcat(arrayMap(x -> x.1, st), [%[2]s]) AS stok,
+			arrayConcat(arrayMap(x -> x.2, st), [%[3]s]) AS sdec,
+			[%[4]s] AS ftok, [%[5]s] AS ffeed, [%[6]s] AS fdec
+		SELECT feed, hour, median(px), toDateTime64(hour, 3, 'UTC')
+		FROM (
+			SELECT toStartOfHour(l.block_time) AS hour,
+				lower(hex(p.token0)) AS t0, lower(hex(p.token1)) AS t1,
+				greatest(%[7]s, %[9]s) AS a0, greatest(%[8]s, %[10]s) AS a1,
+				transform(t0, ftok, ffeed, '') AS f0, transform(t1, ftok, ffeed, '') AS f1,
+				transform(t0, stok, sdec, toUInt8(255)) AS s0, transform(t1, stok, sdec, toUInt8(255)) AS s1,
+				multiIf(f0 != '' AND s1 != 255, f0, f1 != '' AND s0 != 255, f1, '') AS feed,
+				multiIf(feed = f0 AND f0 != '', a1 / pow(10, s1), a0 / pow(10, s0)) AS usd,
+				multiIf(feed = f0 AND f0 != '', a0 / pow(10, transform(t0, ftok, fdec, toUInt8(0))),
+					a1 / pow(10, transform(t1, ftok, fdec, toUInt8(0)))) AS amt,
+				usd / amt AS px
+			FROM raw_logs l
+			INNER JOIN (SELECT pool, token0, token1 FROM dex_pools FINAL WHERE dex IN ('pangolin-v2', 'lfj-v1')) p ON l.address = p.pool
+			WHERE l.chain_id = %[1]d AND l.block_time >= %[11]s AND l.block_time < %[12]s
+			  AND l.topic0 = unhex('%[13]s') AND length(l.data) >= 128
+		)
+		WHERE feed != '' AND usd >= 100 AND amt > 0 AND isFinite(px)
+		GROUP BY feed, hour
+	`, ChainID, strings.Join(lt, ", "), strings.Join(ld, ", "), strings.Join(ft, ", "), strings.Join(ff, ", "), strings.Join(fd, ", "),
+		w(0), w(1), w(2), w(3), timeLit(from), timeLit(to), topicSwapV2)
 }
 
 // chainArrays renders an id -> chain key map as two SQL arrays, in key order.
@@ -381,6 +503,7 @@ func deriveSQL(from, to time.Time) string {
 	cctpIDs, cctpKeys := chainArrays(cctpChains)
 	lzIDs, lzKeys := chainArrays(lzChains)
 	ccipIDs, ccipKeys := chainArrays(ccipChains)
+	aebIDs, aebKeys := chainArrays(aebChains)
 
 	var pt, pf, pd []string
 	for _, p := range pricedTokens {
@@ -534,6 +657,26 @@ func deriveSQL(from, to time.Time) string {
 			WHERE address = unhex('%[10]s') AND topic0 = unhex('%[11]s') AND substring(data, %[12]d, 4) = unhex('%[13]s'))`,
 			BTCb, w(0), zeroAddr, w(1), logs, topicABUnwrap, ta(1), topicTransfer, zero32,
 			lombardMailbox, topicMailboxSent, redeemSelectorAt, selectorRedeem),
+		// AEB: a token mint in a tx where the Bridge executed a proposal, or a
+		// burn in a tx where it took a deposit. The chain id is topic1 of the
+		// Bridge event.
+		fmt.Sprintf(`SELECT l.block_time, l.transaction_hash AS tx, l.log_index AS li, 'aeb' AS bridge,
+			if(l.topic1 = unhex('%[1]s'), 1, 2) AS dir,
+			concat('chainbridge:', toString(b.cid)) AS remote_id,
+			transform(b.cid, %[2]s, %[3]s, concat('chainbridge:', toString(b.cid))) AS chain,
+			l.address AS token, %[4]s AS amount,
+			if(dir = 2, %[5]s, %[6]s) AS from_addr, if(dir = 1, %[7]s, %[6]s) AS to_addr
+		FROM (SELECT * FROM %[8]s WHERE topic0 = unhex('%[9]s') AND length(data) = 32
+			AND (topic1 = unhex('%[1]s') OR topic2 = unhex('%[1]s'))) l
+		INNER JOIN (SELECT transaction_hash, any(toUInt64(%[10]s)) AS cid,
+				max(topic0 = unhex('%[11]s')) AS dep,
+				max(topic0 = unhex('%[12]s') AND %[13]s = %[14]d) AS exe
+			FROM %[8]s WHERE address = unhex('%[15]s') AND topic0 IN (unhex('%[11]s'), unhex('%[12]s'))
+			GROUP BY transaction_hash) b
+		ON l.transaction_hash = b.transaction_hash
+		WHERE (l.topic1 = unhex('%[1]s') AND b.exe = 1) OR (l.topic2 = unhex('%[1]s') AND b.dep = 1)`,
+			zero32, aebIDs, aebKeys, w(0), ta(1), zeroAddr, ta(2), logs, topicTransfer,
+			tu(1), topicAEBDeposit, topicAEBProposal, tu(3), aebExecuted, aebBridge),
 	}
 
 	return fmt.Sprintf(`
