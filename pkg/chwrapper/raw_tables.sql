@@ -653,6 +653,66 @@ CREATE TABLE IF NOT EXISTS dex_daily (
 ) ENGINE = ReplacingMergeTree(computed_at)
 ORDER BY (day, dex, pool);
 
+-- C-Chain bridge logs (pkg/bridges): the raw_logs rows bridge transfers are
+-- decoded from, copied in one scan per window so decoding can be re-run
+-- without scanning raw_logs again. Also holds the Chainlink price updates.
+CREATE TABLE IF NOT EXISTS bridge_logs (
+    block_time DateTime64(3, 'UTC'),
+    block_number UInt32,
+    transaction_hash FixedString(32),
+    log_index UInt32,
+    address FixedString(20),
+    tx_from FixedString(20),
+    topic0 FixedString(32),
+    topic1 Nullable(FixedString(32)),
+    topic2 Nullable(FixedString(32)),
+    topic3 Nullable(FixedString(32)),
+    data String CODEC(ZSTD(3))
+) ENGINE = ReplacingMergeTree
+ORDER BY (block_time, transaction_hash, log_index);
+
+-- Contracts that emit generic bridge events (LayerZero OFTs, CCIP token pools,
+-- Avalanche Bridge tokens), checked on-chain once. Only valid ones count.
+CREATE TABLE IF NOT EXISTS bridge_contracts (
+    address FixedString(20),
+    bridge LowCardinality(String),  -- layerzero, stargate, ccip, avalanche-bridge
+    token FixedString(20),  -- Token moved: the contract itself, or an adapter's token()
+    valid Bool,  -- Wired to the bridge, e.g. an OFT whose endpoint() is LayerZero's
+    note String,  -- Why it is (in)valid
+    checked_at DateTime64(3, 'UTC') DEFAULT now64(3)
+) ENGINE = ReplacingMergeTree(checked_at)
+ORDER BY address;
+
+-- Hourly USD prices from Chainlink AnswerUpdated logs (pkg/bridges): the last
+-- answer in the hour.
+CREATE TABLE IF NOT EXISTS price_hourly (
+    feed LowCardinality(String),  -- ETH, BTC, AVAX, LINK
+    hour DateTime('UTC'),
+    price Float64,
+    answered_at DateTime64(3, 'UTC')
+) ENGINE = ReplacingMergeTree(answered_at)
+ORDER BY (feed, hour);
+
+-- C-Chain bridge transfers, one row per leg, each transfer once (pkg/bridges).
+CREATE TABLE IF NOT EXISTS bridge_transfers (
+    block_time DateTime64(3, 'UTC'),
+    transaction_hash FixedString(32),
+    log_index UInt32,  -- Of the event the leg is read from
+    bridge LowCardinality(String),  -- a bridges.Bridges id, e.g. cctp, layerzero
+    direction Enum8('in' = 1, 'out' = 2),  -- Into or out of the C-Chain
+    chain LowCardinality(String),  -- Counterparty chain key, e.g. ethereum, base, bitcoin
+    remote_id String,  -- Bridge-native chain id, e.g. cctp:0, lz:30101, ccip:5009297550715157269
+    token FixedString(20),
+    amount UInt256,  -- Token base units
+    usd Nullable(Float64),  -- NULL when the token has no price
+    from_address FixedString(20),  -- Sender on the C-Chain (out), zeros when unknown
+    to_address FixedString(20),  -- Recipient on the C-Chain (in), zeros when unknown
+    via LowCardinality(String),  -- Wrapping bridge for a leg counted under another, e.g. ccip on a cctp leg
+    passthrough Bool,  -- The tx bridges in and out again, left out of totals
+    derived_at DateTime64(3, 'UTC') DEFAULT now64(3)
+) ENGINE = ReplacingMergeTree(derived_at)
+ORDER BY (block_time, transaction_hash, log_index);
+
 -- Function signatures - 4-byte selector -> canonical signature, filled by the
 -- bundled seed list and demand-driven OpenChain lookups (pkg/enrich). Several
 -- rows per selector are expected (collisions); the API picks one per tx using

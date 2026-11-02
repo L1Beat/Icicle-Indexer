@@ -235,6 +235,10 @@ func (s *Server) registerRoutes(cfg Config) {
 	s.router.HandleFunc("GET /api/v1/metrics/dex", s.handleDexOverview)
 	s.router.HandleFunc("GET /api/v1/metrics/dex/timeseries", s.handleDexTimeseries)
 	s.router.HandleFunc("GET /api/v1/metrics/dex/pools", s.handleDexPools)
+	s.router.HandleFunc("GET /api/v1/metrics/bridges", s.handleBridges)
+	s.router.HandleFunc("GET /api/v1/metrics/bridges/timeseries", s.handleBridgesTimeseries)
+	s.router.HandleFunc("GET /api/v1/metrics/bridges/transfers/top", s.handleBridgeTransfersTop)
+	s.router.HandleFunc("GET /api/v1/metrics/bridges/transfers/recent", s.handleBridgeTransfersRecent)
 
 	// EVM Chain Stats & Time Series
 	s.router.HandleFunc("GET /api/v1/metrics/evm/{chainId}/stats", s.handleChainMetrics)

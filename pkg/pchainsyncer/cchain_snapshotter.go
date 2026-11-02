@@ -3,9 +3,12 @@ package pchainsyncer
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"time"
 
+	"icicle/pkg/bridges"
 	"icicle/pkg/dexvolume"
+	"icicle/pkg/restaking"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 )
@@ -61,6 +64,12 @@ func (s *CChainSnapshotter) runOnce(ctx context.Context) {
 	// DEX pools and complete UTC days of swaps.
 	if err := dexvolume.Sync(ctx, s.conn); err != nil {
 		slog.Warn("Failed to roll up DEX volume", "error", err)
+	}
+	// Bridge transfers into and out of the C-Chain.
+	base := strings.TrimSuffix(strings.TrimRight(s.nodeURL, "/"), "/ext/bc/P")
+	caller := restaking.RPCCaller{URL: base + "/ext/bc/C/rpc", Client: liquidRPCClient}
+	if err := bridges.Sync(ctx, s.conn, caller); err != nil {
+		slog.Warn("Failed to sync bridge transfers", "error", err)
 	}
 	slog.Info("C-Chain snapshot cycle completed", "duration", time.Since(start))
 }

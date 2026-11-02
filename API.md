@@ -2255,6 +2255,161 @@ Pools with the most priced volume over the window.
 
 ---
 
+## Metrics API - Bridges
+
+Tokens bridged into and out of the C-Chain, one row per leg, decoded from `raw_logs` (`pkg/bridges`). Every C-Chain snapshot cycle (5 minutes by default, `cchainSnapshotInterval`), the indexer copies the new bridge logs out of `raw_logs` into `bridge_logs`, checks any new contract on-chain (`bridge_contracts`), rolls Chainlink answers up to hourly prices (`price_hourly`) and decodes the legs into `bridge_transfers`. Daily figures cover complete UTC days the sync has passed. `/transfers/recent` follows the chain within a cycle.
+
+**History:** all time, from February 2021 (the Avalanche Bridge launch). A fresh deploy scans a week of `raw_logs` at a time, oldest first, for up to 2 minutes per cycle, so `as_of` climbs from 2021 to today over a few hours. Coverage starts when each bridge did: Avalanche Bridge Feb 2021, LayerZero V1 2022, BTC.b mid-2022, CCTP V1 Apr 2023, LayerZero V2 OFTs and CCIP token pools 2024, CCTP V2 2025.
+
+**Bridges:**
+
+| id | Name | What counts | Counterparty |
+|----|------|-------------|--------------|
+| `cctp` | Circle CCTP | Native USDC. Out: `DepositForBurn` on TokenMessenger V1 `0x6B25532e1060CE10cc3B0A99e5683b91BFDe6982` / V2 `0x28b5a0e9C621a5BadaA536219b3a228C8168cf5d`. In: `MintAndWithdraw` on the same contracts | Destination domain in the burn. Source domain from the `MessageReceived` the MessageTransmitter (V1 `0x8186359aF5F57FbB40c6b14A588d2A59C0C29880`, V2 `0x81D40F21F12A8F0E3252Bccb954D722d4c464B64`) logs right after the mint |
+| `layerzero` | LayerZero OFT | V2 `OFTSent` / `OFTReceived` and V1 `SendToChain` / `ReceiveFromChain`, from OFTs whose `endpoint()` is EndpointV2 `0x1a44076050125825900e736c501f859c50fE728c` (or `lzEndpoint()` Endpoint V1 `0x3c2269811836af69497E5F486A85D7316753cf62`). V2 events also need EndpointV2's `PacketSent` (same guid, OFT as sender) or `PacketDelivered` (to the OFT) in the same tx. V1 events need a V1 message library log (UltraLightNodeV2, SendUln301, ReceiveUln301) in the tx. The token is the OFT's `token()` (adapters), `innerToken()`, or the OFT itself | LayerZero endpoint id (V2 `30xxx`, V1 `1xx`) |
+| `stargate` | Stargate | Stargate V2 pools USDC `0x5634c4a5FEd09819E3c46D86A965Dd9447d86e47` and USDt `0x12dC9256Acc9895B076f6638D628382881e62CeE` (OFT events, without the packet check: their packets come from Stargate's TokenMessaging, a tx later for bus rides). Stargate V1 is not tracked | LayerZero endpoint id |
+| `avalanche-bridge` | Avalanche Bridge | .e tokens (`Mint` with an origin tx id in, `Unwrap` out) on BridgeTokens (".e" symbol, `chainIds(0)` set). BTC.b `0x152b9d0FdC40C096757F570A51E494bd4b943E50`: `Mint` with a Bitcoin tx id in, and out the burns next to a `redeemForBtc` request on Lombard's Mailbox `0x964677F337d6528d659b1892D0045B8b27183fc0` (BTC.b withdrawals go through Lombard's AssetRouter since 2025), plus legacy `Unwrap`. BTC.b fee mints (no origin tx id) and BTC.b-to-LBTC deposits are left out | `ethereum` for .e tokens, `bitcoin` for BTC.b |
+| `ccip` | Chainlink CCIP | `LockedOrBurned` / `ReleasedOrMinted` from token pools the TokenAdminRegistry `0xc8df5D618c6a59Cc6A311E96a39450381001464f` lists for their token (or behind its USDC pool proxy). Pre-1.5.1 pools, which only emit `Locked`/`Burned`, are not tracked | CCIP chain selector |
+
+Wormhole, Axelar, intent-based bridges (Across, Relay, deBridge), exchange deposits and Avalanche ICM/Teleporter are not tracked.
+
+**Counting:**
+- Each transfer counts once. A leg moving native USDC in a tx that also has a CCTP leg in the same direction (CCIP's USDC pools burn through CCTP) is folded into the CCTP leg, whose `via` names the wrapping bridge.
+- A transaction that bridges in and out again (e.g. a CCTP mint forwarded straight to another chain) is a passthrough. Its legs are kept in `bridge_transfers` but left out of every figure except `passthrough_count` (transactions) and `/transfers/recent`.
+- Counterparties use one chain key across bridges (LayerZero's chain keys, e.g. `ethereum`, `base`, `bsc`, `hyperliquid`), so a chain reached through several bridges groups together. `avalanche_l1` marks counterparties that are Avalanche L1s (Dexalot, DFK, Beam, Shrapnel, GUNZ). An id with no known chain shows as `lz:<eid>`, `cctp:<domain>` or `ccip:<selector>`.
+
+**Pricing:** USD stablecoins from the stablecoin registry (`peg = 'USD'`, MIM included) and the 2021 AEB stablecoins at $1. WETH.e at ETH, BTC.b, WBTC.e, WBTC (OFT) and LBTC at BTC, WAVAX at AVAX and LINK.e at LINK, using the last Chainlink answer of the hour (aggregators of the ETH/USD, BTC/USD, AVAX/USD and LINK/USD feeds, every phase). A price older than 7 days leaves the transfer unpriced. Other tokens are counted but unpriced (`priced_share`). Priced transfers above $10,000,000 (`flag_threshold_usd`) are counted in `flagged_transfers` and stay in the totals.
+
+**Window:** `days=N` is the last N complete UTC days ending `as_of`, both inclusive, clamped to the first day with a tracked transfer (`from`, `days` report the clamped range). Before the first window, `as_of` and `from` are null and lists are empty.
+
+**Accuracy check:** the decoding was run over 2026-10-03..11-02 from our node and matched an independent tally of the same logs: CCTP $381M in / $713M out, LayerZero $78M / $25M (USDe $77M / $23M), Stargate $2.1M / $1.7M, Avalanche Bridge $23M / $19M (BTC.b 82 BTC in / 98 BTC out), CCIP $1.3M / $1.0M after folding 350 CCIP-through-CCTP legs into CCTP, 39 passthrough transactions.
+
+### GET /api/v1/metrics/bridges
+
+USD in and out of the C-Chain over the window: totals, and by bridge, counterparty chain and token.
+
+**Query Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `days` | int | Complete UTC days, 1-3650 (default 30) |
+
+**Response:**
+```json
+{
+  "data": {
+    "as_of": "2026-11-02",
+    "from": "2026-10-04",
+    "days": 30,
+    "flag_threshold_usd": 10000000,
+    "totals": {
+      "inflow_usd": 485230178.5,
+      "outflow_usd": 758637429.1,
+      "net_usd": -273407250.6,
+      "transfers": 33969,
+      "priced_share": 0.8925,
+      "flagged_transfers": 0,
+      "passthrough_count": 39
+    },
+    "by_bridge": [
+      { "id": "cctp", "name": "Circle CCTP", "inflow_usd": 380396223.8, "outflow_usd": 712447274.3, "net_usd": -332051050.5, "transfers": 27934, "priced_share": 1, "flagged_transfers": 0 }
+    ],
+    "by_chain": [
+      { "chain": "ethereum", "name": "Ethereum", "avalanche_l1": false, "inflow_usd": 258090761.2, "outflow_usd": 396810844.3, "net_usd": -138720083.1, "transfers": 5360, "priced_share": 0.8627, "flagged_transfers": 0 }
+    ],
+    "by_token": [
+      {
+        "token": "0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e",
+        "symbol": "USDC",
+        "decimals": 6,
+        "priced": true,
+        "inflow_amount": "381226009679211",
+        "outflow_amount": "713281067512081",
+        "inflow_usd": 381226009.7,
+        "outflow_usd": 713281067.5,
+        "net_usd": -332055057.8,
+        "transfers": 28219
+      }
+    ]
+  }
+}
+```
+
+Sample values are illustrative. `by_bridge` lists every bridge, in a fixed order, with zeros when idle. `by_chain` and `by_token` are ordered by USD moved. Token amounts are base units; `symbol` and `decimals` come from token metadata (`decimals` is null when unknown).
+
+### GET /api/v1/metrics/bridges/timeseries
+
+Daily USD in and out, total and per bridge. Oldest first; days without transfers are left out.
+
+**Query Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `days` | int | Complete UTC days, 1-3650 (default 90) |
+
+**Response:**
+```json
+{
+  "data": [
+    {
+      "date": "2026-11-02",
+      "inflow_usd": 44574397.4,
+      "outflow_usd": 51231054.0,
+      "net_usd": -6656656.6,
+      "transfers": 1293,
+      "bridges": [
+        { "id": "cctp", "inflow_usd": 13331107.5, "outflow_usd": 47839375.9, "transfers": 1133 }
+      ]
+    }
+  ]
+}
+```
+
+### GET /api/v1/metrics/bridges/transfers/top
+
+The priced transfers with the highest USD value over the window, passthrough legs left out.
+
+**Query Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `days` | int | Complete UTC days, 1-3650 (default 30) |
+| `limit` | int | Transfers, 1-100 (default 25) |
+
+**Response:**
+```json
+{
+  "data": [
+    {
+      "tx_hash": "0x72dda2186e8e4ece7c245cfeee9a8415e0eb81a2ff5c77667355c5adaf982b67",
+      "time": "2026-10-20T14:02:11Z",
+      "bridge": "cctp",
+      "direction": "out",
+      "chain": "ethereum",
+      "chain_name": "Ethereum",
+      "token": "0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e",
+      "symbol": "USDC",
+      "decimals": 6,
+      "amount": "10000000000000",
+      "usd": 10000000,
+      "from": "0x...",
+      "to": null,
+      "passthrough": false
+    }
+  ]
+}
+```
+
+`from` is the C-Chain sender of an outflow and `to` the C-Chain recipient of an inflow; the other side is null (it lives on the counterparty chain). `via` appears when a wrapping bridge was folded into the leg.
+
+### GET /api/v1/metrics/bridges/transfers/recent
+
+The newest transfers, priced or not, passthrough legs included and marked. Same fields as `/transfers/top`. Cached for 1 minute.
+
+**Query Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `limit` | int | Transfers, 1-100 (default 25) |
+
+---
+
 ## Metrics API - Chain Stats
 
 ### GET /api/v1/metrics/evm/{chainId}/stats
@@ -2518,6 +2673,10 @@ ws.onmessage = (event) => {
 | GET | `/api/v1/metrics/dex` | C-Chain DEX volume per DEX |
 | GET | `/api/v1/metrics/dex/timeseries` | Daily C-Chain DEX volume |
 | GET | `/api/v1/metrics/dex/pools` | Top C-Chain DEX pools by volume |
+| GET | `/api/v1/metrics/bridges` | C-Chain bridge inflows and outflows by bridge, chain and token |
+| GET | `/api/v1/metrics/bridges/timeseries` | Daily C-Chain bridge flows |
+| GET | `/api/v1/metrics/bridges/transfers/top` | Largest C-Chain bridge transfers |
+| GET | `/api/v1/metrics/bridges/transfers/recent` | Newest C-Chain bridge transfers |
 | WS | `/ws/blocks/{chainId}` | Real-time block stream |
 
 ---
