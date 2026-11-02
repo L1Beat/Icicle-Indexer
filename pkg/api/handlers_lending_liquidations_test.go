@@ -62,11 +62,15 @@ func TestHandleLendingLiqRecentAndTop(t *testing.T) {
 	var lastArgs []interface{}
 	server := NewTestServer(liqMock(t, func(q string, args []interface{}) (driver.Rows, error) {
 		lastQuery, lastArgs = q, args
-		return NewMockRows([]string{"p", "tx", "b", "t", "bor", "liq", "d", "ra", "ru", "c", "sa", "su"}, [][]interface{}{
+		return NewMockRows([]string{"p", "tx", "b", "t", "bor", "liq", "d", "ra", "ru", "c", "su_amt", "sa", "su"}, [][]interface{}{
 			{"benqi", strings.Repeat("aa", 32), uint32(100), at, strings.Repeat("22", 20), strings.Repeat("11", 20),
-				"5c0401e81bc07ca70fad469b451682c0d747ef1c", "1000", 3376.58, "f362fea9659cf036792c9cb02f8ff8198e21b4cb", "432983712400627209946", 3714.24},
+				"5c0401e81bc07ca70fad469b451682c0d747ef1c", "1000", 3376.58, "f362fea9659cf036792c9cb02f8ff8198e21b4cb", "432983712400627209946", "1852861793209", 3714.24},
+			{"benqi", strings.Repeat("dd", 32), uint32(97), at, strings.Repeat("22", 20), strings.Repeat("11", 20),
+				"5c0401e81bc07ca70fad469b451682c0d747ef1c", "1000", 3376.58, "f362fea9659cf036792c9cb02f8ff8198e21b4cb", "0", "1852861793209", 0.0},
 			{"aave-v3", strings.Repeat("bb", 32), uint32(99), at, strings.Repeat("44", 20), strings.Repeat("11", 20),
-				"9999999999999999999999999999999999999999", "2000", 0.0, "b31f66aa3c1e785363f0875a1b74e27b85fd66c7", "99", 0.0},
+				"9999999999999999999999999999999999999999", "2000", 0.0, "b31f66aa3c1e785363f0875a1b74e27b85fd66c7", "0", "99", 0.0},
+			{"aave-v3", strings.Repeat("cc", 32), uint32(98), at, strings.Repeat("44", 20), strings.Repeat("11", 20),
+				"b31f66aa3c1e785363f0875a1b74e27b85fd66c7", "0", 0.0, "b31f66aa3c1e785363f0875a1b74e27b85fd66c7", "0", "400", 0.0},
 		}), nil
 	}))
 
@@ -79,19 +83,27 @@ func TestHandleLendingLiqRecentAndTop(t *testing.T) {
 		Data []LiqEvent `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	require.Len(t, resp.Data, 2)
+	require.Len(t, resp.Data, 4)
 	e := resp.Data[0]
 	require.Equal(t, "0x"+strings.Repeat("aa", 32), e.TxHash)
 	require.Equal(t, "AVAX", e.Debt.Symbol)
 	require.Equal(t, "0x0000000000000000000000000000000000000000", e.Debt.Address)
 	require.Equal(t, "sAVAX", e.Collateral.Symbol)
-	require.Equal(t, "432983712400627209946", e.Collateral.Amount)
+	require.Equal(t, "432983712400627209946", *e.Collateral.Amount)
 	require.InDelta(t, 3714.24, *e.Collateral.USD, 1e-9)
-	unpriced := resp.Data[1]
+	notConverted := resp.Data[1] // BENQI row before the rescan: no qiToken count under underlying decimals
+	require.Nil(t, notConverted.Collateral.Amount)
+	require.Nil(t, notConverted.Collateral.USD)
+	unpriced := resp.Data[2]
 	require.Nil(t, unpriced.Debt.USD)
 	require.Nil(t, unpriced.Collateral.USD)
 	require.Nil(t, unpriced.Debt.Decimals) // unknown asset
 	require.Equal(t, "", unpriced.Debt.Symbol)
+	require.Equal(t, "99", *unpriced.Collateral.Amount) // Aave seizes underlying directly
+	dust := resp.Data[3]                                // repaid exactly 0: a real $0, not unpriced
+	require.NotNil(t, dust.Debt.USD)
+	require.Equal(t, 0.0, *dust.Debt.USD)
+	require.Nil(t, dust.Collateral.USD) // 400 units seized but no price
 
 	w = MakeRequest(t, server, "GET", "/api/v1/metrics/lending/liquidations/top?days=30&limit=5")
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())

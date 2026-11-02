@@ -2047,9 +2047,9 @@ Daily supplied and borrowed USD per protocol and overall, from each market's dai
 Executed liquidations on Aave V3 (Pool `LiquidationCall`), Aave V4 (each spoke's `LiquidationCall`) and BENQI (each qiToken's `LiquidateBorrow`), from `raw_logs`, ingested by the `icicle-lending` service into `lending_liquidations` over the protocols' full history. Values use each protocol's own oracle at the event block: Aave V3 AaveOracle, BENQI PriceOracle (resolved at the block, since it rotates), Aave V4 the spoke's oracle (`getReservePrice`).
 
 - `debt` is what the liquidator repaid: Aave V3 `debtToCover`, BENQI `repayAmount`, Aave V4 `debtAmountRestored` plus restored premium.
-- `collateral` is what was seized, in underlying units: Aave V3 `liquidatedCollateralAmount`, Aave V4 `collateralAmountRemoved`, BENQI `seizeTokens` converted with the collateral market's `exchangeRateStored` at the block (it includes the protocol's seize share).
+- `collateral` is what was seized, in underlying units: Aave V3 `liquidatedCollateralAmount`, Aave V4 `collateralAmountRemoved`, BENQI `seizeTokens` converted with the collateral market's `exchangeRateStored` at the block (it includes the protocol's seize share). `collateral.amount` is null for a BENQI liquidation the ingester has not converted yet (rows from before the seized-USD rescan), rather than a qiToken count under the underlying's decimals.
 - Assets are the underlying tokens (BENQI qiToken markets are mapped to theirs, native AVAX is `0x00..00`). Symbols come from the lending market snapshots and are empty for markets delisted before the snapshots began.
-- USD values are null when the oracle read failed. Daily sums cover priced liquidations only, and `unpriced` counts the rest.
+- USD values are null when a non-zero amount could not be priced. A zero amount is worth a real 0: dust liquidations sometimes repay exactly 0 (for example, hundreds of Aave positions swept in one transaction on 2025-03-21). Daily sums cover priced values, and `unpriced` counts liquidations with a non-zero repaid or seized amount but no USD value.
 
 #### GET /api/v1/metrics/lending/liquidations
 

@@ -15,8 +15,8 @@ type LiqAsset struct {
 	Address  string   `json:"address"` // underlying token, 0x00..00 for native AVAX
 	Symbol   string   `json:"symbol"`
 	Decimals *uint8   `json:"decimals"`
-	Amount   string   `json:"amount"`
-	USD      *float64 `json:"usd"` // oracle value at the block, null when unpriced
+	Amount   *string  `json:"amount"` // null when not yet known (BENQI seized before conversion)
+	USD      *float64 `json:"usd"`    // oracle value at the block, null when a non-zero amount is unpriced (0 for a zero amount)
 }
 
 // LiqEvent is one executed liquidation.
@@ -34,7 +34,7 @@ type LiqEvent struct {
 // LiqTotals is a count and USD sums over priced liquidations.
 type LiqTotals struct {
 	Count      uint64  `json:"count"`
-	Unpriced   uint64  `json:"unpriced"` // liquidations missing a repaid or seized price
+	Unpriced   uint64  `json:"unpriced"` // liquidations with a non-zero repaid or seized amount but no USD value
 	RepaidUSD  float64 `json:"repaid_usd"`
 	SeizedUSD  float64 `json:"seized_usd"`
 	ProtocolID string  `json:"protocol_id,omitempty"`
@@ -101,11 +101,27 @@ func resolveLiqAsset(assets map[string]liqAssetInfo, protocol, addr string) (str
 	return addr, "", nil
 }
 
-func usdOrNil(v float64) *float64 {
-	if v <= 0 {
+// usdOrNil returns v, or nil when a non-zero (or unknown) amount has no USD
+// value. Dust liquidations repay exactly 0 and are worth a real 0.
+func usdOrNil(v float64, amount *string) *float64 {
+	if v <= 0 && (amount == nil || *amount != "0") {
 		return nil
 	}
 	return &v
+}
+
+// seizedAmount returns the seized collateral in underlying units. Aave seizes
+// underlying, so seize_amount is it. BENQI seizes qiTokens: the underlying
+// amount is only known once the ingester has converted it (seized_underlying),
+// so nil until then rather than a qiToken count under underlying decimals.
+func seizedAmount(protocol, underlying, raw string) *string {
+	if underlying != "0" && underlying != "" {
+		return &underlying
+	}
+	if protocol == "benqi" && raw != "0" {
+		return nil
+	}
+	return &raw
 }
 
 // handleLendingLiqDaily returns daily liquidation totals
@@ -140,7 +156,8 @@ func (s *Server) loadLiqDaily(ctx context.Context, days int) ([]LiqDay, error) {
 	}
 	rows, err := s.conn.Query(ctx, `
 		SELECT toString(toDate(block_time)) AS d, protocol, lower(hex(collateral_asset)),
-			count(), countIf(repaid_usd = 0 OR seized_usd = 0),
+			count(), countIf((repay_amount > 0 AND repaid_usd = 0)
+				OR (if(seized_underlying > 0, seized_underlying, seize_amount) > 0 AND seized_usd = 0)),
 			sum(toFloat64(repaid_usd)) / 1e18, sum(toFloat64(seized_usd)) / 1e18
 		FROM lending_liquidations FINAL
 		WHERE chain_id = 43114 AND block_time >= today() - ?
@@ -279,7 +296,7 @@ func (s *Server) loadLiqEvents(ctx context.Context, where, order string, limit i
 	rows, err := s.conn.Query(ctx, `
 		SELECT protocol, lower(hex(tx_hash)), block_number, block_time, lower(hex(borrower)), lower(hex(liquidator)),
 			lower(hex(debt_asset)), toString(repay_amount), toFloat64(repaid_usd) / 1e18,
-			lower(hex(collateral_asset)), toString(if(seized_underlying > 0, seized_underlying, seize_amount)),
+			lower(hex(collateral_asset)), toString(seized_underlying), toString(seize_amount),
 			toFloat64(seized_usd) / 1e18
 		FROM lending_liquidations FINAL
 		WHERE chain_id = 43114 AND `+where+`
@@ -293,17 +310,19 @@ func (s *Server) loadLiqEvents(ctx context.Context, where, order string, limit i
 	out := []LiqEvent{}
 	for rows.Next() {
 		var e LiqEvent
-		var debt, coll string
+		var debt, coll, repaid, seizedUnderlying, seized string
 		var repaidUSD, seizedUSD float64
 		if err := rows.Scan(&e.ProtocolID, &e.TxHash, &e.BlockNumber, &e.BlockTime, &e.Borrower, &e.Liquidator,
-			&debt, &e.Debt.Amount, &repaidUSD, &coll, &e.Collateral.Amount, &seizedUSD); err != nil {
+			&debt, &repaid, &repaidUSD, &coll, &seizedUnderlying, &seized, &seizedUSD); err != nil {
 			return nil, err
 		}
+		e.Debt.Amount = &repaid
+		e.Collateral.Amount = seizedAmount(e.ProtocolID, seizedUnderlying, seized)
 		e.TxHash, e.Borrower, e.Liquidator = "0x"+e.TxHash, "0x"+e.Borrower, "0x"+e.Liquidator
 		e.BlockTime = e.BlockTime.UTC()
 		e.Debt.Address, e.Debt.Symbol, e.Debt.Decimals = resolveLiqAsset(assets, e.ProtocolID, "0x"+debt)
 		e.Collateral.Address, e.Collateral.Symbol, e.Collateral.Decimals = resolveLiqAsset(assets, e.ProtocolID, "0x"+coll)
-		e.Debt.USD, e.Collateral.USD = usdOrNil(repaidUSD), usdOrNil(seizedUSD)
+		e.Debt.USD, e.Collateral.USD = usdOrNil(repaidUSD, e.Debt.Amount), usdOrNil(seizedUSD, e.Collateral.Amount)
 		out = append(out, e)
 	}
 	return out, rows.Err()
