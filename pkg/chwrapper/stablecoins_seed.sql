@@ -60,4 +60,10 @@ INSERT INTO stablecoin_excluded_holders (chain_id, token, holder, reason, added_
     -- Tether treasury / authorized-but-not-issued reserve on C-Chain.
     -- Verified empirically: this single holder accounts for the entire delta between
     -- our totalSupply and DeFiLlama's circulating-supply figure.
-    (43114, unhex('9702230a8ea53601f5cd2dc00fdbc13d4df4a8c7'), unhex('5754284f345afc66a98fbb0a0afe71e0f007b949'), 'treasury', '2026-01-01 00:00:00');
+    (43114, unhex('9702230a8ea53601f5cd2dc00fdbc13d4df4a8c7'), unhex('5754284f345afc66a98fbb0a0afe71e0f007b949'), 'treasury', '2026-01-01 00:00:00'),
+    -- Minted but unborrowed supply parked in lending vaults (DegenBox/BentoBox),
+    -- which DefiLlama also leaves out. NXUSD minus this DegenBox matched
+    -- DefiLlama's circulating figure exactly on 2026-11-02.
+    (43114, unhex('f14f4ce569cb3679e99d5059909e23b07bd2f387'), unhex('0b1f9c2211f77ec3fa2719671c5646cf6e59b775'), 'protocol vault', '2026-11-02 00:00:00'),
+    (43114, unhex('130966628846bfd36ff31a822705796e8cb8c18d'), unhex('f4f46382c2be1603dc817551ff9a7b333ed1d18f'), 'protocol vault', '2026-11-02 00:00:00'),
+    (43114, unhex('130966628846bfd36ff31a822705796e8cb8c18d'), unhex('d825d06061fdc0585e4373f0a3f01a8c02b0e6a4'), 'protocol vault', '2026-11-02 00:00:00');
