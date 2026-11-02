@@ -35,7 +35,8 @@ type Stablecoin struct {
 }
 
 // handleListStablecoins returns curated stablecoins for a chain with circulating supply,
-// holder count, and last-24h transfer volume / count.
+// holder count, and last-24h transfer volume / count. Volume leaves out issuer
+// operations: mints, burns, and transfers to or from an excluded issuer treasury.
 //
 // @Summary List stablecoins for a chain
 // @Description Returns curated stablecoins with circulating supply (excludes addresses listed in stablecoin_excluded_holders, e.g. issuer treasuries), holder count, and 24h transfer stats.
@@ -149,9 +150,15 @@ func (s *Server) loadStablecoins(ctx context.Context, chainID uint32) ([]Stablec
 		  AND topic0 = unhex('ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef')
 		  AND length(data) = 32
 		  AND block_time >= now() - INTERVAL 24 HOUR
+		  AND substring(assumeNotNull(topic1), 13, 20) != unhex('0000000000000000000000000000000000000000')
+		  AND substring(assumeNotNull(topic2), 13, 20) != unhex('0000000000000000000000000000000000000000')
+		  AND (address, toFixedString(substring(assumeNotNull(topic1), 13, 20), 20)) NOT IN (
+		      SELECT token, holder FROM stablecoin_excluded_holders FINAL WHERE chain_id = ?)
+		  AND (address, toFixedString(substring(assumeNotNull(topic2), 13, 20), 20)) NOT IN (
+		      SELECT token, holder FROM stablecoin_excluded_holders FINAL WHERE chain_id = ?)
 		GROUP BY address
 	`
-	volRows, err := s.conn.Query(ctx, volumeQuery, chainID, chainID)
+	volRows, err := s.conn.Query(ctx, volumeQuery, chainID, chainID, chainID, chainID)
 	if err != nil {
 		return nil, err
 	}

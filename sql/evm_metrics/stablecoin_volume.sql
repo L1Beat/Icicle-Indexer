@@ -1,4 +1,6 @@
--- Stablecoin transfer volume per token per period
+-- Stablecoin transfer volume and transfer count per token per period, without
+-- issuer operations (see the filter below), so a treasury burn or mint does not
+-- show up as trading activity.
 -- Parameters: chain_id, first_period, last_period, granularity
 
 INSERT INTO stablecoin_metrics (chain_id, token, metric_name, granularity, period, value)
@@ -16,6 +18,16 @@ WHERE chain_id = @chain_id
   AND length(data) = 32
   AND block_time >= @first_period
   AND block_time < @last_period
+  -- Issuer operations are not volume: mints, burns, and moves to or from an
+  -- excluded issuer treasury (stablecoin_excluded_holders).
+  AND substring(assumeNotNull(topic1), 13, 20) != unhex('0000000000000000000000000000000000000000')
+  AND substring(assumeNotNull(topic2), 13, 20) != unhex('0000000000000000000000000000000000000000')
+  AND (address, toFixedString(substring(assumeNotNull(topic1), 13, 20), 20)) NOT IN (
+      SELECT token, holder FROM stablecoin_excluded_holders FINAL WHERE chain_id = @chain_id
+  )
+  AND (address, toFixedString(substring(assumeNotNull(topic2), 13, 20), 20)) NOT IN (
+      SELECT token, holder FROM stablecoin_excluded_holders FINAL WHERE chain_id = @chain_id
+  )
 GROUP BY address, period
 ORDER BY period;
 
@@ -34,5 +46,15 @@ WHERE chain_id = @chain_id
   AND length(data) = 32
   AND block_time >= @first_period
   AND block_time < @last_period
+  -- Issuer operations are not volume: mints, burns, and moves to or from an
+  -- excluded issuer treasury (stablecoin_excluded_holders).
+  AND substring(assumeNotNull(topic1), 13, 20) != unhex('0000000000000000000000000000000000000000')
+  AND substring(assumeNotNull(topic2), 13, 20) != unhex('0000000000000000000000000000000000000000')
+  AND (address, toFixedString(substring(assumeNotNull(topic1), 13, 20), 20)) NOT IN (
+      SELECT token, holder FROM stablecoin_excluded_holders FINAL WHERE chain_id = @chain_id
+  )
+  AND (address, toFixedString(substring(assumeNotNull(topic2), 13, 20), 20)) NOT IN (
+      SELECT token, holder FROM stablecoin_excluded_holders FINAL WHERE chain_id = @chain_id
+  )
 GROUP BY address, period
 ORDER BY period;

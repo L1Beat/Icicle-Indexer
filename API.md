@@ -647,6 +647,7 @@ Curated stablecoins on a chain with **circulating** supply (excludes issuer-trea
 **Notes:**
 - Amount fields (`supply`, `volume_24h`) are strings in the token's smallest unit; scale by `decimals`.
 - `supply` is circulating (issuer treasuries in `stablecoin_excluded_holders` are subtracted), DeFiLlama-style.
+- `volume_24h` and `transfers_24h` (and the `volume` and `transfers` timeseries) leave out issuer operations: mints, burns, and transfers to or from an excluded issuer treasury. A treasury burn, such as Tether burning $1B of unissued USDT on 2026-11-02, is not volume. Everything else counts, including DEX, bridge and contract transfers.
 - `doublecounted` marks stablecoins whose reserves are themselves other counted stablecoins (e.g. `avUSD`, `UTY`, `reUSD`, `FRXUSD`). Summing every row gives the **gross** total; excluding `doublecounted` rows gives the **net** total (the DeFiLlama-style headline, which avoids counting the same dollars twice). Show all rows in a table, but compute the headline from the net set.
 
 ---
