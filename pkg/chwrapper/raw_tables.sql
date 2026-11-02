@@ -630,7 +630,7 @@ ORDER BY (protocol_id, group_id, asset);
 -- C-Chain DEX pools, registered from their factory's creation event (pkg/dexvolume).
 CREATE TABLE IF NOT EXISTS dex_pools (
     pool FixedString(20),
-    dex LowCardinality(String),  -- pharaoh-v3, pharaoh-dlmm, uniswap-v3, blackhole-clmm, lfj, pangolin-v3
+    dex LowCardinality(String),  -- a dexvolume.Dexes id, e.g. pharaoh-v3, lfj, lfj-v1, pangolin-v2
     factory FixedString(20),  -- Emitter of the creation event
     token0 FixedString(20),  -- Liquidity Book tokenX
     token1 FixedString(20),  -- Liquidity Book tokenY

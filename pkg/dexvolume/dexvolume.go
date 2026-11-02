@@ -24,60 +24,99 @@ const ChainID = 43114
 type Kind string
 
 const (
-	KindV3 Kind = "v3" // Uniswap V3 layout: amount0, amount1 int256 (also Algebra)
-	KindLB Kind = "lb" // Liquidity Book: amountsIn, amountsOut packed as Y<<128 | X
+	KindV2   Kind = "v2"   // Uniswap V2 layout: amount0In, amount1In, amount0Out, amount1Out
+	KindV3   Kind = "v3"   // Uniswap V3 layout: amount0, amount1 int256 (also Algebra)
+	KindLB   Kind = "lb"   // Liquidity Book v2.1+: amountsIn, amountsOut packed as Y<<128 | X
+	KindLB20 Kind = "lb20" // Liquidity Book v2.0: swapForY, amountIn, amountOut, one event per bin crossed
 )
+
+// swapTopic is the Swap event a pool of this kind emits.
+func (k Kind) swapTopic() string {
+	switch k {
+	case KindV2:
+		return topicSwapV2
+	case KindLB:
+		return topicSwapLB
+	case KindLB20:
+		return topicSwapLB20
+	}
+	return topicSwapV3
+}
 
 // Dex is one DEX as served by the API.
 type Dex struct {
 	ID       string
 	Name     string
 	Protocol string // parent protocol, to group e.g. Pharaoh V3 and DLMM
-	Kind     Kind
 }
 
 // Dexes in display order.
 var Dexes = []Dex{
-	{ID: "pharaoh-v3", Name: "Pharaoh V3", Protocol: "pharaoh", Kind: KindV3},
-	{ID: "pharaoh-dlmm", Name: "Pharaoh DLMM", Protocol: "pharaoh", Kind: KindLB},
-	{ID: "uniswap-v3", Name: "Uniswap V3", Protocol: "uniswap", Kind: KindV3},
-	{ID: "blackhole-clmm", Name: "Blackhole CLMM", Protocol: "blackhole", Kind: KindV3},
-	{ID: "lfj", Name: "LFJ", Protocol: "lfj", Kind: KindLB},
-	{ID: "pangolin-v3", Name: "Pangolin V3", Protocol: "pangolin", Kind: KindV3},
+	{ID: "pharaoh-v3", Name: "Pharaoh V3", Protocol: "pharaoh"},
+	{ID: "pharaoh-dlmm", Name: "Pharaoh DLMM", Protocol: "pharaoh"},
+	{ID: "uniswap-v3", Name: "Uniswap V3", Protocol: "uniswap"},
+	{ID: "blackhole-clmm", Name: "Blackhole CLMM", Protocol: "blackhole"},
+	{ID: "lfj", Name: "LFJ", Protocol: "lfj"},
+	{ID: "lfj-v1", Name: "LFJ V1", Protocol: "lfj"},
+	{ID: "pangolin-v3", Name: "Pangolin V3", Protocol: "pangolin"},
+	{ID: "pangolin-v2", Name: "Pangolin V2", Protocol: "pangolin"},
+	{ID: "sushiswap-v2", Name: "SushiSwap V2", Protocol: "sushiswap"},
 }
 
-// Factory is a pool factory and the event it emits when it creates a pool.
+// Factory is a pool factory, the event it emits when it creates a pool, and
+// the Swap event family of its pools.
 type Factory struct {
 	Address string // lowercase
 	Dex     string
+	Kind    Kind
 	Note    string
 }
 
-// Factories, verified on-chain 2026-11-02 (contract names on Routescan, and the
-// same addresses in DefiLlama's TVL registries).
+// Factories, verified on-chain 2026-11-02 (contract names on Routescan, the
+// same addresses in DefiLlama's TVL registries, and for the V2 factories
+// allPairs(0).factory() pointing back at the factory).
 var Factories = []Factory{
-	{"0xae6e5c62328ade73ceefd42228528b70c8157d0d", "pharaoh-v3", "RamsesV3Factory"},
-	{"0xaaa32926fce6be95ea2c51cb4fcb60836d320c42", "pharaoh-v3", "Pharaoh CL factory (legacy)"},
-	{"0xeb480050b016f6c6d45203d2346b68bddda23d4d", "pharaoh-dlmm", "DLMMFactory"},
-	{"0x740b1c1de25031c31ff4fc9a62f554a55cdc1bad", "uniswap-v3", "UniswapV3Factory"},
-	{"0x512eb749541b7cf294be882d636218c84a5e9e5f", "blackhole-clmm", "AlgebraFactory"},
-	{"0xb43120c4745967fa9b93e79c149e66b0f2d6fe0c", "lfj", "LBFactory V2.1"},
-	{"0x8e42f2f4101563bf679975178e880fd87d3efd4e", "lfj", "LBFactory V2.2"},
-	{"0x1128f23d0bc0a8396e9fbc3c0c68f5ea228b8256", "pangolin-v3", "PangolinV3Factory"},
+	{"0xae6e5c62328ade73ceefd42228528b70c8157d0d", "pharaoh-v3", KindV3, "RamsesV3Factory"},
+	{"0xaaa32926fce6be95ea2c51cb4fcb60836d320c42", "pharaoh-v3", KindV3, "Pharaoh CL factory (legacy)"},
+	{"0xeb480050b016f6c6d45203d2346b68bddda23d4d", "pharaoh-dlmm", KindLB, "DLMMFactory"},
+	{"0x740b1c1de25031c31ff4fc9a62f554a55cdc1bad", "uniswap-v3", KindV3, "UniswapV3Factory"},
+	{"0x512eb749541b7cf294be882d636218c84a5e9e5f", "blackhole-clmm", KindV3, "AlgebraFactory"},
+	{"0x6e77932a92582f504ff6c4bdbcef7da6c198aeef", "lfj", KindLB20, "LBFactory V2.0"},
+	{"0xb43120c4745967fa9b93e79c149e66b0f2d6fe0c", "lfj", KindLB, "LBFactory V2.1"},
+	{"0x8e42f2f4101563bf679975178e880fd87d3efd4e", "lfj", KindLB, "LBFactory V2.2"},
+	{"0x1128f23d0bc0a8396e9fbc3c0c68f5ea228b8256", "pangolin-v3", KindV3, "PangolinV3Factory"},
+	{"0x9ad6c38be94206ca50bb0d90783181662f0cfa10", "lfj-v1", KindV2, "JoeFactory"},
+	{"0xefa94de7a4656d787667c749f7e1223d71e9fd88", "pangolin-v2", KindV2, "PangolinFactory"},
+	{"0xc35dadb65012ec5796536bd9864ed8773abc74c4", "sushiswap-v2", KindV2, "UniswapV2Factory (SushiSwap)"},
 }
 
 // Event topics.
 const (
+	topicSwapV2        = "d78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822" // Swap(address,uint256,uint256,uint256,uint256,address)
 	topicSwapV3        = "c42079f94a6350d7e6235f29174924f928cc2ac818eb64fed8004e115fbcca67" // Swap(address,address,int256,int256,uint160,uint128,int24)
 	topicSwapLB        = "ad7d6f97abf51ce18e17a38f4d70e975be9c0708474987bb3e26ad21bd93ca70" // Swap(address,address,uint24,bytes32,bytes32,uint24,bytes32,bytes32)
+	topicSwapLB20      = "c528cda9e500228b16ce84fadae290d9a49aecb17483110004c5af0a07f6fd73" // Swap(address,address,uint256,bool,uint256,uint256,uint256,uint256)
+	topicPairCreated   = "0d3648bd0f6ba80134a33ba9275ac585d9d315f0ad8355cddefde31afa28d0e9" // PairCreated(address,address,address,uint256): pair in word 0
 	topicPoolCreated   = "783cca1c0412dd0d695e784568c96da2e9c22ff989357a2e8b1d9b2b4e6b7118" // PoolCreated(address,address,uint24,int24,address): pool in data word 1
-	topicLBPairCreated = "2c8d104b27c6b7f4492017a6f5cf3803043688934ebcaa6a03540beeaf976aff" // LBPairCreated(address,address,uint256,address,uint256): pair in word 0
+	topicLBPairCreated = "2c8d104b27c6b7f4492017a6f5cf3803043688934ebcaa6a03540beeaf976aff" // LBPairCreated(address,address,uint256,address,uint256): pair in word 0, also LB v2.0
 	topicAlgebraPool   = "91ccaa7a278130b65168c3a0c8d3bcae84cf5e43704342bd3ec0b59e59c036db" // Pool(address,address,address): pool in word 0
 	topicAlgebraCustom = "8a5f030f5fc13b04a1e4ef7c47177e3d76b0e80e1d9be9843db37caa5b7b9b8f" // CustomPool(address,address,address,address): tokens in topics 2,3
 )
 
 // WAVAX prices swaps that have no stablecoin side.
 const WAVAX = "b31f66aa3c1e785363f0875a1b74e27b85fd66c7"
+
+// legacyUSD are USD stablecoins priced at $1 on top of the stablecoin registry,
+// which only lists live tokens. They are the Avalanche-Ethereum Bridge (AEB)
+// tokens, the main C-Chain stablecoins until the Avalanche Bridge replaced them
+// in 2021, so early swaps and AVAX prices depend on them.
+var legacyUSD = []struct {
+	Token    string
+	Decimals uint8
+}{
+	{"de3a24028580884448a5397872046a019649b084", 6},  // USDT (AEB)
+	{"ba7deebbfc5fa1100fb055a87773e1e99cd3507a", 18}, // DAI (AEB)
+}
 
 // FlagUSD is the swap size above which a priced swap is counted in
 // flagged_swaps. Flagged swaps stay in the volume.
@@ -90,20 +129,24 @@ const BackfillDays = 365
 // poolScanWindowDays bounds one creation-event scan INSERT.
 const poolScanWindowDays = 90
 
-// maxDaysPerInsert bounds one rollup INSERT.
+// maxDaysPerInsert bounds one forward rollup INSERT.
 const maxDaysPerInsert = 31
 
-// maxHistoryBatchesPerSync bounds the backward history fill per Sync call, so
-// it does not hold up the validator cycle for long.
-const maxHistoryBatchesPerSync = 4
+// historyDaysPerInsert bounds one backward rollup INSERT. It is smaller than
+// maxDaysPerInsert because 2021 days carry several times today's swaps.
+const historyDaysPerInsert = 7
+
+// historyBudget bounds the backward history fill per Sync call, so it does not
+// hold up the C-Chain snapshot cycle for long.
+const historyBudget = 2 * time.Minute
 
 // historyWatermark names the indexer_watermarks row holding the first day the
 // backward fill has covered (last_period).
 const historyWatermark = "dexvolume/daily_from"
 
-// poolHistoryStart bounds the one-time scan for factory creation events. All
-// tracked factories were deployed after it.
-var poolHistoryStart = time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC)
+// poolHistoryStart bounds the one-time scan for factory creation events. It is
+// the C-Chain launch, so every factory was deployed after it.
+var poolHistoryStart = time.Date(2020, 9, 1, 0, 0, 0, 0, time.UTC)
 
 // Sync registers new pools, rolls up every complete UTC day not yet in
 // dex_daily, then extends history backward toward the first tracked pool a few
@@ -123,7 +166,8 @@ func Sync(ctx context.Context, conn driver.Conn) error {
 
 // syncPools scans factory creation events: the full history for any factory
 // with no registered pools yet (first run, or a factory added later), and the
-// last 3 days for the rest.
+// last 3 days for the rest. A factory added later also restarts the backward
+// fill from the newest day, since the days already rolled up lack its pools.
 func syncPools(ctx context.Context, conn driver.Conn) error {
 	rows, err := conn.Query(ctx, `
 		SELECT lower(hex(factory)), count() FROM dex_pools FINAL GROUP BY factory`)
@@ -159,6 +203,11 @@ func syncPools(ctx context.Context, conn driver.Conn) error {
 			return err
 		}
 		slog.Info("DEX pool history scanned", "factories", len(fresh), "duration", time.Since(start))
+		if len(seen) > 0 {
+			if err := restartHistory(ctx, conn); err != nil {
+				return err
+			}
+		}
 	}
 	if len(seen) > 0 {
 		return insertPools(ctx, conn, seen, time.Now().UTC().Add(-72*time.Hour))
@@ -207,11 +256,11 @@ func poolsSQL(factories []string) string {
 		FROM raw_logs
 		WHERE chain_id = %[6]d
 		  AND address IN (%[1]s)
-		  AND topic0 IN (unhex('%[2]s'), unhex('%[7]s'), unhex('%[8]s'), unhex('%[5]s'))
+		  AND topic0 IN (unhex('%[2]s'), unhex('%[7]s'), unhex('%[8]s'), unhex('%[5]s'), unhex('%[9]s'))
 		  AND block_time >= ? AND block_time < ?
 		  AND length(data) >= 32
 	`, strings.Join(addrs, ", "), topicPoolCreated, strings.Join(fa, ", "), strings.Join(fd, ", "),
-		topicAlgebraCustom, ChainID, topicLBPairCreated, topicAlgebraPool)
+		topicAlgebraCustom, ChainID, topicLBPairCreated, topicAlgebraPool, topicPairCreated)
 }
 
 // syncDays rolls up complete days after the newest one in dex_daily, starting
@@ -259,23 +308,32 @@ func rollup(ctx context.Context, conn driver.Conn, from, to time.Time) error {
 
 // rollupSQL builds the daily rollup over [?, ?).
 //
-// Amounts: a V3 swap's |amount0| and |amount1|; an LB swap's amountsIn plus
-// amountsOut per token (only one side of each is non-zero). Price: the hour's
-// median AVAX price implied by WAVAX/stablecoin swaps of at least $10 in the
-// same tracked pools, falling back to the day's median. A day with no such
-// swaps has no price, and its WAVAX swaps stay unpriced.
+// Amounts per token: a V3 swap's |amount0| and |amount1|; a V2 swap's larger of
+// in and out (a flash swap repaid in the same token counts once); an LB swap's
+// amountsIn plus amountsOut (only one side of each is non-zero); an LB v2.0
+// swap's amountIn and amountOut by direction. LB v2.0 emits one event per bin
+// crossed, so its events are merged per transaction and pool into one swap.
+// Price: the hour's median AVAX price implied by WAVAX/stablecoin swaps of at
+// least $10 in the same tracked pools, falling back to the day's median. A day
+// with no such swaps has no price, and its WAVAX swaps stay unpriced.
 func rollupSQL() string {
-	var lb []string
-	for _, d := range Dexes {
-		if d.Kind == KindLB {
-			lb = append(lb, "'"+d.ID+"'")
-		}
+	var fa, ft, lt, ld []string
+	for _, f := range Factories {
+		fa = append(fa, "'"+strings.TrimPrefix(f.Address, "0x")+"'")
+		ft = append(ft, "'"+f.Kind.swapTopic()+"'")
+	}
+	for _, t := range legacyUSD {
+		lt = append(lt, fmt.Sprintf("toFixedString(unhex('%s'), 20)", t.Token))
+		ld = append(ld, fmt.Sprintf("toUInt8(%d)", t.Decimals))
+	}
+	word := func(n int) string { // uint256 data word n, from 0
+		return fmt.Sprintf("toFloat64(reinterpretAsUInt256(reverse(substring(l.data, %d, 32))))", 32*n+1)
 	}
 	return fmt.Sprintf(`
 		INSERT INTO dex_daily (day, dex, pool, swaps, priced_swaps, volume_usd, flagged_swaps, addresses)
 		WITH
-			(SELECT groupArray(token) FROM stablecoins FINAL WHERE chain_id = %[1]d AND peg = 'USD') AS st,
-			(SELECT groupArray(decimals) FROM stablecoins FINAL WHERE chain_id = %[1]d AND peg = 'USD') AS sd,
+			arrayConcat((SELECT groupArray(token) FROM stablecoins FINAL WHERE chain_id = %[1]d AND peg = 'USD'), [%[8]s]) AS st,
+			arrayConcat((SELECT groupArray(decimals) FROM stablecoins FINAL WHERE chain_id = %[1]d AND peg = 'USD'), [%[9]s]) AS sd,
 			unhex('%[2]s') AS wavax
 		SELECT
 			toDate(t) AS day, dex, pool,
@@ -301,30 +359,45 @@ func rollupSQL() string {
 						multiIf(t0 = wavax AND s1 IS NOT NULL, a0 / 1e18, t1 = wavax AND s0 IS NOT NULL, a1 / 1e18, 0) AS wa,
 						ifNull(coalesce(s0, s1), 0) AS ws
 					FROM (
-						SELECT l.block_time AS t, l.tx_from AS sender, l.address AS pool, p.dex AS dex,
-							p.token0 AS t0, p.token1 AS t1,
-							if(l.topic0 = unhex('%[3]s'),
-								abs(toFloat64(reinterpretAsInt256(reverse(substring(l.data, 1, 32))))),
-								toFloat64(reinterpretAsUInt128(reverse(substring(l.data, 49, 16))))
-									+ toFloat64(reinterpretAsUInt128(reverse(substring(l.data, 81, 16))))) AS a0,
-							if(l.topic0 = unhex('%[3]s'),
-								abs(toFloat64(reinterpretAsInt256(reverse(substring(l.data, 33, 32))))),
-								toFloat64(reinterpretAsUInt128(reverse(substring(l.data, 33, 16))))
-									+ toFloat64(reinterpretAsUInt128(reverse(substring(l.data, 65, 16))))) AS a1
-						FROM raw_logs l
-						INNER JOIN (SELECT pool, dex, token0, token1 FROM dex_pools FINAL) p ON l.address = p.pool
-						WHERE l.chain_id = %[1]d
-						  AND l.topic0 IN (unhex('%[3]s'), unhex('%[4]s'))
-						  AND l.block_time >= ? AND l.block_time < ?
-						  AND length(l.data) >= 96
-						  AND (l.topic0 = unhex('%[4]s')) = (p.dex IN (%[6]s))
+						SELECT min(t) AS t, any(sender) AS sender, pool, any(dex) AS dex,
+							any(t0) AS t0, any(t1) AS t1, sum(a0) AS a0, sum(a1) AS a1
+						FROM (
+							SELECT l.block_time AS t, l.tx_from AS sender, l.address AS pool, p.dex AS dex,
+								p.token0 AS t0, p.token1 AS t1,
+								l.transaction_hash AS tx, if(l.topic0 = unhex('%[7]s'), 0, l.log_index) AS li,
+								multiIf(
+									l.topic0 = unhex('%[3]s'), abs(toFloat64(reinterpretAsInt256(reverse(substring(l.data, 1, 32))))),
+									l.topic0 = unhex('%[4]s'), toFloat64(reinterpretAsUInt128(reverse(substring(l.data, 49, 16))))
+										+ toFloat64(reinterpretAsUInt128(reverse(substring(l.data, 81, 16)))),
+									l.topic0 = unhex('%[6]s'), greatest(%[10]s, %[12]s),
+									if(reinterpretAsUInt8(substring(l.data, 32, 1)) != 0, %[11]s, %[12]s)) AS a0,
+								multiIf(
+									l.topic0 = unhex('%[3]s'), abs(toFloat64(reinterpretAsInt256(reverse(substring(l.data, 33, 32))))),
+									l.topic0 = unhex('%[4]s'), toFloat64(reinterpretAsUInt128(reverse(substring(l.data, 33, 16))))
+										+ toFloat64(reinterpretAsUInt128(reverse(substring(l.data, 65, 16)))),
+									l.topic0 = unhex('%[6]s'), greatest(%[11]s, %[13]s),
+									if(reinterpretAsUInt8(substring(l.data, 32, 1)) != 0, %[12]s, %[11]s)) AS a1
+							FROM raw_logs l
+							INNER JOIN (
+								SELECT pool, dex, token0, token1,
+									toFixedString(unhex(transform(lower(hex(factory)), [%[14]s], [%[15]s], '')), 32) AS swap_topic
+								FROM dex_pools FINAL
+							) p ON l.address = p.pool
+							WHERE l.chain_id = %[1]d
+							  AND l.topic0 IN (unhex('%[3]s'), unhex('%[4]s'), unhex('%[6]s'), unhex('%[7]s'))
+							  AND l.block_time >= ? AND l.block_time < ?
+							  AND length(l.data) >= 96
+							  AND l.topic0 = p.swap_topic
+						)
+						GROUP BY tx, li, pool
 					)
 				)
 				)
 			)
 		)
 		GROUP BY day, dex, pool
-	`, ChainID, WAVAX, topicSwapV3, topicSwapLB, FlagUSD, strings.Join(lb, ", "))
+	`, ChainID, WAVAX, topicSwapV3, topicSwapLB, FlagUSD, topicSwapV2, topicSwapLB20, strings.Join(lt, ", "), strings.Join(ld, ", "),
+		word(0), word(1), word(2), word(3), strings.Join(fa, ", "), strings.Join(ft, ", "))
 }
 
 // backfillHistory rolls up days before the oldest covered day, newest first,
@@ -367,8 +440,9 @@ func backfillHistory(ctx context.Context, conn driver.Conn) error {
 	covered = covered.UTC().Truncate(24 * time.Hour)
 	first = first.UTC().Truncate(24 * time.Hour)
 
-	for i := 0; i < maxHistoryBatchesPerSync && covered.After(first); i++ {
-		from := covered.AddDate(0, 0, -maxDaysPerInsert)
+	deadline := time.Now().Add(historyBudget)
+	for covered.After(first) && time.Now().Before(deadline) {
+		from := covered.AddDate(0, 0, -historyDaysPerInsert)
 		if from.Before(first) {
 			from = first
 		}
@@ -388,6 +462,20 @@ func backfillHistory(ctx context.Context, conn driver.Conn) error {
 		covered = from
 	}
 	return nil
+}
+
+// restartHistory points the backward fill at the day after the newest rolled-up
+// day, so every day is rolled up again, newest first.
+func restartHistory(ctx context.Context, conn driver.Conn) error {
+	wctx, cancel := chwrapper.WriteContext(ctx)
+	defer cancel()
+	err := conn.Exec(wctx, `
+		INSERT INTO indexer_watermarks (chain_id, indexer_name, granularity, last_period, last_block_num)
+		SELECT ?, ?, 'day', max(day) + 1, 0 FROM dex_daily HAVING count() > 0`, uint32(ChainID), historyWatermark)
+	if err == nil {
+		slog.Info("DEX history restarted for new factories")
+	}
+	return err
 }
 
 // repairNonFinite re-rolls days whose stored volume is NaN or infinite. Rollups

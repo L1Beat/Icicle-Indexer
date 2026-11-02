@@ -10,6 +10,8 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/stretchr/testify/require"
+
+	"icicle/pkg/dexvolume"
 )
 
 func dexMock(t *testing.T, asOf time.Time, query func(q string, args []interface{}) (driver.Rows, error)) *MockConn {
@@ -56,7 +58,7 @@ func TestHandleDexOverview(t *testing.T) {
 	require.Equal(t, 7, d.Days)
 	require.Equal(t, asOf.AddDate(0, 0, -6), gotArgs[0])
 	require.Equal(t, asOf, gotArgs[1])
-	require.Len(t, d.Dexes, 6) // every DEX, zero when idle
+	require.Len(t, d.Dexes, len(dexvolume.Dexes)) // every DEX, zero when idle
 	require.Equal(t, "pharaoh-v3", d.Dexes[0].ID)
 	require.Equal(t, "pharaoh", d.Dexes[0].Protocol)
 	require.Equal(t, "pharaoh", d.Dexes[1].Protocol)

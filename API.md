@@ -2119,10 +2119,10 @@ The largest liquidations by seized USD over the last N days (today included), sa
 
 C-Chain DEX swap volume, rolled up per complete UTC day from the swap events in `raw_logs` (`pkg/dexvolume`). The indexer registers pools and rolls up new days every C-Chain snapshot cycle (5 minutes by default, `cchainSnapshotInterval`). A day is rolled up once the C-Chain sync has passed its end. The endpoints read only the rollup and are cached for 10 minutes.
 
-**History:** all time, from the first day a tracked factory created a pool. The first run rolls up the last 365 days. Older days are filled backward a few months per cycle, so the full history fills in within about an hour of a fresh deploy.
+**History:** all time, from the first day a tracked factory created a pool (Pangolin V2, February 2021). The first run rolls up the last 365 days. Older days are filled backward a week at a time, for up to 2 minutes per cycle, so the full history fills in within a few hours of a fresh deploy. Adding a factory rolls every day up again the same way, newest first.
 
 **What counts:**
-- DEXes: Pharaoh V3 (`pharaoh-v3`), Pharaoh DLMM (`pharaoh-dlmm`), Uniswap V3 (`uniswap-v3`), Blackhole CLMM (`blackhole-clmm`), LFJ V2.1 + V2.2 (`lfj`), Pangolin V3 (`pangolin-v3`). Together that is about 94% of DefiLlama's Avalanche DEX volume. Uniswap V4, WOOFi, DODO, Metric and others are not tracked.
+- DEXes: Pharaoh V3 (`pharaoh-v3`), Pharaoh DLMM (`pharaoh-dlmm`), Uniswap V3 (`uniswap-v3`), Blackhole CLMM (`blackhole-clmm`), LFJ Liquidity Book V2.0 + V2.1 + V2.2 (`lfj`), LFJ V1, formerly Trader Joe (`lfj-v1`), Pangolin V3 (`pangolin-v3`), Pangolin V2 (`pangolin-v2`), SushiSwap V2 (`sushiswap-v2`). Today that is about 94% of DefiLlama's Avalanche DEX volume. Uniswap V2 and V4, Solidly-style pairs (Pharaoh legacy, Blackhole basic), WOOFi, DODO, Metric, Platypus, Curve and others are not tracked.
 - Only pools whose creation event was emitted by one of these factories count, so a contract that merely emits a matching Swap event adds nothing:
 
 | DEX | Factory | Creation event |
@@ -2131,13 +2131,17 @@ C-Chain DEX swap volume, rolled up per complete UTC day from the swap events in 
 | pharaoh-dlmm | `0xEb480050b016f6c6d45203D2346B68bDDDa23D4D` | LBPairCreated |
 | uniswap-v3 | `0x740b1c1de25031C31FF4fC9A62f554A55cdC1baD` | PoolCreated |
 | blackhole-clmm | `0x512eb749541B7cf294be882D636218c84a5e9E5F` (AlgebraFactory) | CustomPool / Pool |
-| lfj | `0xb43120c4745967fa9b93E79C149E66B0f2D6Fe0c` (V2.1), `0x8e42f2F4101563bF679975178e880FD87d3eFd4e` (V2.2) | LBPairCreated |
+| lfj | `0x6E77932A92582f504FF6c4BdbCef7Da6c198aEEF` (V2.0), `0xb43120c4745967fa9b93E79C149E66B0f2D6Fe0c` (V2.1), `0x8e42f2F4101563bF679975178e880FD87d3eFd4e` (V2.2) | LBPairCreated |
+| lfj-v1 | `0x9Ad6C38BE94206cA50bb0d90783181662f0Cfa10` (JoeFactory) | PairCreated |
 | pangolin-v3 | `0x1128F23D0bc0A8396E9FBC3c0c68f5EA228B8256` | PoolCreated |
+| pangolin-v2 | `0xefa94DE7a4656D787667C749f7E1223D71E9FD88` | PairCreated |
+| sushiswap-v2 | `0xc35DADB65012eC5796536bD9864eD8773aBc74C4` | PairCreated |
 
-- Swap events: the Uniswap V3 layout (Uniswap, Pharaoh V3, Pangolin V3, and Blackhole's Algebra pools emit the same event) and the Liquidity Book layout (Pharaoh DLMM, LFJ).
+- Swap events: the Uniswap V3 layout (Uniswap, Pharaoh V3, Pangolin V3, and Blackhole's Algebra pools emit the same event), the Liquidity Book layout (Pharaoh DLMM, LFJ V2.1 and V2.2), the Liquidity Book V2.0 layout (LFJ V2.0), and the Uniswap V2 layout (LFJ V1, Pangolin V2, SushiSwap). A pool only counts the Swap event of its own factory's layout.
+- LFJ V2.0 emits one Swap event per price bin crossed. Its events are merged per transaction and pool, so `swaps` counts each trade once. A V2 swap counts the larger of each token's in and out amounts, so a flash swap repaid in the same token counts once.
 
 **Pricing (one side per swap, never both legs):**
-1. If either token is a USD stablecoin from the stablecoin registry (`peg = 'USD'`), volume is that side's amount at $1.
+1. If either token is a USD stablecoin from the stablecoin registry (`peg = 'USD'`), or one of the 2021 Avalanche-Ethereum Bridge stablecoins (USDT `0xde3A24028580884448a5397872046a019649b084`, DAI `0xbA7dEebBFC5fA1100Fb055a87773e1E99Cd3507a`), volume is that side's amount at $1.
 2. Else if either token is WAVAX, volume is the AVAX amount times the hour's AVAX price. The price is the median AVAX/USD implied by that hour's WAVAX/stablecoin swaps of at least $10 in the same tracked pools (the day's median when an hour has none).
 3. Else the swap is counted but unpriced. `priced_share` is priced swaps / swaps.
 
