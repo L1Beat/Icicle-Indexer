@@ -42,17 +42,20 @@ func TestHandleBridges(t *testing.T) {
 	var gotArgs []interface{}
 	server := NewTestServer(bridgeMock(t, through, first, func(q string, args []interface{}) (driver.Rows, error) {
 		switch {
+		case strings.Contains(q, "(chain, bridge)"):
+			return NewMockRows([]string{"chain", "bridge", "in", "out", "n", "priced", "flagged"}, [][]interface{}{
+				{"dexalot", "", 1e5, 0.0, uint64(3), uint64(3), uint64(0)},
+				{"dexalot", "layerzero", 1e5, 0.0, uint64(3), uint64(3), uint64(0)},
+				{"ethereum", "", 2.5e8, 4e8, uint64(90), uint64(80), uint64(2)},
+				{"ethereum", "avalanche-bridge", 1e7, 2e7, uint64(20), uint64(15), uint64(0)},
+				{"ethereum", "cctp", 2.4e8, 3.8e8, uint64(70), uint64(65), uint64(2)},
+			}), nil
 		case strings.Contains(q, "GROUPING SETS"):
 			gotArgs = args
 			return NewMockRows([]string{"bridge", "in", "out", "n", "priced", "flagged", "pass"}, [][]interface{}{
 				{"cctp", 3.8e8, 7.1e8, uint64(100), uint64(100), uint64(2), uint64(0)},
 				{"layerzero", 8e7, 2e7, uint64(50), uint64(10), uint64(0), uint64(0)},
 				{"", 4.6e8, 7.3e8, uint64(150), uint64(110), uint64(2), uint64(7)},
-			}), nil
-		case strings.Contains(q, "GROUP BY chain"):
-			return NewMockRows([]string{"chain", "in", "out", "n", "priced", "flagged"}, [][]interface{}{
-				{"ethereum", 2.5e8, 4e8, uint64(90), uint64(80), uint64(2)},
-				{"dexalot", 1e5, 0.0, uint64(3), uint64(3), uint64(0)},
 			}), nil
 		case strings.Contains(q, "GROUP BY token"):
 			return NewMockRows([]string{"token", "symbol", "decimals", "known", "priced", "ai", "ao", "ui", "uo", "n"}, [][]interface{}{
@@ -83,6 +86,10 @@ func TestHandleBridges(t *testing.T) {
 	require.Equal(t, uint64(0), d.ByBridge[2].Transfers)
 	require.Equal(t, "Ethereum", d.ByChain[0].Name)
 	require.True(t, d.ByChain[1].AvalancheL1)
+	require.Len(t, d.ByChain[0].Bridges, 2)
+	require.Equal(t, "cctp", d.ByChain[0].Bridges[0].ID) // largest first
+	require.InDelta(t, 3.8e8, d.ByChain[0].Bridges[0].OutflowUSD, 1)
+	require.Equal(t, "layerzero", d.ByChain[1].Bridges[0].ID)
 	require.Equal(t, "0x"+bridges.USDC, d.ByToken[0].Token)
 	require.Equal(t, uint8(6), *d.ByToken[0].Decimals)
 	require.Nil(t, d.ByToken[1].Decimals)

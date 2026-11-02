@@ -2315,7 +2315,15 @@ USD in and out of the C-Chain over the window: totals, and by bridge, counterpar
       { "id": "cctp", "name": "Circle CCTP", "inflow_usd": 380396223.8, "outflow_usd": 712447274.3, "net_usd": -332051050.5, "transfers": 27934, "priced_share": 1, "flagged_transfers": 0 }
     ],
     "by_chain": [
-      { "chain": "ethereum", "name": "Ethereum", "avalanche_l1": false, "inflow_usd": 258090761.2, "outflow_usd": 396810844.3, "net_usd": -138720083.1, "transfers": 5360, "priced_share": 0.8627, "flagged_transfers": 0 }
+      {
+        "chain": "ethereum", "name": "Ethereum", "avalanche_l1": false,
+        "inflow_usd": 258090761.2, "outflow_usd": 396810844.3, "net_usd": -138720083.1,
+        "transfers": 5360, "priced_share": 0.8627, "flagged_transfers": 0,
+        "bridges": [
+          { "id": "cctp", "inflow_usd": 161310000.0, "outflow_usd": 361000000.0, "transfers": 3576 },
+          { "id": "layerzero", "inflow_usd": 77040000.0, "outflow_usd": 23900000.0, "transfers": 1405 }
+        ]
+      }
     ],
     "by_token": [
       {
@@ -2335,7 +2343,7 @@ USD in and out of the C-Chain over the window: totals, and by bridge, counterpar
 }
 ```
 
-Sample values are illustrative. `by_bridge` lists every bridge, in a fixed order, with zeros when idle. `by_chain` and `by_token` are ordered by USD moved. Token amounts are base units; `symbol` and `decimals` come from token metadata (`decimals` is null when unknown).
+Sample values are illustrative. `by_bridge` lists every bridge, in a fixed order, with zeros when idle. `by_chain` and `by_token` are ordered by USD moved. Each `by_chain` row splits its flow by bridge in `bridges` (`id`, `inflow_usd`, `outflow_usd`, `transfers`), largest first, only bridges with transfers to or from that chain; their USD adds up to the chain's. Token amounts are base units; `symbol` and `decimals` come from token metadata (`decimals` is null when unknown).
 
 ### GET /api/v1/metrics/bridges/timeseries
 

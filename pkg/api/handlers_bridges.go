@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
@@ -52,6 +53,9 @@ type BridgeChain struct {
 	Name        string `json:"name"`
 	AvalancheL1 bool   `json:"avalanche_l1"`
 	BridgeFlow
+	// Bridges splits the chain's flow by bridge, only bridges that moved
+	// something. Their USD adds up to the chain's.
+	Bridges []BridgeDayBridge `json:"bridges"`
 }
 
 // BridgeToken is one token, across bridges. Amounts are token base units.
@@ -234,32 +238,57 @@ func (s *Server) loadBridges(ctx context.Context, days int) (BridgeOverview, err
 		out.ByBridge = append(out.ByBridge, BridgeStats{ID: b.ID, Name: b.Name, BridgeFlow: byID[b.ID]})
 	}
 
+	// Per chain and bridge, and the (chain) grouping set for the chain's
+	// total, whose bridge is empty.
 	rows, err = s.conn.Query(ctx, fmt.Sprintf(`
-		SELECT chain, `+bridgeAggregates+`
+		SELECT chain, bridge, `+bridgeAggregates+`
 		FROM (SELECT * FROM bridge_transfers FINAL) t
 		WHERE block_time >= ? AND block_time < ?
-		GROUP BY chain
+		GROUP BY GROUPING SETS ((chain, bridge), (chain))
 		HAVING countIf(NOT passthrough) > 0
-		ORDER BY sumIf(ifNull(usd, 0), NOT passthrough) DESC, chain
+		ORDER BY chain, bridge
 	`, bridges.FlagUSD), from, to)
 	if err != nil {
 		return out, err
 	}
+	chains := map[string]*BridgeChain{}
+	split := map[string][]BridgeDayBridge{}
 	for rows.Next() {
-		var c BridgeChain
+		var chain, bridge string
+		var f BridgeFlow
 		var priced uint64
-		if err := rows.Scan(append([]interface{}{&c.Chain}, scanFlow(&c.BridgeFlow, &priced)...)...); err != nil {
+		if err := rows.Scan(append([]interface{}{&chain, &bridge}, scanFlow(&f, &priced)...)...); err != nil {
 			rows.Close()
 			return out, err
 		}
-		c.finish(priced)
-		c.Name, c.AvalancheL1 = bridges.ChainName(c.Chain), bridges.IsAvalancheL1(c.Chain)
-		out.ByChain = append(out.ByChain, c)
+		if bridge != "" {
+			split[chain] = append(split[chain], BridgeDayBridge{ID: bridge, InflowUSD: f.InflowUSD, OutflowUSD: f.OutflowUSD, Transfers: f.Transfers})
+			continue
+		}
+		f.finish(priced)
+		chains[chain] = &BridgeChain{Chain: chain, Name: bridges.ChainName(chain), AvalancheL1: bridges.IsAvalancheL1(chain), BridgeFlow: f}
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return out, err
 	}
+	for key, c := range chains {
+		c.Bridges = split[key]
+		if c.Bridges == nil {
+			c.Bridges = []BridgeDayBridge{}
+		}
+		sort.Slice(c.Bridges, func(i, j int) bool {
+			return c.Bridges[i].InflowUSD+c.Bridges[i].OutflowUSD > c.Bridges[j].InflowUSD+c.Bridges[j].OutflowUSD
+		})
+		out.ByChain = append(out.ByChain, *c)
+	}
+	sort.Slice(out.ByChain, func(i, j int) bool {
+		a, b := out.ByChain[i], out.ByChain[j]
+		if a.InflowUSD+a.OutflowUSD != b.InflowUSD+b.OutflowUSD {
+			return a.InflowUSD+a.OutflowUSD > b.InflowUSD+b.OutflowUSD
+		}
+		return a.Chain < b.Chain
+	})
 
 	rows, err = s.conn.Query(ctx, `
 		SELECT lower(hex(x.token)), m.symbol, m.decimals, m.known = 1, x.priced,
