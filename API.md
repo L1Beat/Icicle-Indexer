@@ -2145,7 +2145,7 @@ Priced swaps above $1,000,000 (`flag_threshold_usd`) are counted in `flagged_swa
 
 `unique_addresses` counts distinct `tx.from` of the swaps. That includes MEV and arbitrage bots, and an aggregator trade counts its signer. Totals and multi-day windows deduplicate (exact distinct count, not a sum of daily counts).
 
-**Window:** `days=N` is the last N complete UTC days ending `as_of` (the newest rolled-up day), both inclusive. `days=1` is the last complete UTC day, not a rolling 24h, which matches DefiLlama's daily numbers. Before the first rollup, `as_of` and `from` are null and lists are empty.
+**Window:** `days=N` is the last N complete UTC days ending `as_of` (the newest rolled-up day), both inclusive. A window reaching past the first rolled-up day is clamped to it, and `from` and `days` report the clamped range. `days=1` is the last complete UTC day, not a rolling 24h, which matches DefiLlama's daily numbers. Before the first rollup, `as_of` and `from` are null and lists are empty.
 
 **Accuracy check:** a reproduction of 2026-11-01 from our node came within 0.6-4.7% of DefiLlama per DEX (Pharaoh V3 -3.5%, Pharaoh DLMM -4.7%, Uniswap V3 -0.6%, Blackhole -2.9%, LFJ -2%), -3.4% overall.
 

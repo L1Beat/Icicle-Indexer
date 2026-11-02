@@ -18,6 +18,9 @@ func dexMock(t *testing.T, asOf time.Time, query func(q string, args []interface
 			require.Contains(t, q, "max(day)")
 			return &MockRow{scanFunc: func(dest ...interface{}) error {
 				*dest[0].(*time.Time) = asOf
+				if !asOf.IsZero() {
+					*dest[1].(*time.Time) = asOf.AddDate(0, 0, -99) // 100 days rolled up
+				}
 				return nil
 			}}
 		},
@@ -65,6 +68,14 @@ func TestHandleDexOverview(t *testing.T) {
 	require.Equal(t, uint64(1100), d.Totals.Swaps)
 	require.Equal(t, float64(1_000_000), d.FlagThresholdUSD)
 	require.True(t, strings.Contains(w.Body.String(), `"unique_addresses":320`))
+
+	// Clamped: 3650 days asked, 100 rolled up.
+	w = MakeRequest(t, server, "GET", "/api/v1/metrics/dex?days=3650")
+	require.Equal(t, http.StatusOK, w.Code)
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Equal(t, 100, resp.Data.Days)
+	require.Equal(t, "2026-07-25", *resp.Data.From)
+	require.Equal(t, asOf.AddDate(0, 0, -99), gotArgs[0])
 }
 
 func TestHandleDexOverview_Empty(t *testing.T) {
@@ -119,6 +130,10 @@ func TestHandleDexTimeseriesAndPools(t *testing.T) {
 	require.Equal(t, "pharaoh", p.Protocol)
 	require.Equal(t, "WAVAX", p.Token0.Symbol)
 	require.Equal(t, "0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e", p.Token1.Address)
+
+	// A window past the first rolled-up day is clamped and reported as such.
+	w = MakeRequest(t, server, "GET", "/api/v1/metrics/dex/timeseries?days=3650")
+	require.Equal(t, http.StatusOK, w.Code)
 
 	for _, path := range []string{
 		"/api/v1/metrics/dex?days=0",

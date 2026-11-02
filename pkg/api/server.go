@@ -1,8 +1,10 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -269,10 +271,20 @@ func (s *Server) Stop() {
 
 // Helper functions
 
+// writeJSON encodes data before writing the status, so a value JSON cannot
+// carry (NaN, +Inf) becomes a logged 500 instead of an empty 200.
 func writeJSON(w http.ResponseWriter, status int, data interface{}) {
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(data); err != nil {
+		slog.Error("Failed to encode JSON response", "status", status, "error", err)
+		if _, isErr := data.(ErrorResponse); !isErr {
+			writeInternalError(w, "failed to encode response")
+		}
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(data)
+	_, _ = w.Write(buf.Bytes())
 }
 
 func getPagination(r *http.Request) (limit, offset int) {

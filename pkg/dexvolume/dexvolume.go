@@ -115,6 +115,9 @@ func Sync(ctx context.Context, conn driver.Conn) error {
 	if err := syncDays(ctx, conn); err != nil {
 		return err
 	}
+	if err := repairNonFinite(ctx, conn); err != nil {
+		return err
+	}
 	return backfillHistory(ctx, conn)
 }
 
@@ -259,7 +262,8 @@ func rollup(ctx context.Context, conn driver.Conn, from, to time.Time) error {
 // Amounts: a V3 swap's |amount0| and |amount1|; an LB swap's amountsIn plus
 // amountsOut per token (only one side of each is non-zero). Price: the hour's
 // median AVAX price implied by WAVAX/stablecoin swaps of at least $10 in the
-// same tracked pools, falling back to the day's median.
+// same tracked pools, falling back to the day's median. A day with no such
+// swaps has no price, and its WAVAX swaps stay unpriced.
 func rollupSQL() string {
 	var lb []string
 	for _, d := range Dexes {
@@ -283,7 +287,7 @@ func rollupSQL() string {
 		FROM (
 			SELECT t, sender, pool, dex,
 				multiIf(s0 IS NOT NULL, s0, s1 IS NOT NULL, s1,
-					t0 = wavax, a0 / 1e18 * px, t1 = wavax, a1 / 1e18 * px, NULL) AS usd
+					t0 = wavax AND isFinite(px), a0 / 1e18 * px, t1 = wavax AND isFinite(px), a1 / 1e18 * px, NULL) AS usd
 			FROM (
 				SELECT *, if(isFinite(px_hour), px_hour, px_day) AS px
 				FROM (
@@ -382,6 +386,36 @@ func backfillHistory(ctx context.Context, conn driver.Conn) error {
 		}
 		slog.Info("DEX history rolled up", "from", from.Format("2006-01-02"), "to", covered.Format("2006-01-02"), "duration", time.Since(start))
 		covered = from
+	}
+	return nil
+}
+
+// repairNonFinite re-rolls days whose stored volume is NaN or infinite. Rollups
+// before the price guard could store NaN for WAVAX swaps on days without a
+// WAVAX/stablecoin price, and JSON cannot carry NaN.
+func repairNonFinite(ctx context.Context, conn driver.Conn) error {
+	rows, err := conn.Query(ctx, `SELECT DISTINCT day FROM dex_daily FINAL WHERE NOT isFinite(volume_usd) ORDER BY day`)
+	if err != nil {
+		return err
+	}
+	var days []time.Time
+	for rows.Next() {
+		var d time.Time
+		if err := rows.Scan(&d); err != nil {
+			rows.Close()
+			return err
+		}
+		days = append(days, d.UTC())
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, d := range days {
+		if err := rollup(ctx, conn, d, d.AddDate(0, 0, 1)); err != nil {
+			return fmt.Errorf("repair %s: %w", d.Format("2006-01-02"), err)
+		}
+		slog.Info("DEX day re-rolled (non-finite volume)", "day", d.Format("2006-01-02"))
 	}
 	return nil
 }

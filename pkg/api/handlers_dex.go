@@ -93,17 +93,24 @@ func dexDays(r *http.Request, def, max int) (int, error) {
 	return n, nil
 }
 
-// dexWindow resolves the window ending at the newest rolled-up day.
+// dexWindow resolves the window ending at the newest rolled-up day. A window
+// reaching past the first rolled-up day is clamped to it, and Days and From
+// report the clamped range.
 func (s *Server) dexWindow(ctx context.Context, days int) (DexWindow, time.Time, error) {
 	w := DexWindow{Days: days}
-	var asOf time.Time
-	if err := s.conn.QueryRow(ctx, `SELECT max(day) FROM dex_daily`).Scan(&asOf); err != nil {
+	var asOf, first time.Time
+	if err := s.conn.QueryRow(ctx, `SELECT max(day), min(day) FROM dex_daily`).Scan(&asOf, &first); err != nil {
 		return w, asOf, err
 	}
 	if asOf.Year() < 2000 {
 		return w, asOf, nil
 	}
-	a, f := asOf.Format("2006-01-02"), asOf.AddDate(0, 0, 1-days).Format("2006-01-02")
+	from := asOf.AddDate(0, 0, 1-days)
+	if from.Before(first) {
+		from = first
+		w.Days = int(asOf.Sub(first).Hours()/24) + 1
+	}
+	a, f := asOf.Format("2006-01-02"), from.Format("2006-01-02")
 	w.AsOf, w.From = &a, &f
 	return w, asOf, nil
 }
@@ -144,12 +151,12 @@ func (s *Server) loadDexOverview(ctx context.Context, days int) (DexOverview, er
 	// The () grouping set is the all-DEX total, with addresses deduplicated
 	// across DEXes; its dex column is empty.
 	rows, err := s.conn.Query(ctx, `
-		SELECT dex, sum(swaps), sum(priced_swaps), sum(volume_usd), sum(flagged_swaps),
+		SELECT dex, sum(swaps), sum(priced_swaps), sum(if(isFinite(volume_usd), volume_usd, 0)), sum(flagged_swaps),
 			toUInt64(uniqExactMerge(addresses))
 		FROM dex_daily FINAL
 		WHERE day >= ? AND day <= ?
 		GROUP BY GROUPING SETS ((dex), ())
-	`, asOf.AddDate(0, 0, 1-days), asOf)
+	`, asOf.AddDate(0, 0, 1-win.Days), asOf)
 	if err != nil {
 		return out, err
 	}
@@ -215,12 +222,12 @@ func (s *Server) loadDexTimeseries(ctx context.Context, days int) ([]DexDay, err
 		return out, err
 	}
 	rows, err := s.conn.Query(ctx, `
-		SELECT toString(day), dex, sum(volume_usd), sum(swaps)
+		SELECT toString(day), dex, sum(if(isFinite(volume_usd), volume_usd, 0)), sum(swaps)
 		FROM dex_daily FINAL
 		WHERE day >= ? AND day <= ?
 		GROUP BY day, dex
 		ORDER BY day, dex
-	`, asOf.AddDate(0, 0, 1-days), asOf)
+	`, asOf.AddDate(0, 0, 1-win.Days), asOf)
 	if err != nil {
 		return nil, err
 	}
@@ -288,7 +295,7 @@ func (s *Server) loadDexPools(ctx context.Context, days, limit int) ([]DexPool, 
 		SELECT lower(hex(x.pool)), x.dex, x.v, x.n,
 			lower(hex(p.token0)), lower(hex(p.token1)), m0.symbol, m1.symbol
 		FROM (
-			SELECT pool, dex, sum(volume_usd) AS v, sum(swaps) AS n
+			SELECT pool, dex, sum(if(isFinite(volume_usd), volume_usd, 0)) AS v, sum(swaps) AS n
 			FROM dex_daily FINAL
 			WHERE day >= ? AND day <= ?
 			GROUP BY pool, dex
@@ -299,7 +306,7 @@ func (s *Server) loadDexPools(ctx context.Context, days, limit int) ([]DexPool, 
 		LEFT JOIN (SELECT token, symbol FROM token_metadata FINAL WHERE chain_id = ?) m0 ON p.token0 = m0.token
 		LEFT JOIN (SELECT token, symbol FROM token_metadata FINAL WHERE chain_id = ?) m1 ON p.token1 = m1.token
 		ORDER BY x.v DESC
-	`, asOf.AddDate(0, 0, 1-days), asOf, limit, uint32(dexvolume.ChainID), uint32(dexvolume.ChainID))
+	`, asOf.AddDate(0, 0, 1-win.Days), asOf, limit, uint32(dexvolume.ChainID), uint32(dexvolume.ChainID))
 	if err != nil {
 		return nil, err
 	}

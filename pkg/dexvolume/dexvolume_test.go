@@ -111,6 +111,8 @@ func TestRollup_ClickHouseLocal(t *testing.T) {
 		logRow(p5, day+"12:00:00.000", topicSwapV3, carol, carol, "", v3swap("-1", "7000000000000"), carol),
 		// Next day: outside the rolled-up range
 		logRow(p1, "2026-10-02 01:00:00.000", topicSwapV3, alice, alice, "", v3swap("1", "-5000000000"), alice),
+		// A day with no WAVAX/stablecoin swap: no AVAX price, so the WAVAX leg stays unpriced (not NaN)
+		logRow(p2, "2026-10-03 09:00:00.000", topicSwapLB, bob, bob, "", lbswap(packed("5000000000000000000", "0"), packed("0", "50000000000000000000")), bob),
 	}
 
 	bind := func(q string, args ...string) string {
@@ -130,8 +132,10 @@ func TestRollup_ClickHouseLocal(t *testing.T) {
 			return a
 		}()), "2022-01-01 00:00:00", "2027-01-01 00:00:00") + ";\n" +
 		bind(rollupSQL(), "2026-10-01 00:00:00", "2026-10-02 00:00:00") + ";\n" +
-		"SELECT dex, lower(hex(pool)), swaps, priced_swaps, round(volume_usd, 2), flagged_swaps, uniqExactMerge(addresses) FROM dex_daily FINAL GROUP BY dex, pool, swaps, priced_swaps, volume_usd, flagged_swaps ORDER BY dex FORMAT TSV;\n" +
-		"SELECT uniqExactMerge(addresses), count() FROM dex_daily FINAL FORMAT TSV;\n" +
+		bind(rollupSQL(), "2026-10-03 00:00:00", "2026-10-04 00:00:00") + ";\n" +
+		"SELECT dex, lower(hex(pool)), swaps, priced_swaps, round(volume_usd, 2), flagged_swaps, uniqExactMerge(addresses) FROM dex_daily FINAL WHERE day = '2026-10-01' GROUP BY dex, pool, swaps, priced_swaps, volume_usd, flagged_swaps ORDER BY dex FORMAT TSV;\n" +
+		"SELECT uniqExactMerge(addresses), count() FROM dex_daily FINAL WHERE day = '2026-10-01' FORMAT TSV;\n" +
+		"SELECT dex, swaps, priced_swaps, volume_usd, isFinite(volume_usd) FROM dex_daily FINAL WHERE day = '2026-10-03' FORMAT TSV;\n" +
 		"SELECT count() FROM dex_pools FINAL FORMAT TSV;\n"
 
 	if dump := os.Getenv("DEXVOLUME_DUMP"); dump != "" {
@@ -152,6 +156,7 @@ func TestRollup_ClickHouseLocal(t *testing.T) {
 		"lfj\t" + p2 + "\t1\t1\t450\t0\t1",
 		"uniswap-v3\t" + p1 + "\t2\t2\t990\t0\t2",
 		"3\t3",
+		"lfj\t1\t0\t0\t1",
 		"3",
 	}, lines)
 }
