@@ -162,6 +162,9 @@ const (
 	topicSwapV2               = "d78ad95fa46c994b6551d0da85fc275fe613ce37657fb8d5e3d130840159d822" // Swap(address,uint256,uint256,uint256,uint256,address)
 )
 
+// dexWAVAX is WAVAX, the quote token of most 2021 pairs.
+const dexWAVAX = "b31f66aa3c1e785363f0875a1b74e27b85fd66c7"
+
 // aebExecuted is ChainBridge's ProposalStatus.Executed.
 const aebExecuted = 3
 
@@ -190,6 +193,9 @@ type rescan struct {
 
 var rescans = []rescan{
 	{Name: "aeb", From: Start, To: time.Date(2021, 9, 1, 0, 0, 0, 0, time.UTC)},
+	// AEB transfers in txs not sent to the Bridge, and ETH, BTC and LINK
+	// prices through WAVAX pairs.
+	{Name: "aeb-v2", From: Start, To: time.Date(2021, 9, 1, 0, 0, 0, 0, time.UTC)},
 }
 
 // windowDays bounds one raw_logs scan.
@@ -312,6 +318,9 @@ func syncWindow(ctx context.Context, conn driver.Conn, caller Caller, from, to t
 		if err := run(ctx, conn, dexPricesSQL(from, to)); err != nil {
 			return fmt.Errorf("dex prices: %w", err)
 		}
+		if err := run(ctx, conn, dexAvaxPricesSQL(from, to)); err != nil {
+			return fmt.Errorf("dex prices via AVAX: %w", err)
+		}
 	}
 	if err := run(ctx, conn, pricesSQL(from, to)); err != nil {
 		return fmt.Errorf("prices: %w", err)
@@ -379,7 +388,9 @@ func captureSQL(from, to time.Time) string {
 			OR (address IN (%s) AND topic0 = unhex('%s'))
 			OR (address = unhex('%s') AND topic0 = unhex('%s') AND topic2 = unhex('%s'))
 			OR (address = unhex('%s') AND topic0 IN (%s))
-			OR (topic0 = unhex('%s') AND tx_to = unhex('%s') AND (topic1 = unhex('%s') OR topic2 = unhex('%s'))))
+			OR (topic0 = unhex('%s') AND (topic1 = unhex('%s') OR topic2 = unhex('%s'))
+				AND transaction_hash IN (SELECT transaction_hash FROM raw_logs
+					WHERE chain_id = %d AND block_time >= %s AND block_time < %s AND address = unhex('%s'))))
 	`, ChainID, timeLit(from), timeLit(to),
 		unhexList(topicCCTPDepositV1, topicCCTPDepositV2, topicCCTPMintV1, topicCCTPMintV2,
 			topicCCTPReceivedV1, topicCCTPReceivedV2, topicOFTSent, topicOFTReceived,
@@ -391,7 +402,7 @@ func captureSQL(from, to time.Time) string {
 		unhexList(aggregators()...), topicAnswerUpdated,
 		BTCb, topicTransfer, zero32,
 		aebBridge, unhexList(topicAEBDeposit, topicAEBProposal),
-		topicTransfer, aebBridge, zero32, zero32)
+		topicTransfer, zero32, zero32, ChainID, timeLit(from), timeLit(to), aebBridge)
 }
 
 // pricesSQL rolls the window's Chainlink answers up to the last one per hour.
@@ -465,6 +476,49 @@ func dexPricesSQL(from, to time.Time) string {
 		GROUP BY feed, hour
 	`, ChainID, strings.Join(lt, ", "), strings.Join(ld, ", "), strings.Join(ft, ", "), strings.Join(ff, ", "), strings.Join(fd, ", "),
 		w(0), w(1), w(2), w(3), timeLit(from), timeLit(to), topicSwapV2)
+}
+
+// dexAvaxPricesSQL fills the hours dexPricesSQL left empty for ETH, BTC and
+// LINK from their WAVAX pairs, the main 2021 pairs: the swap's WAVAX per
+// token times the hour's AVAX price, median over swaps of at least $100. Its
+// answered_at is just before the hour, so a direct stablecoin price or a
+// Chainlink answer for the same hour wins.
+func dexAvaxPricesSQL(from, to time.Time) string {
+	var ft, ff, fd []string
+	for _, p := range pricedTokens {
+		if p.Feed == "AVAX" {
+			continue
+		}
+		ft = append(ft, "'"+p.Token+"'")
+		ff = append(ff, "'"+p.Feed+"'")
+		fd = append(fd, fmt.Sprintf("toUInt8(%d)", p.Decimals))
+	}
+	w := func(n int) string {
+		return fmt.Sprintf("toFloat64(reinterpretAsUInt256(reverse(substring(l.data, %d, 32))))", 32*n+1)
+	}
+	return fmt.Sprintf(`
+		INSERT INTO price_hourly (feed, hour, price, answered_at)
+		WITH [%[1]s] AS ftok, [%[2]s] AS ffeed, [%[3]s] AS fdec, '%[4]s' AS wavax
+		SELECT s.feed, s.hour, median(s.ratio * a.px), toDateTime64(s.hour, 3, 'UTC') - INTERVAL 1 MILLISECOND
+		FROM (
+			SELECT toStartOfHour(l.block_time) AS hour,
+				lower(hex(p.token0)) AS t0, lower(hex(p.token1)) AS t1,
+				greatest(%[5]s, %[7]s) AS a0, greatest(%[6]s, %[8]s) AS a1,
+				multiIf(t1 = wavax, transform(t0, ftok, ffeed, ''), t0 = wavax, transform(t1, ftok, ffeed, ''), '') AS feed,
+				if(t1 = wavax, a1, a0) / 1e18 AS avax,
+				if(t1 = wavax, a0 / pow(10, transform(t0, ftok, fdec, toUInt8(0))), a1 / pow(10, transform(t1, ftok, fdec, toUInt8(0)))) AS amt,
+				avax / amt AS ratio
+			FROM raw_logs l
+			INNER JOIN (SELECT pool, token0, token1 FROM dex_pools FINAL WHERE dex IN ('pangolin-v2', 'lfj-v1')) p ON l.address = p.pool
+			WHERE l.chain_id = %[9]d AND l.block_time >= %[10]s AND l.block_time < %[11]s
+			  AND l.topic0 = unhex('%[12]s') AND length(l.data) >= 128
+		) s
+		INNER JOIN (SELECT hour, price AS px FROM price_hourly FINAL WHERE feed = 'AVAX' AND hour >= toStartOfHour(%[10]s) AND hour < %[11]s) a
+			ON s.hour = a.hour
+		WHERE s.feed != '' AND s.amt > 0 AND isFinite(s.ratio) AND s.avax * a.px >= 100
+		GROUP BY s.feed, s.hour
+	`, strings.Join(ft, ", "), strings.Join(ff, ", "), strings.Join(fd, ", "), strings.TrimPrefix(dexWAVAX, "0x"),
+		w(0), w(1), w(2), w(3), ChainID, timeLit(from), timeLit(to), topicSwapV2)
 }
 
 // chainArrays renders an id -> chain key map as two SQL arrays, in key order.

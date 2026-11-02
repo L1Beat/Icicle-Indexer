@@ -266,7 +266,11 @@ func TestAEB_ClickHouseLocal(t *testing.T) {
 		eth   = "f20d962a6c8f70c731bd838a3a388d7d48fa6e15" // ETH (AEB)
 		usdt  = "de3a24028580884448a5397872046a019649b084" // USDT (AEB)
 		pair  = "00000000000000000000000000000000000000c1" // Pangolin V2 ETH/USDT
+		apair = "00000000000000000000000000000000000000c2" // Pangolin V2 WAVAX/USDT
+		lpair = "00000000000000000000000000000000000000c3" // Pangolin V2 LINK/WAVAX
+		link  = "b3fe5374f67d7a22886a0ee082b2e2f9d2651651" // LINK (AEB)
 		alice = "00000000000000000000000000000000000000f1"
+		route = "00000000000000000000000000000000000000e9" // a contract calling the Bridge
 	)
 	word := func(h string) string { return strings.Repeat("0", 64-len(h)) + h }
 	u := func(v string) string {
@@ -293,6 +297,9 @@ func TestAEB_ClickHouseLocal(t *testing.T) {
 		// Pangolin V2: 2 ETH in for 3,200 USDT out, then 1 ETH out for 1,700 USDT in: median $1,650.
 		row("1", pair, pair, "2021-03-01 09:10:00.000", topicSwapV2, alice, alice, "", u("2000000000000000000")+u("0")+u("0")+u("3200000000")),
 		row("2", pair, pair, "2021-03-01 09:20:00.000", topicSwapV2, alice, alice, "", u("0")+u("1700000000")+u("1000000000000000000")+u("0")),
+		// AVAX at $20 from WAVAX/USDT, and LINK at 2 AVAX = $40 through its WAVAX pair.
+		row("4", apair, apair, "2021-03-01 09:40:00.000", topicSwapV2, alice, alice, "", u("10000000000000000000")+u("0")+u("0")+u("200000000")),
+		row("5", lpair, lpair, "2021-03-01 09:50:00.000", topicSwapV2, alice, alice, "", u("5000000000000000000")+u("0")+u("0")+u("10000000000000000000")),
 		// $50 swap: below the $100 floor, ignored.
 		row("3", pair, pair, "2021-03-01 09:30:00.000", topicSwapV2, alice, alice, "", u("0")+u("50000000")+u("1000000000000000")+u("0")),
 		// Inflow: 3 ETH minted on an executed proposal from Ethereum (chain 1): $4,950.
@@ -301,6 +308,9 @@ func TestAEB_ClickHouseLocal(t *testing.T) {
 		// Outflow: 500 USDT burnt on a deposit to chain 1.
 		row("b", aebBridge, usdt, "2021-03-01 11:00:00.000", topicTransfer, alice, "0", "", u("500000000")),
 		row("b", aebBridge, aebBridge, "2021-03-01 11:00:00.000", topicAEBDeposit, "1", "aa", "8", ""),
+		// Inflow through a contract (tx not sent to the Bridge): 10 LINK, $400.
+		row("e", route, link, "2021-03-01 11:30:00.000", topicTransfer, "0", alice, "", u("10000000000000000000")),
+		row("e", route, aebBridge, "2021-03-01 11:30:00.000", topicAEBProposal, "1", "a", "3", word("0")+word("0")),
 		// A vote that did not execute, and a burn outside the bridge: ignored.
 		row("c", aebBridge, eth, "2021-03-01 12:00:00.000", topicTransfer, "0", alice, "", u("1")),
 		row("c", aebBridge, aebBridge, "2021-03-01 12:00:00.000", topicAEBProposal, "1", "9", "2", word("0")+word("0")),
@@ -309,10 +319,12 @@ func TestAEB_ClickHouseLocal(t *testing.T) {
 	from := time.Date(2021, 3, 1, 0, 0, 0, 0, time.UTC)
 	to := from.AddDate(0, 0, 1)
 	script := strings.Join(ddl, "\n") + "\n" +
-		"INSERT INTO dex_pools (pool, dex, factory, token0, token1, created_time) VALUES (unhex('" + pair + "'), 'pangolin-v2', unhex('" + pair + "'), unhex('" + eth + "'), unhex('" + usdt + "'), '2021-02-01 00:00:00');\n" +
+		"INSERT INTO dex_pools (pool, dex, factory, token0, token1, created_time) VALUES (unhex('" + pair + "'), 'pangolin-v2', unhex('" + pair + "'), unhex('" + eth + "'), unhex('" + usdt + "'), '2021-02-01 00:00:00'), " +
+		"(unhex('" + apair + "'), 'pangolin-v2', unhex('" + apair + "'), unhex('" + dexWAVAX + "'), unhex('" + usdt + "'), '2021-02-01 00:00:00'), " +
+		"(unhex('" + lpair + "'), 'pangolin-v2', unhex('" + lpair + "'), unhex('" + link + "'), unhex('" + dexWAVAX + "'), '2021-02-01 00:00:00');\n" +
 		"INSERT INTO raw_logs VALUES " + strings.Join(rows, ",\n") + ";\n" +
-		captureSQL(from, to) + ";\n" + dexPricesSQL(from, to) + ";\n" + pricesSQL(from, to) + ";\n" + deriveSQL(from, to) + ";\n" +
-		"SELECT feed, toString(hour), price FROM price_hourly FINAL FORMAT TSV;\n" +
+		captureSQL(from, to) + ";\n" + dexPricesSQL(from, to) + ";\n" + dexAvaxPricesSQL(from, to) + ";\n" + pricesSQL(from, to) + ";\n" + deriveSQL(from, to) + ";\n" +
+		"SELECT feed, toString(hour), price FROM price_hourly FINAL ORDER BY feed FORMAT TSV;\n" +
 		"SELECT bridge, direction, chain, remote_id, lower(hex(token)), toString(amount), ifNull(toString(round(usd, 2)), 'null') FROM bridge_transfers FINAL ORDER BY block_time FORMAT TSV;\n"
 
 	f, err := os.CreateTemp(t.TempDir(), "q*.sql")
@@ -322,8 +334,11 @@ func TestAEB_ClickHouseLocal(t *testing.T) {
 	out, err := exec.Command("clickhouse", "local", "--multiquery", "--queries-file", f.Name()).CombinedOutput()
 	require.NoError(t, err, string(out))
 	require.Equal(t, []string{
+		"AVAX\t2021-03-01 09:00:00\t20",
 		"ETH\t2021-03-01 09:00:00\t1650",
+		"LINK\t2021-03-01 09:00:00\t40",
 		"aeb\tin\tethereum\tchainbridge:1\t" + eth + "\t3000000000000000000\t4950",
 		"aeb\tout\tethereum\tchainbridge:1\t" + usdt + "\t500000000\t500",
+		"aeb\tin\tethereum\tchainbridge:1\t" + link + "\t10000000000000000000\t400",
 	}, strings.Split(strings.TrimSpace(string(out)), "\n"))
 }
