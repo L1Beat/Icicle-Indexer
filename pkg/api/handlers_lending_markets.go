@@ -71,6 +71,9 @@ type LendingUSDTotal struct {
 	ProtocolID  string  `json:"protocol_id,omitempty"`
 	SuppliedUSD float64 `json:"supplied_usd"`
 	BorrowedUSD float64 `json:"borrowed_usd"`
+	// UnpricedMarkets counts markets with a supply but no oracle price, which
+	// are left out of the USD sums.
+	UnpricedMarkets int `json:"unpriced_markets"`
 }
 
 // LendingTotals holds USD totals per protocol and overall. Markets without an
@@ -278,7 +281,13 @@ func summarizeLending(markets []LendingMarket, savaxSupply *big.Int) LendingSumm
 	}
 	for _, m := range markets {
 		t, ok := byProto[m.ProtocolID]
-		if !ok || m.SuppliedUSD == nil {
+		if !ok {
+			continue
+		}
+		if m.SuppliedUSD == nil {
+			if m.supplied != nil && m.supplied.Sign() > 0 {
+				t.UnpricedMarkets++
+			}
 			continue
 		}
 		t.SuppliedUSD += *m.SuppliedUSD
@@ -496,10 +505,11 @@ func (s *Server) lendingMarketSeries(w http.ResponseWriter, r *http.Request, mar
 // LendingTotalsPoint is one day's USD supply and borrow, overall and per
 // protocol. Markets without an oracle price that day are left out.
 type LendingTotalsPoint struct {
-	Date        string            `json:"date"`
-	SuppliedUSD float64           `json:"supplied_usd"`
-	BorrowedUSD float64           `json:"borrowed_usd"`
-	ByProtocol  []LendingUSDTotal `json:"by_protocol"`
+	Date            string            `json:"date"`
+	SuppliedUSD     float64           `json:"supplied_usd"`
+	BorrowedUSD     float64           `json:"borrowed_usd"`
+	UnpricedMarkets int               `json:"unpriced_markets"` // across protocols, see LendingUSDTotal
+	ByProtocol      []LendingUSDTotal `json:"by_protocol"`
 }
 
 // handleLendingTotals returns daily USD supply and borrow per protocol
@@ -521,7 +531,8 @@ func (s *Server) handleLendingTotals(w http.ResponseWriter, r *http.Request) {
 		rows, err := s.conn.Query(ctx, `
 			SELECT toString(snapshot_date), protocol_id,
 				sumIf(toFloat64(supplied) / pow(10, decimals) * assumeNotNull(price_usd), price_usd IS NOT NULL),
-				sumIf(toFloat64(borrowed) / pow(10, decimals) * assumeNotNull(price_usd), price_usd IS NOT NULL)
+				sumIf(toFloat64(borrowed) / pow(10, decimals) * assumeNotNull(price_usd), price_usd IS NOT NULL),
+				toInt64(countIf(price_usd IS NULL AND supplied > 0))
 			FROM lending_market_snapshots FINAL
 			WHERE snapshot_date >= today() - ?
 			GROUP BY snapshot_date, protocol_id
@@ -535,13 +546,16 @@ func (s *Server) handleLendingTotals(w http.ResponseWriter, r *http.Request) {
 		for rows.Next() {
 			var date string
 			var t LendingUSDTotal
-			if err := rows.Scan(&date, &t.ProtocolID, &t.SuppliedUSD, &t.BorrowedUSD); err != nil {
+			var unpriced int64
+			if err := rows.Scan(&date, &t.ProtocolID, &t.SuppliedUSD, &t.BorrowedUSD, &unpriced); err != nil {
 				return nil, err
 			}
 			if len(out) == 0 || out[len(out)-1].Date != date {
 				out = append(out, LendingTotalsPoint{Date: date, ByProtocol: []LendingUSDTotal{}})
 			}
+			t.UnpricedMarkets = int(unpriced)
 			p := &out[len(out)-1]
+			p.UnpricedMarkets += t.UnpricedMarkets
 			p.SuppliedUSD += t.SuppliedUSD
 			p.BorrowedUSD += t.BorrowedUSD
 			p.ByProtocol = append(p.ByProtocol, t)

@@ -80,13 +80,18 @@ func snapshotEMode(ctx context.Context, conn clickhouse.Conn, caller lendingmark
 
 // Lending history backfill: each past UTC day is read at its last block on the
 // archive node, with the same reader as the live snapshot. Days are filled
-// newest first, a few per cycle, down to lendingHistoryDays back. Progress is
-// kept in indexer_watermarks (last_period = first day covered).
+// newest first, for up to lendingHistoryBudget per cycle, down to
+// lendingHistoryStart. Progress is kept in indexer_watermarks (last_period =
+// first day covered).
 const (
-	lendingHistoryDays      = 365
-	lendingHistoryPerCycle  = 15
-	lendingHistoryWatermark = "lendingmarkets/daily_from"
+	lendingHistoryWindowDays = 31
+	lendingHistoryBudget     = 2 * time.Minute
+	lendingHistoryWatermark  = "lendingmarkets/daily_from"
 )
+
+// lendingHistoryStart is the BENQI Comptroller deployment (block 3046286), the
+// first tracked market. Aave V3 (March 2022) and V4 are read once they exist.
+var lendingHistoryStart = time.Date(2021, 8, 18, 0, 0, 0, 0, time.UTC)
 
 // BackfillLendingHistory fills lending_market_snapshots for past days.
 func BackfillLendingHistory(ctx context.Context, conn clickhouse.Conn, nodeURL string) error {
@@ -117,11 +122,11 @@ func BackfillLendingHistory(ctx context.Context, conn clickhouse.Conn, nodeURL s
 		}
 	}
 	covered = covered.UTC().Truncate(24 * time.Hour)
-	target := time.Now().UTC().Truncate(24*time.Hour).AddDate(0, 0, -lendingHistoryDays)
+	target := lendingHistoryStart
 	if !covered.After(target) {
 		return nil
 	}
-	from := covered.AddDate(0, 0, -lendingHistoryPerCycle)
+	from := covered.AddDate(0, 0, -lendingHistoryWindowDays)
 	if from.Before(target) {
 		from = target
 	}
@@ -156,7 +161,12 @@ func BackfillLendingHistory(ctx context.Context, conn clickhouse.Conn, nodeURL s
 
 	base := strings.TrimSuffix(strings.TrimRight(nodeURL, "/"), "/ext/bc/P")
 	start := time.Now()
+	deadline := start.Add(lendingHistoryBudget)
+	done := 0
 	for _, d := range days {
+		if time.Now().After(deadline) {
+			break
+		}
 		caller := restaking.RPCCaller{URL: base + "/ext/bc/C/rpc", Client: liquidRPCClient, Block: fmt.Sprintf("0x%x", d.block)}
 		// A protocol that did not exist yet (Aave V4) fails and is skipped.
 		markets, readErr := lendingmarkets.ReadAll(ctx, caller)
@@ -174,9 +184,10 @@ func BackfillLendingHistory(ctx context.Context, conn clickhouse.Conn, nodeURL s
 		if err != nil {
 			return err
 		}
+		done++
 	}
 	// Days with no blocks in raw_blocks would never be visited; move past them.
-	if len(days) == 0 || !days[len(days)-1].day.Equal(from) {
+	if done == len(days) && (len(days) == 0 || !days[len(days)-1].day.Equal(from)) {
 		wctx, cancel := chwrapper.WriteContext(ctx)
 		err := conn.Exec(wctx, `
 			INSERT INTO indexer_watermarks (chain_id, indexer_name, granularity, last_period, last_block_num)
@@ -186,7 +197,7 @@ func BackfillLendingHistory(ctx context.Context, conn clickhouse.Conn, nodeURL s
 			return err
 		}
 	}
-	slog.Info("Lending history backfilled", "from", from.Format("2006-01-02"), "to", covered.Format("2006-01-02"), "days", len(days), "duration", time.Since(start))
+	slog.Info("Lending history backfilled", "from", from.Format("2006-01-02"), "to", covered.Format("2006-01-02"), "days", done, "duration", time.Since(start))
 	return nil
 }
 

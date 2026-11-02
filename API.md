@@ -2020,7 +2020,9 @@ USD fields are null on days the oracle read failed.
 
 ### GET /api/v1/metrics/lending/timeseries/totals
 
-Daily supplied and borrowed USD per protocol and overall, from each market's daily sample and its oracle price that day. Markets without a price that day are left out. Cached for 10 minutes. Oldest first.
+Daily supplied and borrowed USD per protocol and overall, from each market's daily sample and its oracle price that day (the same protocol oracles the liquidations use). Markets with a supply but no price that day are left out of the USD sums and counted in `unpriced_markets`, so a dip on such a day is a gap, not an outflow. History starts at BENQI's launch (2021-08-18), Aave V3 from March 2022, and `days=3650` returns all of it. Cached for 10 minutes. Oldest first.
+
+For native amounts (to separate deposits from the AVAX price), use `/metrics/lending/timeseries?market=<protocol>:<asset>`, which returns token base units per day.
 
 **Query Parameters:**
 | Parameter | Type | Description |
@@ -2034,8 +2036,9 @@ Daily supplied and borrowed USD per protocol and overall, from each market's dai
       "date": "2026-10-31",
       "supplied_usd": 683158590.7,
       "borrowed_usd": 216620019.3,
+      "unpriced_markets": 0,
       "by_protocol": [
-        { "protocol_id": "aave-v3", "supplied_usd": 431147408.1, "borrowed_usd": 149365627.7 }
+        { "protocol_id": "aave-v3", "supplied_usd": 431147408.1, "borrowed_usd": 149365627.7, "unpriced_markets": 0 }
       ]
     }
   ]
