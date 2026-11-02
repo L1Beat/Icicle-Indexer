@@ -89,6 +89,9 @@ func (s *Server) loadStablecoins(ctx context.Context, chainID uint32) ([]Stablec
 			return nil, err
 		}
 		e.Token = "0x" + hex.EncodeToString(e.tokenBytes)
+		// Tokens with no balances or no counted transfers in 24h get no row
+		// from the queries below and keep these zeros.
+		e.Supply, e.Volume24h = "0", "0"
 		byToken[e.Token] = &e
 		ordered = append(ordered, &e)
 	}
