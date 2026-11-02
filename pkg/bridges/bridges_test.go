@@ -311,6 +311,11 @@ func TestAEB_ClickHouseLocal(t *testing.T) {
 		// Inflow through a contract (tx not sent to the Bridge): 10 LINK, $400.
 		row("e", route, link, "2021-03-01 11:30:00.000", topicTransfer, "0", alice, "", u("10000000000000000000")),
 		row("e", route, aebBridge, "2021-03-01 11:30:00.000", topicAEBProposal, "1", "a", "3", word("0")+word("0")),
+		// WAVAX: locked with the handler on a deposit ($200 at $20), released on a proposal ($100).
+		row("f", aebBridge, dexWAVAX, "2021-03-01 11:40:00.000", topicTransfer, alice, aebHandler, "", u("10000000000000000000")),
+		row("f", aebBridge, aebBridge, "2021-03-01 11:40:00.000", topicAEBDeposit, "1", "bb", "b", ""),
+		row("10", aebBridge, dexWAVAX, "2021-03-01 11:50:00.000", topicTransfer, aebHandler, alice, "", u("5000000000000000000")),
+		row("10", aebBridge, aebBridge, "2021-03-01 11:50:00.000", topicAEBProposal, "1", "c", "3", word("0")+word("0")),
 		// A vote that did not execute, and a burn outside the bridge: ignored.
 		row("c", aebBridge, eth, "2021-03-01 12:00:00.000", topicTransfer, "0", alice, "", u("1")),
 		row("c", aebBridge, aebBridge, "2021-03-01 12:00:00.000", topicAEBProposal, "1", "9", "2", word("0")+word("0")),
@@ -340,5 +345,7 @@ func TestAEB_ClickHouseLocal(t *testing.T) {
 		"aeb\tin\tethereum\tchainbridge:1\t" + eth + "\t3000000000000000000\t4950",
 		"aeb\tout\tethereum\tchainbridge:1\t" + usdt + "\t500000000\t500",
 		"aeb\tin\tethereum\tchainbridge:1\t" + link + "\t10000000000000000000\t400",
+		"aeb\tout\tethereum\tchainbridge:1\t" + dexWAVAX + "\t10000000000000000000\t200",
+		"aeb\tin\tethereum\tchainbridge:1\t" + dexWAVAX + "\t5000000000000000000\t100",
 	}, strings.Split(strings.TrimSpace(string(out)), "\n"))
 }

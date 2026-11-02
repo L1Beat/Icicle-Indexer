@@ -68,7 +68,9 @@ const (
 	// aebBridge is the ChainSafe ChainBridge behind the Avalanche-Ethereum
 	// Bridge (Jan-Aug 2021). Its handler mints a token on an executed
 	// proposal and burns it on a deposit, in the same tx as the Bridge event.
-	aebBridge = "6460777cda22ad67bbb97536ffc446d65761197e"
+	// WAVAX, native to the C-Chain, it releases and locks instead.
+	aebBridge  = "6460777cda22ad67bbb97536ffc446d65761197e"
+	aebHandler = "6147f5a1a4eea5c529e2f375bd86f8f58f8bc990" // ERC20Handler
 
 	// USDC is native USDC, the only token CCTP moves on the C-Chain.
 	USDC = "b97ef9ef8734c71904d8002f8b6bc66dd9c48a6e"
@@ -196,6 +198,8 @@ var rescans = []rescan{
 	// AEB transfers in txs not sent to the Bridge, and ETH, BTC and LINK
 	// prices through WAVAX pairs.
 	{Name: "aeb-v2", From: Start, To: time.Date(2021, 9, 1, 0, 0, 0, 0, time.UTC)},
+	// WAVAX the AEB handler locked and released.
+	{Name: "aeb-v3", From: Start, To: time.Date(2021, 9, 1, 0, 0, 0, 0, time.UTC)},
 }
 
 // windowDays bounds one raw_logs scan.
@@ -369,6 +373,9 @@ func aggregators() []string {
 
 var zero32 = strings.Repeat("00", 32)
 
+// word32 left-pads a hex address to a 32-byte topic.
+func word32(addr string) string { return strings.Repeat("00", 12) + addr }
+
 // captureSQL copies the window's bridge logs out of raw_logs in one scan.
 // Event topics anyone can emit are copied from every address and checked when
 // decoded; the rest only from the contracts that matter.
@@ -388,7 +395,7 @@ func captureSQL(from, to time.Time) string {
 			OR (address IN (%s) AND topic0 = unhex('%s'))
 			OR (address = unhex('%s') AND topic0 = unhex('%s') AND topic2 = unhex('%s'))
 			OR (address = unhex('%s') AND topic0 IN (%s))
-			OR (topic0 = unhex('%s') AND (topic1 = unhex('%s') OR topic2 = unhex('%s'))
+			OR (topic0 = unhex('%s') AND (topic1 IN (unhex('%s'), unhex('%s')) OR topic2 IN (unhex('%s'), unhex('%s')))
 				AND transaction_hash IN (SELECT transaction_hash FROM raw_logs
 					WHERE chain_id = %d AND block_time >= %s AND block_time < %s AND address = unhex('%s'))))
 	`, ChainID, timeLit(from), timeLit(to),
@@ -402,7 +409,7 @@ func captureSQL(from, to time.Time) string {
 		unhexList(aggregators()...), topicAnswerUpdated,
 		BTCb, topicTransfer, zero32,
 		aebBridge, unhexList(topicAEBDeposit, topicAEBProposal),
-		topicTransfer, zero32, zero32, ChainID, timeLit(from), timeLit(to), aebBridge)
+		topicTransfer, zero32, word32(aebHandler), zero32, word32(aebHandler), ChainID, timeLit(from), timeLit(to), aebBridge)
 }
 
 // pricesSQL rolls the window's Chainlink answers up to the last one per hour.
@@ -711,26 +718,27 @@ func deriveSQL(from, to time.Time) string {
 			WHERE address = unhex('%[10]s') AND topic0 = unhex('%[11]s') AND substring(data, %[12]d, 4) = unhex('%[13]s'))`,
 			BTCb, w(0), zeroAddr, w(1), logs, topicABUnwrap, ta(1), topicTransfer, zero32,
 			lombardMailbox, topicMailboxSent, redeemSelectorAt, selectorRedeem),
-		// AEB: a token mint in a tx where the Bridge executed a proposal, or a
-		// burn in a tx where it took a deposit. The chain id is topic1 of the
-		// Bridge event.
+		// AEB: a token mint (or WAVAX release by the handler) in a tx where the
+		// Bridge executed a proposal, or a burn (or WAVAX lock) in a tx where
+		// it took a deposit. The chain id is topic1 of the Bridge event.
 		fmt.Sprintf(`SELECT l.block_time, l.transaction_hash AS tx, l.log_index AS li, 'aeb' AS bridge,
-			if(l.topic1 = unhex('%[1]s'), 1, 2) AS dir,
+			if(l.topic1 IN (unhex('%[1]s'), unhex('%[16]s')), 1, 2) AS dir,
 			concat('chainbridge:', toString(b.cid)) AS remote_id,
 			transform(b.cid, %[2]s, %[3]s, concat('chainbridge:', toString(b.cid))) AS chain,
 			l.address AS token, %[4]s AS amount,
 			if(dir = 2, %[5]s, %[6]s) AS from_addr, if(dir = 1, %[7]s, %[6]s) AS to_addr
 		FROM (SELECT * FROM %[8]s WHERE topic0 = unhex('%[9]s') AND length(data) = 32
-			AND (topic1 = unhex('%[1]s') OR topic2 = unhex('%[1]s'))) l
+			AND (topic1 IN (unhex('%[1]s'), unhex('%[16]s')) OR topic2 IN (unhex('%[1]s'), unhex('%[16]s')))) l
 		INNER JOIN (SELECT transaction_hash, any(toUInt64(%[10]s)) AS cid,
 				max(topic0 = unhex('%[11]s')) AS dep,
 				max(topic0 = unhex('%[12]s') AND %[13]s = %[14]d) AS exe
 			FROM %[8]s WHERE address = unhex('%[15]s') AND topic0 IN (unhex('%[11]s'), unhex('%[12]s'))
 			GROUP BY transaction_hash) b
 		ON l.transaction_hash = b.transaction_hash
-		WHERE (l.topic1 = unhex('%[1]s') AND b.exe = 1) OR (l.topic2 = unhex('%[1]s') AND b.dep = 1)`,
+		WHERE (l.topic1 IN (unhex('%[1]s'), unhex('%[16]s')) AND b.exe = 1)
+		   OR (l.topic2 IN (unhex('%[1]s'), unhex('%[16]s')) AND b.dep = 1)`,
 			zero32, aebIDs, aebKeys, w(0), ta(1), zeroAddr, ta(2), logs, topicTransfer,
-			tu(1), topicAEBDeposit, topicAEBProposal, tu(3), aebExecuted, aebBridge),
+			tu(1), topicAEBDeposit, topicAEBProposal, tu(3), aebExecuted, aebBridge, word32(aebHandler)),
 	}
 
 	return fmt.Sprintf(`
