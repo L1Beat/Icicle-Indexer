@@ -653,6 +653,59 @@ CREATE TABLE IF NOT EXISTS dex_daily (
 ) ENGINE = ReplacingMergeTree(computed_at)
 ORDER BY (day, dex, pool);
 
+-- C-Chain perpetuals (pkg/perps): one row per position change, liquidation or
+-- fee on GMX V2 and GMX V1. USD amounts are as the venue reports them.
+CREATE TABLE IF NOT EXISTS perp_events (
+    venue LowCardinality(String),  -- a perps.Venues id, gmx-v2 or gmx-v1
+    block_time DateTime64(3, 'UTC'),
+    transaction_hash FixedString(32),
+    log_index UInt32,
+    kind Enum8('increase' = 1, 'decrease' = 2, 'liquidation' = 3, 'fee' = 4),
+    market FixedString(20),  -- GMX V2 market token, GMX V1 index token, zeros for V1 fees
+    account FixedString(20),  -- Trader, zeros for V1 fees
+    is_long Bool,
+    size_usd Float64,  -- Size change, 0 on fee rows
+    collateral_usd Float64,  -- Collateral added or removed
+    fee_usd Float64,  -- Fee rows only: position, borrowing and liquidation fees
+    computed_at DateTime64(3, 'UTC') DEFAULT now64(3)
+) ENGINE = ReplacingMergeTree(computed_at)
+ORDER BY (block_time, transaction_hash, log_index);
+
+-- GMX V2 OpenInterestUpdated: open interest per market, collateral token and
+-- side after the update.
+CREATE TABLE IF NOT EXISTS perp_oi_events (
+    block_time DateTime64(3, 'UTC'),
+    transaction_hash FixedString(32),
+    log_index UInt32,
+    market FixedString(20),
+    collateral_token FixedString(20),
+    is_long Bool,
+    oi_usd Float64
+) ENGINE = ReplacingMergeTree
+ORDER BY (block_time, transaction_hash, log_index);
+
+-- GMX V2 markets, from MarketCreated.
+CREATE TABLE IF NOT EXISTS perp_markets (
+    market FixedString(20),
+    index_token FixedString(20),  -- Zeros for swap-only markets
+    long_token FixedString(20),
+    short_token FixedString(20),
+    created_time DateTime64(3, 'UTC')
+) ENGINE = ReplacingMergeTree
+ORDER BY market;
+
+-- Open interest at the end of each complete UTC day, carried forward.
+CREATE TABLE IF NOT EXISTS perp_oi_daily (
+    day Date,
+    venue LowCardinality(String),
+    market FixedString(20),
+    collateral_token FixedString(20),  -- Zeros for GMX V1
+    is_long Bool,
+    oi_usd Float64,
+    computed_at DateTime64(3, 'UTC') DEFAULT now64(3)
+) ENGINE = ReplacingMergeTree(computed_at)
+ORDER BY (day, venue, market, collateral_token, is_long);
+
 -- C-Chain bridge logs (pkg/bridges): the raw_logs rows bridge transfers are
 -- decoded from, copied in one scan per window so decoding can be re-run
 -- without scanning raw_logs again. Also holds the Chainlink price updates.

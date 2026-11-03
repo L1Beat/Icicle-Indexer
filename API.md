@@ -2419,6 +2419,156 @@ The newest transfers, priced or not, passthrough legs included and marked. Same 
 
 ---
 
+## Metrics API - Perps
+
+C-Chain perpetuals trading on GMX V2 (Synthetics) and GMX V1, decoded from `raw_logs` (`pkg/perps`). Every C-Chain snapshot cycle (5 minutes by default), the indexer reads new GMX V1 Vault and GMX V2 EventEmitter logs, decodes them (GMX V2 packs its fields in a key/value struct, decoded in Go) into `perp_events`, one row per position change, liquidation or fee, and rolls open interest up per complete UTC day into `perp_oi_daily`. Endpoints are cached for 5 minutes.
+
+**History:** all time. A fresh deploy reads `raw_logs` a week at a time from 2021-12-20, for up to 2 minutes per cycle. GMX V1 traded from 2021-12-22 and took its last new position on 2025-07-09, the day of the GMX V1 exploit; it has only seen closes since. GMX V2 created its first markets on 2023-07-04.
+
+**Venues:**
+
+| id | Name | Contract | Events |
+|----|------|----------|--------|
+| `gmx-v2` | GMX V2 | EventEmitter `0xDb17B211c34240B014ab6d61d4A31FA0C0e20c26` | `PositionIncrease`, `PositionDecrease` (orderType 7 = liquidation), `PositionFeesCollected`, `OpenInterestUpdated`, `MarketCreated` (as `EventLog1`/`EventLog2`, topic1 = hash of the event name) |
+| `gmx-v1` | GMX V1 | Vault `0x9ab2De34A33fB459b538c43f251eB825645e8595` | `IncreasePosition`, `DecreasePosition`, `LiquidatePosition`, `CollectMarginFees` |
+
+Primit and other venues are not tracked.
+
+**What counts:**
+- Volume is the USD size change (`sizeDeltaUsd` / `sizeDelta`, 30 decimals) of every increase, decrease and liquidation, both legs, as GMX reports it. Collateral-only changes (size 0) are not trades. `long_volume_usd` and `short_volume_usd` split it by position side.
+- `trades` counts those size changes. `traders` counts distinct accounts among them, deduplicated across venues in the totals. Order creation, keeper executions and swaps do not count.
+- Fees are position, borrowing and liquidation fees. GMX V2 fees come from `PositionFeesCollected`, in collateral token units priced at the event's `collateralTokenPrice.min`. GMX V1 fees are `CollectMarginFees.feeUsd`. Funding, which traders pay each other, is not a fee.
+- Liquidations: GMX V2 `PositionDecrease` with orderType 7, GMX V1 `LiquidatePosition`. A GMX V1 position closed by a liquidator for exceeding max leverage (`DecreasePosition`, not `LiquidatePosition`) counts as a decrease.
+- No price table is needed: sizes are USD, fees carry their own price.
+
+**Open interest:** at the end of each complete UTC day, per market and side. GMX V2 takes the day's last `OpenInterestUpdated` `nextValue` per market, collateral token and side, else the previous day's value. GMX V1 adds each day's increases and subtracts its decreases and liquidations. A check on 2026-11-02 matched GMX V2's DataStore `OPEN_INTEREST` values for all 38 market, collateral and side keys.
+
+**Markets:** GMX V2 markets are named by index token and pool from `MarketCreated`, e.g. `AVAX/USD` with pool `AVAX-USDC` (several pools share an index). Synthetic index tokens (DOGE, LTC, XRP, TRUMP, MELANIA, PUMP, WLFI) are matched by GMX's synthetic address derivation. GMX V1 markets are its index tokens, e.g. `BTC/USD`.
+
+**Accuracy check:** 2026-10-03..11-02 from our node matched an independent decode: GMX V2 $97.2M volume, 113 liquidations worth $1.26M, $77k fees.
+
+### GET /api/v1/metrics/perps
+
+Volume, trades, traders, fees and liquidations per venue over the window.
+
+**Query Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `days` | int | Complete UTC days, 1-3650 (default 30) |
+
+**Response:**
+```json
+{
+  "data": {
+    "as_of": "2026-11-02",
+    "from": "2026-10-04",
+    "days": 30,
+    "totals": {
+      "volume_usd": 97240000.0,
+      "long_volume_usd": 66100000.0,
+      "short_volume_usd": 31140000.0,
+      "trades": 6504,
+      "traders": 153,
+      "fees_usd": 77000.0,
+      "liquidations": 113,
+      "liquidated_usd": 1260000.0
+    },
+    "by_venue": [
+      { "id": "gmx-v2", "name": "GMX V2", "volume_usd": 97240000.0, "long_volume_usd": 66100000.0, "short_volume_usd": 31140000.0, "trades": 6504, "traders": 153, "fees_usd": 77000.0, "liquidations": 113, "liquidated_usd": 1260000.0 },
+      { "id": "gmx-v1", "name": "GMX V1", "volume_usd": 0, "long_volume_usd": 0, "short_volume_usd": 0, "trades": 0, "traders": 0, "fees_usd": 0, "liquidations": 0, "liquidated_usd": 0 }
+    ]
+  }
+}
+```
+
+Sample values are illustrative. `by_venue` lists every venue, in a fixed order, with zeros when idle. The window is the last N complete UTC days ending `as_of`, clamped to the first day with a trade.
+
+### GET /api/v1/metrics/perps/timeseries
+
+Daily volume, trades, fees and liquidated size, total and per venue. Oldest first; days without trades are left out.
+
+**Query Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `days` | int | Complete UTC days, 1-3650 (default 90) |
+
+**Response:**
+```json
+{
+  "data": [
+    {
+      "date": "2026-11-02",
+      "volume_usd": 4000000.0,
+      "trades": 260,
+      "fees_usd": 2600.0,
+      "liquidated_usd": 0,
+      "venues": [ { "id": "gmx-v2", "volume_usd": 4000000.0, "trades": 260 } ]
+    }
+  ]
+}
+```
+
+### GET /api/v1/metrics/perps/open-interest
+
+Long and short open interest at the end of each complete UTC day, total and per market. Markets with under $1 open interest are left out.
+
+**Query Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `days` | int | Complete UTC days, 1-3650 (default 90) |
+
+**Response:**
+```json
+{
+  "data": [
+    {
+      "date": "2026-11-02",
+      "long_usd": 1024000.0,
+      "short_usd": 1052000.0,
+      "by_market": [
+        { "venue": "gmx-v2", "market": "0x913c1f46b48b3ed35e7dc3cf754d4ae8499f31cf", "name": "AVAX/USD", "pool": "AVAX-USDC", "long_usd": 449000.0, "short_usd": 470000.0 }
+      ]
+    }
+  ]
+}
+```
+
+`by_market` is ordered by open interest. GMX V1 markets have no `pool`.
+
+### GET /api/v1/metrics/perps/liquidations/top
+
+The largest liquidations by position size over the window.
+
+**Query Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `days` | int | Complete UTC days, 1-3650 (default 30) |
+| `limit` | int | Liquidations, 1-100 (default 25) |
+
+**Response:**
+```json
+{
+  "data": [
+    {
+      "tx_hash": "0x...",
+      "time": "2026-10-11T03:12:45Z",
+      "venue": "gmx-v2",
+      "market": "0x8970b527e84aa17a33d38b65e9a5ab5817fc0027",
+      "market_name": "DOGE/USD",
+      "pool": "AVAX-USDC",
+      "account": "0x...",
+      "is_long": false,
+      "size_usd": 2463.1,
+      "collateral_usd": 49.3
+    }
+  ]
+}
+```
+
+`collateral_usd` is the collateral the liquidation removed from the position.
+
+---
+
 ## Metrics API - Chain Stats
 
 ### GET /api/v1/metrics/evm/{chainId}/stats
@@ -2686,6 +2836,10 @@ ws.onmessage = (event) => {
 | GET | `/api/v1/metrics/bridges/timeseries` | Daily C-Chain bridge flows |
 | GET | `/api/v1/metrics/bridges/transfers/top` | Largest C-Chain bridge transfers |
 | GET | `/api/v1/metrics/bridges/transfers/recent` | Newest C-Chain bridge transfers |
+| GET | `/api/v1/metrics/perps` | C-Chain perpetuals volume, traders, fees and liquidations per venue |
+| GET | `/api/v1/metrics/perps/timeseries` | Daily C-Chain perpetuals volume |
+| GET | `/api/v1/metrics/perps/open-interest` | Daily C-Chain perpetuals open interest per market |
+| GET | `/api/v1/metrics/perps/liquidations/top` | Largest C-Chain perpetuals liquidations |
 | WS | `/ws/blocks/{chainId}` | Real-time block stream |
 
 ---

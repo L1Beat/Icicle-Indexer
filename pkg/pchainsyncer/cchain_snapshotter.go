@@ -8,6 +8,7 @@ import (
 
 	"icicle/pkg/bridges"
 	"icicle/pkg/dexvolume"
+	"icicle/pkg/perps"
 	"icicle/pkg/restaking"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -70,6 +71,10 @@ func (s *CChainSnapshotter) runOnce(ctx context.Context) {
 	caller := restaking.RPCCaller{URL: base + "/ext/bc/C/rpc", Client: liquidRPCClient}
 	if err := bridges.Sync(ctx, s.conn, caller); err != nil {
 		slog.Warn("Failed to sync bridge transfers", "error", err)
+	}
+	// Perpetuals (GMX V2, GMX V1 history).
+	if err := perps.Sync(ctx, s.conn); err != nil {
+		slog.Warn("Failed to sync perps", "error", err)
 	}
 	slog.Info("C-Chain snapshot cycle completed", "duration", time.Since(start))
 }
