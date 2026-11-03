@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -338,7 +339,12 @@ func (s *Server) icmAppInfos(ctx context.Context) (map[string]icmAppInfo, error)
 	return out, rows.Err()
 }
 
-// icmAppName is an app's label name, else its ICTT token and side.
+// genericICTTName matches the verified-source names of the stock ICTT
+// contracts, which many apps share.
+var genericICTTName = regexp.MustCompile(`^(ERC20|Native)Token(Home|Remote)(Upgradeable)?$`)
+
+// icmAppName is an app's label name, else its ICTT token and side. An ICTT
+// app labelled only with a stock contract name is named by its token too.
 func (s *Server) icmAppName(addr string, info icmAppInfo, ok bool) (string, string, *AddressLabel) {
 	label := s.labelFor(icm.ChainID, "0x"+addr)
 	kind := "other"
@@ -348,7 +354,8 @@ func (s *Server) icmAppName(addr string, info icmAppInfo, ok bool) (string, stri
 	name := ""
 	if label != nil {
 		name = label.Name
-	} else if ok && info.symbol != "" {
+	}
+	if ok && info.symbol != "" && (name == "" || genericICTTName.MatchString(name)) {
 		name = info.symbol + " ICTT " + strings.TrimPrefix(info.kind, "ictt-")
 	}
 	return name, kind, label

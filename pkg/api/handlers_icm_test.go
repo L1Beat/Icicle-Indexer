@@ -175,6 +175,9 @@ func TestHandleICMAppsAndMessages(t *testing.T) {
 	require.Equal(t, uint64(258000), a.Received)
 	require.Equal(t, "2026-09-04T01:00:00Z", a.FirstSeen)
 	require.Equal(t, "Omnicoin", a.TopChains[0].Name)
+	for name, want := range map[string]bool{"ERC20TokenHome": true, "NativeTokenRemoteUpgradeable": true, "DestinationBridge": false, "ERC20TokenHomeV2": false} {
+		require.Equal(t, want, genericICTTName.MatchString(name), name)
+	}
 	b := apps.Data.Apps[1]
 	require.Equal(t, "other", b.Kind)
 	require.Nil(t, b.Token)
