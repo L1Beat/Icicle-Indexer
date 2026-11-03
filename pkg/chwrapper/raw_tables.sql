@@ -755,6 +755,21 @@ CREATE TABLE IF NOT EXISTS icm_apps (
 ) ENGINE = ReplacingMergeTree(checked_at)
 ORDER BY address;
 
+-- TokenRemotes registered with C-Chain ICTT TokenHomes (pkg/icm), as the home
+-- reports them. ICTT messages carry amounts in the remote's denomination: the
+-- home amount is the message amount divided by multiplier when
+-- multiply_on_remote, else multiplied by it.
+CREATE TABLE IF NOT EXISTS icm_remotes (
+    home FixedString(20),
+    remote_chain FixedString(32),
+    remote_address FixedString(20),
+    registered Bool,
+    multiplier UInt256,
+    multiply_on_remote Bool,
+    checked_at DateTime64(3, 'UTC') DEFAULT now64(3)
+) ENGINE = ReplacingMergeTree(checked_at)
+ORDER BY (home, remote_chain, remote_address);
+
 -- C-Chain bridge logs (pkg/bridges): the raw_logs rows bridge transfers are
 -- decoded from, copied in one scan per window so decoding can be re-run
 -- without scanning raw_logs again. Also holds the Chainlink price updates.

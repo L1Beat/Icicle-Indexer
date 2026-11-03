@@ -63,6 +63,8 @@ const watermark = "icm/through"
 var rescans = []string{
 	// Contracts, fees, relayers and ICTT payloads, added after the counts.
 	"details",
+	// TokenHome remote settings, to scale ICTT amounts to C-Chain units.
+	"remotes",
 }
 
 // Sync decodes messages from the watermark up to the C-Chain sync watermark,
@@ -118,6 +120,9 @@ func syncRange(ctx context.Context, conn driver.Conn, caller Caller, from, to, d
 		}
 		if err := discover(ctx, conn, caller, from, end); err != nil {
 			return fmt.Errorf("apps %s..%s: %w", from.Format(time.RFC3339), end.Format(time.RFC3339), err)
+		}
+		if err := discoverRemotes(ctx, conn, caller, from, end); err != nil {
+			return fmt.Errorf("remotes %s..%s: %w", from.Format(time.RFC3339), end.Format(time.RFC3339), err)
 		}
 		wctx, cancel := chwrapper.WriteContext(ctx)
 		err = conn.Exec(wctx, `

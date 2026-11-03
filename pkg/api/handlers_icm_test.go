@@ -224,3 +224,87 @@ func TestHandleICMAppsAndMessages(t *testing.T) {
 		require.Equal(t, http.StatusBadRequest, w.Code, path)
 	}
 }
+
+func TestHandleICMValue(t *testing.T) {
+	icmCache = newTTLCache(5 * time.Minute)
+	through := time.Date(2026, 11, 3, 0, 5, 0, 0, time.UTC)
+	chainA := ids.ID{0xaa}
+	const usdc, xom, home = "b97ef9ef8734c71904d8002f8b6bc66dd9c48a6e", "af72f6caf76775daeabaf5c82ce05d97359c8fa1", "4ef4752d1a4a6bb1fa7bc862ba646643c7f30ed3"
+	var gotArgs []interface{}
+	server := NewTestServer(&MockConn{
+		QueryFunc: func(ctx context.Context, q string, args ...interface{}) (driver.Rows, error) {
+			switch {
+			case strings.Contains(q, "indexer_watermarks"):
+				return NewMockRows([]string{"last_period"}, [][]interface{}{{through}}), nil
+			case strings.Contains(q, "l1_registry"):
+				return NewMockRows([]string{"blockchain_id", "name"}, [][]interface{}{{chainA.String(), "Henesys"}}), nil
+			case strings.Contains(q, "WHERE kind != ''") && !strings.Contains(q, "icm_messages"):
+				return NewMockRows([]string{"a", "k", "t", "s", "d"}, [][]interface{}{{home, "ictt-home", usdc, "USDC", uint8(6)}}), nil
+			case strings.Contains(q, "GROUPING SETS ((tok), (cp), ())"):
+				gotArgs = args
+				return NewMockRows(make([]string, 13), [][]interface{}{
+					{xom, "XOM", uint8(18), false, "", uint64(258000), uint64(0), "0", "2590000000000000000000000", 0.0, 0.0, true, false},
+					{usdc, "USDC", uint8(6), true, "", uint64(30), uint64(29), "12000000", "3000000", 12.0, 3.0, true, false},
+					{"", "", uint8(0), false, string(chainA[:]), uint64(30), uint64(29), "0", "0", 12.0, 3.0, false, true},
+					{"", "", uint8(0), false, "", uint64(258030), uint64(29), "0", "0", 12.0, 3.0, false, false},
+				}), nil
+			case strings.Contains(q, "GROUP BY day, tok"):
+				return NewMockRows(make([]string, 7), [][]interface{}{
+					{"2026-11-02", xom, "XOM", false, uint64(9), 0.0, 0.0},
+					{"2026-11-02", usdc, "USDC", true, uint64(2), 12.0, 3.0},
+				}), nil
+			case strings.Contains(q, "ORDER BY usd DESC"):
+				require.Equal(t, 5, args[4])
+				return NewMockRows(make([]string, 13), [][]interface{}{
+					{strings.Repeat("01", 32), "sent", int8(1), string(chainA[:]), through, strings.Repeat("0f", 32), home, usdc, "USDC", uint8(6), strings.Repeat("c5", 20), "12000000", 12.0},
+				}), nil
+			}
+			t.Fatalf("unexpected query %s", q)
+			return nil, nil
+		},
+	})
+
+	w := MakeRequest(t, server, "GET", "/api/v1/metrics/icm/value?days=30")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Len(t, gotArgs, 4) // from, to, from, to
+	var v struct {
+		Data ICMValue `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &v))
+	require.Equal(t, ICMValueStats{Transfers: 258030, PricedTransfers: 29, SentUSD: 12, ReceivedUSD: 3, TotalUSD: 15}, v.Data.Totals)
+	require.Len(t, v.Data.ByToken, 2)
+	require.Equal(t, "USDC", v.Data.ByToken[0].Token.Symbol) // priced first
+	require.Equal(t, 12.0, *v.Data.ByToken[0].SentUSD)
+	require.Nil(t, v.Data.ByToken[1].SentUSD) // unpriced XOM
+	require.Equal(t, "2590000000000000000000000", v.Data.ByToken[1].ReceivedAmount)
+	require.Equal(t, []ICMChainValue{{BlockchainID: chainA.String(), Name: "Henesys", Transfers: 30, SentUSD: 12, ReceivedUSD: 3, TotalUSD: 15}}, v.Data.ByChain)
+
+	w = MakeRequest(t, server, "GET", "/api/v1/metrics/icm/value/timeseries?days=2")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var ts struct {
+		Data []ICMValueDay `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &ts))
+	require.Len(t, ts.Data, 2)
+	require.Empty(t, ts.Data[0].ByToken)
+	require.Equal(t, uint64(11), ts.Data[1].Transfers)
+	require.Equal(t, 15.0, ts.Data[1].TotalUSD)
+	require.Equal(t, "USDC", ts.Data[1].ByToken[0].Symbol)
+
+	w = MakeRequest(t, server, "GET", "/api/v1/metrics/icm/transfers/top?days=7&limit=5")
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	var top struct {
+		Data []ICMTransfer `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &top))
+	require.Len(t, top.Data, 1)
+	require.Equal(t, "single_hop_send", top.Data[0].Type)
+	require.Equal(t, "USDC ICTT home", top.Data[0].AppName)
+	require.Equal(t, "12000000", *top.Data[0].Amount)
+	require.Equal(t, "Henesys", top.Data[0].Counterparty.Name)
+
+	for _, path := range []string{"/api/v1/metrics/icm/value?days=0", "/api/v1/metrics/icm/transfers/top?limit=500"} {
+		w := MakeRequest(t, server, "GET", path)
+		require.Equal(t, http.StatusBadRequest, w.Code, path)
+	}
+}

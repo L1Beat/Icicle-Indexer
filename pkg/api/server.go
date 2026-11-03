@@ -247,6 +247,9 @@ func (s *Server) registerRoutes(cfg Config) {
 	s.router.HandleFunc("GET /api/v1/metrics/icm/timeseries", s.handleICMTimeseries)
 	s.router.HandleFunc("GET /api/v1/metrics/icm/apps", s.handleICMApps)
 	s.router.HandleFunc("GET /api/v1/metrics/icm/messages", s.handleICMMessages)
+	s.router.HandleFunc("GET /api/v1/metrics/icm/value", s.handleICMValue)
+	s.router.HandleFunc("GET /api/v1/metrics/icm/value/timeseries", s.handleICMValueTimeseries)
+	s.router.HandleFunc("GET /api/v1/metrics/icm/transfers/top", s.handleICMTopTransfers)
 
 	// EVM Chain Stats & Time Series
 	s.router.HandleFunc("GET /api/v1/metrics/evm/{chainId}/stats", s.handleChainMetrics)

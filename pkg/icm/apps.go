@@ -160,12 +160,18 @@ func callEither(ctx context.Context, caller Caller, to string, fns ...string) ([
 	return nil, "", nil
 }
 
-// call runs fn() on to. A node error (revert, no such function) is an empty
-// result, a transport error is returned.
-func call(ctx context.Context, caller Caller, to, fn string) ([]byte, error) {
+// call runs fn on to with 32-byte word arguments. A node error (revert, no
+// such function) is an empty result, a transport error is returned.
+func call(ctx context.Context, caller Caller, to, fn string, args ...[]byte) ([]byte, error) {
 	h := sha3.NewLegacyKeccak256()
 	h.Write([]byte(fn))
-	b, err := caller.Call(ctx, "0x"+to, h.Sum(nil)[:4])
+	data := h.Sum(nil)[:4]
+	for _, a := range args {
+		w := make([]byte, 32)
+		copy(w[32-len(a):], a)
+		data = append(data, w...)
+	}
+	b, err := caller.Call(ctx, "0x"+to, data)
 	if err != nil {
 		if strings.HasPrefix(err.Error(), "rpc error:") {
 			return nil, nil
@@ -195,4 +201,91 @@ func callSymbol(ctx context.Context, caller Caller, token string) (string, error
 		return "", nil
 	}
 	return s, nil
+}
+
+// Remote is a TokenRemote registered with a C-Chain TokenHome, as the home
+// reports it. ICTT messages carry amounts in the remote's denomination, so the
+// home's amount is the message amount divided by Multiplier when
+// MultiplyOnRemote, else multiplied by it (TokenScalingUtils.removeTokenScale).
+type Remote struct {
+	Home             string // lowercase hex, no 0x
+	Chain            []byte // 32-byte blockchain ID
+	Address          string // lowercase hex, no 0x
+	Registered       bool
+	Multiplier       *big.Int
+	MultiplyOnRemote bool
+}
+
+// discoverRemotes reads the settings of the remotes the window's ICTT transfers
+// at C-Chain homes went to or came from, and records them in icm_remotes.
+func discoverRemotes(ctx context.Context, conn driver.Conn, caller Caller, from, to time.Time) error {
+	rows, err := conn.Query(ctx, fmt.Sprintf(`
+		SELECT DISTINCT lower(hex(local_address)), counterparty, lower(hex(remote_address))
+		FROM icm_messages
+		WHERE block_time >= %s AND block_time < %s AND ictt_type BETWEEN %d AND %d
+		  AND local_address IN (SELECT address FROM icm_apps FINAL WHERE kind = '%s')
+		  AND (local_address, counterparty, remote_address) NOT IN
+			(SELECT home, remote_chain, remote_address FROM icm_remotes FINAL)
+	`, timeLit(from), timeLit(to), ICTTSingleHopSend, ICTTMultiHopCall, KindICTTHome))
+	if err != nil {
+		return err
+	}
+	var remotes []Remote
+	for rows.Next() {
+		var r Remote
+		var chain string
+		if err := rows.Scan(&r.Home, &chain, &r.Address); err != nil {
+			rows.Close()
+			return err
+		}
+		r.Chain = []byte(chain)
+		remotes = append(remotes, r)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil || len(remotes) == 0 {
+		return err
+	}
+	for i := range remotes {
+		if err := checkRemote(ctx, caller, &remotes[i]); err != nil {
+			return fmt.Errorf("remote settings %s: %w", remotes[i].Home, err)
+		}
+	}
+	wctx, cancel := chwrapper.WriteContext(ctx)
+	defer cancel()
+	batch, err := conn.PrepareBatch(wctx, `INSERT INTO icm_remotes (home, remote_chain, remote_address, registered, multiplier, multiply_on_remote)`)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = batch.Abort() }()
+	for _, r := range remotes {
+		home, _ := hex.DecodeString(r.Home)
+		addr, _ := hex.DecodeString(r.Address)
+		if err := batch.Append(string(home), string(r.Chain), string(addr), r.Registered, r.Multiplier, r.MultiplyOnRemote); err != nil {
+			return err
+		}
+	}
+	slog.Info("ICM remotes checked", "count", len(remotes))
+	return batch.Send()
+}
+
+// checkRemote reads a remote's RemoteTokenTransferrerSettings (registered,
+// collateralNeeded, tokenMultiplier, multiplyOnRemote) from its home:
+// getRemoteTokenTransferrerSettings on current ICTT, the public
+// registeredRemotes mapping on ICTT v1. Both return the four words inline.
+func checkRemote(ctx context.Context, caller Caller, r *Remote) error {
+	r.Multiplier = new(big.Int)
+	addr, _ := hex.DecodeString(r.Address)
+	for _, fn := range []string{"getRemoteTokenTransferrerSettings(bytes32,address)", "registeredRemotes(bytes32,address)"} {
+		b, err := call(ctx, caller, r.Home, fn, r.Chain, addr)
+		if err != nil {
+			return err
+		}
+		if len(b) >= 128 {
+			r.Registered = b[31] == 1
+			r.Multiplier.SetBytes(b[64:96])
+			r.MultiplyOnRemote = b[127] == 1
+			return nil
+		}
+	}
+	return nil
 }

@@ -137,7 +137,7 @@ func (f fakeCaller) Call(ctx context.Context, to string, data []byte) ([]byte, e
 		fmt.Sscan(k, &addr, &fn)
 		h := sha3.NewLegacyKeccak256()
 		h.Write([]byte(fn))
-		if "0x"+addr == to && bytes.Equal(h.Sum(nil)[:4], data) {
+		if "0x"+addr == to && bytes.Equal(h.Sum(nil)[:4], data[:4]) {
 			if v == nil {
 				return nil, errors.New("dial tcp: connection refused")
 			}
@@ -183,4 +183,35 @@ func TestCheckApp(t *testing.T) {
 	// A transport failure is returned, so the window is retried.
 	_, err = checkApp(context.Background(), fakeCaller{other + " getBlockchainID()": nil}, other)
 	require.Error(t, err)
+}
+
+func TestCheckRemote(t *testing.T) {
+	word := func(h string) []byte { b, _ := hex.DecodeString(strings.Repeat("0", 64-len(h)) + h); return b }
+	settings := func(registered bool, mult string, mor bool) []byte {
+		b := func(v bool) []byte {
+			if v {
+				return word("1")
+			}
+			return word("0")
+		}
+		return bytes.Join([][]byte{b(registered), word("0"), word(mult), b(mor)}, nil)
+	}
+	const v1, current = "00000000000000000000000000000000000000b1", "00000000000000000000000000000000000000b2"
+	c := fakeCaller{
+		v1 + " registeredRemotes(bytes32,address)":                      settings(true, "e8d4a51000", true), // 1e12
+		current + " getRemoteTokenTransferrerSettings(bytes32,address)": settings(true, "1", false),
+	}
+	r := Remote{Home: v1, Chain: make([]byte, 32), Address: strings.Repeat("0", 40)}
+	require.NoError(t, checkRemote(context.Background(), c, &r))
+	require.True(t, r.Registered)
+	require.Equal(t, "1000000000000", r.Multiplier.String())
+	require.True(t, r.MultiplyOnRemote)
+	r = Remote{Home: current, Chain: make([]byte, 32), Address: strings.Repeat("0", 40)}
+	require.NoError(t, checkRemote(context.Background(), c, &r))
+	require.Equal(t, "1", r.Multiplier.String())
+	require.False(t, r.MultiplyOnRemote)
+	// A home that answers neither leaves the remote unregistered.
+	r = Remote{Home: strings.Repeat("0", 40), Chain: make([]byte, 32), Address: strings.Repeat("0", 40)}
+	require.NoError(t, checkRemote(context.Background(), c, &r))
+	require.False(t, r.Registered)
 }

@@ -124,6 +124,24 @@ var pricedTokens = []struct {
 	{"b3fe5374f67d7a22886a0ee082b2e2f9d2651651", "LINK", 18}, // LINK (AEB)
 }
 
+// TokenFeeds maps the tokens priced on top of the stablecoin registry to their
+// price_hourly feed: the pricedTokens' asset feed, or "USD" ($1) for the
+// legacy AEB stablecoins. Keys are lowercase hex without 0x.
+func TokenFeeds() map[string]string {
+	out := map[string]string{}
+	for _, t := range pricedTokens {
+		out[t.Token] = t.Feed
+	}
+	for _, t := range legacyUSD {
+		out[t.Token] = "USD"
+	}
+	return out
+}
+
+// StaleDays is how old the last price may be before a transfer is left
+// unpriced.
+const StaleDays = staleDays
+
 // legacyUSD are the Avalanche-Ethereum Bridge stablecoins, priced at $1 on top
 // of the stablecoin registry, which only lists live tokens.
 var legacyUSD = []struct {

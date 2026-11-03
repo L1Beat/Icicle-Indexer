@@ -2728,6 +2728,115 @@ Messages sent from or received on the C-Chain, newest first.
 - `ictt` is set only for checked ICTT apps. `type` is `single_hop_send`, `single_hop_call`, `multi_hop_send`, `multi_hop_call` or `register_remote`. `recipient` is the recipient, or `recipientContract` for calls. `amount_raw` is the amount as encoded in the message. ICTT can scale amounts between home and remote decimals, so it is not yet converted to token units.
 - `app` is null when a message's details did not decode.
 
+**ICTT value:** the token amount and USD of ICTT transfers (`single_hop_send`, `single_hop_call`, `multi_hop_send`, `multi_hop_call`) at checked C-Chain apps. `sent` left the C-Chain, `received` arrived on it.
+- Amounts are C-Chain token base units, as strings, with the token's `decimals`. ICTT messages carry amounts in the remote's denomination: a C-Chain TokenRemote's are already in its units, a C-Chain TokenHome's are scaled back with that remote's registered multiplier (`getRemoteTokenTransferrerSettings`, `registeredRemotes` on ICTT v1). A transfer to or from a remote the home does not report as registered has no amount.
+- A multi-hop transfer routed through a C-Chain home counts once, as received; the send that forwards it is left out.
+- Priced by token address, as on `/metrics/bridges`: USD stablecoins from the stablecoin registry at $1, WAVAX, BTC.b, WETH.e, LINK.e and the other bridge price-feed tokens at the hour's Chainlink price (stale after 7 days). Other tokens, including ones that only call themselves WAVAX or USDC, have no USD (`priced: false`, USD null).
+- A check on 2026-11-03 matched decoded amounts with the token Transfer logs in the same transactions (12 USDC locked by a send, 190 USDC released by a receive).
+
+### GET /api/v1/metrics/icm/value
+
+ICTT value over the window, total, per token and per other chain.
+
+**Query Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `days` | int | Complete UTC days, 1-3650 (default 30) |
+
+**Response:**
+```json
+{
+  "data": {
+    "as_of": "2026-11-02",
+    "from": "2026-10-04",
+    "days": 30,
+    "totals": { "transfers": 4120, "priced_transfers": 1890, "sent_usd": 412000.0, "received_usd": 388000.0, "total_usd": 800000.0 },
+    "by_token": [
+      {
+        "token": { "address": "0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e", "symbol": "USDC", "decimals": 6 },
+        "priced": true,
+        "transfers": 1200,
+        "sent_amount": "250000000000",
+        "received_amount": "240000000000",
+        "sent_usd": 250000.0,
+        "received_usd": 240000.0
+      },
+      {
+        "token": { "address": "0xaf72f6caf76775daeabaf5c82ce05d97359c8fa1", "symbol": "XOM", "decimals": 18 },
+        "priced": false,
+        "transfers": 900,
+        "sent_amount": "0",
+        "received_amount": "9036000000000000000000",
+        "sent_usd": null,
+        "received_usd": null
+      }
+    ],
+    "by_chain": [
+      { "blockchain_id": "2LFmzhHDKxkreihEtPanVmofuFn63bsh8twnRXEbDhBtCJxURB", "name": "Henesys", "transfers": 800, "sent_usd": 100000.0, "received_usd": 90000.0, "total_usd": 190000.0 }
+    ]
+  }
+}
+```
+
+Sample values are illustrative. `by_token` is by USD, then transfers. `by_chain` USD covers priced tokens only, `transfers` all of them.
+
+### GET /api/v1/metrics/icm/value/timeseries
+
+Daily ICTT USD and transfers, with a per-token split. Oldest first; every day in the window is included.
+
+**Query Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `days` | int | Complete UTC days, 1-3650 (default 90) |
+
+**Response:**
+```json
+{
+  "data": [
+    {
+      "date": "2026-11-02",
+      "transfers": 140,
+      "sent_usd": 14000.0,
+      "received_usd": 12500.0,
+      "total_usd": 26500.0,
+      "by_token": [ { "address": "0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e", "symbol": "USDC", "transfers": 40, "sent_usd": 9000.0, "received_usd": 8000.0 } ]
+    }
+  ]
+}
+```
+
+### GET /api/v1/metrics/icm/transfers/top
+
+The largest priced ICTT transfers by USD.
+
+**Query Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `days` | int | Complete UTC days, 1-3650 (default 30) |
+| `limit` | int | Transfers, 1-200 (default 50) |
+
+**Response:**
+```json
+{
+  "data": [
+    {
+      "message_id": "0x...",
+      "direction": "sent",
+      "type": "single_hop_send",
+      "counterparty": { "blockchain_id": "2LFmzhHDKxkreihEtPanVmofuFn63bsh8twnRXEbDhBtCJxURB", "name": "Henesys" },
+      "block_time": "2026-11-02T10:30:00Z",
+      "tx_hash": "0x...",
+      "app": "0x4ef4752d1a4a6bb1fa7bc862ba646643c7f30ed3",
+      "app_name": "USDC ICTT home",
+      "token": { "address": "0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e", "symbol": "USDC", "decimals": 6 },
+      "recipient": "0x792557f7e4313c684ea0e25b36f7bac2da898cf2",
+      "amount": "12000000",
+      "usd": 12.0
+    }
+  ]
+}
+```
+
 ---
 
 ## Metrics API - Chain Stats
@@ -3005,6 +3114,9 @@ ws.onmessage = (event) => {
 | GET | `/api/v1/metrics/icm/timeseries` | Daily C-Chain ICM messages, per other chain and optionally per app |
 | GET | `/api/v1/metrics/icm/apps` | C-Chain contracts using ICM, with ICTT token bridges marked |
 | GET | `/api/v1/metrics/icm/messages` | Recent C-Chain ICM messages with contracts, relayers and ICTT payloads |
+| GET | `/api/v1/metrics/icm/value` | ICTT token value and USD moved on the C-Chain, per token and chain |
+| GET | `/api/v1/metrics/icm/value/timeseries` | Daily ICTT USD and transfers per token |
+| GET | `/api/v1/metrics/icm/transfers/top` | Largest priced ICTT transfers |
 | WS | `/ws/blocks/{chainId}` | Real-time block stream |
 
 ---
