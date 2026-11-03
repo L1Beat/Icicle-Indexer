@@ -2712,6 +2712,7 @@ Messages sent from or received on the C-Chain, newest first.
       "fee_amount": null,
       "deliverer": "0x9227aaf8dacbd5f5c82bf5c3ea7cbfa16a00b180",
       "reward_redeemer": "0x021868f2e3d49c059ef52b539aaa933b437e0321",
+      "executed": true,
       "ictt": {
         "type": "single_hop_send",
         "recipient": "0xc59029fb6fa509624a958734c4b2f3d006922bcb",
@@ -2724,15 +2725,16 @@ Messages sent from or received on the C-Chain, newest first.
 }
 ```
 
-- `fee_token` and `fee_amount` (relayer fee, in fee token units, as a string) are set on sends, `deliverer` (the relayer) and `reward_redeemer` on receives.
+- `fee_token` and `fee_amount` (relayer fee, in fee token units, as a string) are set on sends, `deliverer` (the relayer), `reward_redeemer` and `executed` on receives. `executed` is true once the messenger emitted `MessageExecuted` for the message, on receipt or on a later retry. A received message whose execution failed is still delivered and counted in the message counts, but ran nothing.
 - `ictt` is set only for checked ICTT apps. `type` is `single_hop_send`, `single_hop_call`, `multi_hop_send`, `multi_hop_call` or `register_remote`. `recipient` is the recipient, or `recipientContract` for calls. `amount_raw` is the amount as encoded in the message. ICTT can scale amounts between home and remote decimals, so it is not yet converted to token units.
 - `app` is null when a message's details did not decode.
 
 **ICTT value:** the token amount and USD of ICTT transfers (`single_hop_send`, `single_hop_call`, `multi_hop_send`, `multi_hop_call`) at checked C-Chain apps. `sent` left the C-Chain, `received` arrived on it.
 - Amounts are C-Chain token base units, as strings, with the token's `decimals`. ICTT messages carry amounts in the remote's denomination: a C-Chain TokenRemote's are already in its units, a C-Chain TokenHome's are scaled back with that remote's registered multiplier (`getRemoteTokenTransferrerSettings`, `registeredRemotes` on ICTT v1). A transfer to or from a remote the home does not report as registered has no amount.
 - A multi-hop transfer routed through a C-Chain home counts once, as received; the send that forwards it is left out.
+- A received transfer counts only once its message executed (`MessageExecuted`, possibly on a retry). A receive whose execution failed released no tokens.
 - Priced by token address, as on `/metrics/bridges`: USD stablecoins from the stablecoin registry at $1, WAVAX, BTC.b, WETH.e, LINK.e and the other bridge price-feed tokens at the hour's Chainlink price (stale after 7 days). Other tokens, including ones that only call themselves WAVAX or USDC, have no USD (`priced: false`, USD null).
-- A check on 2026-11-03 matched decoded amounts with the token Transfer logs in the same transactions (12 USDC locked by a send, 190 USDC released by a receive).
+- A check on 2026-11-03 matched decoded amounts with the token Transfer logs in the same transactions (12 USDC locked by a send, 190 USDC released by a receive, 0.026901 USDC by a single-hop call, whose payload sits behind an ABI offset word because it has a dynamic field).
 
 ### GET /api/v1/metrics/icm/value
 

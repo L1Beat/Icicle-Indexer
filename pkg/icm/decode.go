@@ -174,7 +174,9 @@ func decodeICTT(m *Message, b []byte) {
 	}
 	p := b[128 : 128+n]
 	// Word positions of the recipient and amount in each payload struct, and
-	// its fixed length (0 when it has a dynamic field).
+	// its fixed length (0 when it has a dynamic field). A struct with a dynamic
+	// field (the call payloads' recipientPayload) is abi-encoded behind a
+	// 0x20 offset word, so its fields start one word in.
 	var rcpt, amt, size uint64
 	switch typ {
 	case ICTTRegisterRemote: // (initialReserveImbalance, remoteTokenDecimals, homeTokenDecimals)
@@ -194,6 +196,12 @@ func decodeICTT(m *Message, b []byte) {
 	}
 	if size != 0 && n != size {
 		return
+	}
+	if size == 0 {
+		if head, err := offset(p, 0); err != nil || head != 32 {
+			return
+		}
+		rcpt, amt = rcpt+1, amt+1
 	}
 	r, err := addrAt(p, rcpt*32)
 	if err != nil {

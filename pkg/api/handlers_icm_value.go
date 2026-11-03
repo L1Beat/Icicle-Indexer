@@ -95,9 +95,11 @@ type ICMTransfer struct {
 // TokenHome's are in the remote's, scaled back with the remote's registered
 // multiplier (null when the remote is not registered). A multi-hop transfer
 // routed through a C-Chain home counts once, as received; the send that
-// forwards it is left out. Tokens are priced by address only, as on
-// /metrics/bridges: USD stablecoins at $1, price-feed tokens at the hour's
-// price, others not at all. Binds four times: from, to, from, to.
+// forwards it is left out. A receive counts only once its message executed
+// (MessageExecuted, maybe on a later retry): a failed one moved no tokens.
+// Tokens are priced by address only, as on /metrics/bridges: USD stablecoins
+// at $1, price-feed tokens at the hour's price, others not at all. Binds the
+// window five times: from, to, from, from, to.
 func icmTransfersSQL() string {
 	feeds := bridges.TokenFeeds()
 	tokens := make([]string, 0, len(feeds))
@@ -130,7 +132,8 @@ func icmTransfersSQL() string {
 					r.multiply_on_remote, toNullable(intDiv(m.ictt_amount, r.multiplier)),
 					toNullable(m.ictt_amount * r.multiplier)) AS amount,
 				transform(lower(hex(a.token)), pt, pf, '') AS feed
-			FROM (SELECT * FROM icm_messages FINAL WHERE block_time >= ? AND block_time < ? AND ictt_type BETWEEN %[6]d AND %[7]d) m
+			FROM (SELECT * FROM icm_messages FINAL WHERE block_time >= ? AND block_time < ? AND ictt_type BETWEEN %[6]d AND %[7]d
+				AND (direction = 'sent' OR message_id IN (SELECT message_id FROM icm_executions WHERE block_time >= ?))) m
 			INNER JOIN (SELECT address, kind, token, symbol, decimals FROM icm_apps FINAL WHERE kind != '') a
 				ON m.local_address = a.address
 			LEFT JOIN (SELECT home, remote_chain, remote_address, registered, multiplier, multiply_on_remote FROM icm_remotes FINAL) r
@@ -147,7 +150,7 @@ func icmTransfersSQL() string {
 
 func icmBounds(asOf time.Time, days int) []interface{} {
 	from, to := asOf.AddDate(0, 0, 1-days), asOf.AddDate(0, 0, 1)
-	return []interface{}{from, to, from, to}
+	return []interface{}{from, to, from, from, to}
 }
 
 func usdPtr(v float64, ok bool) *float64 {
@@ -159,7 +162,7 @@ func usdPtr(v float64, ok bool) *float64 {
 
 // handleICMValue returns value moved through ICTT on the C-Chain
 // @Summary C-Chain ICTT value
-// @Description Token value moved by ICTT token bridges (TokenHome / TokenRemote) on the C-Chain over the last N complete UTC days ending as_of: sent (left the C-Chain) and received (arrived on it), total, per token and per other chain. Amounts are C-Chain token base units: a TokenHome's messages are scaled back from the remote's denomination with the remote's registered multiplier. Priced by token address like /metrics/bridges (USD stablecoins $1, WAVAX/BTC.b/WETH.e/LINK.e at their Chainlink feed); other tokens have no USD. A multi-hop transfer through a C-Chain home counts once. Cached for 5 minutes.
+// @Description Token value moved by ICTT token bridges (TokenHome / TokenRemote) on the C-Chain over the last N complete UTC days ending as_of: sent (left the C-Chain) and received (arrived on it, once executed), total, per token and per other chain. Amounts are C-Chain token base units: a TokenHome's messages are scaled back from the remote's denomination with the remote's registered multiplier. Priced by token address like /metrics/bridges (USD stablecoins $1, WAVAX/BTC.b/WETH.e/LINK.e at their Chainlink feed); other tokens have no USD. A multi-hop transfer through a C-Chain home counts once. Cached for 5 minutes.
 // @Tags Metrics - ICM
 // @Produce json
 // @Param days query int false "Complete UTC days, 1-3650" default(30)

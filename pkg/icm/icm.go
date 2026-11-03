@@ -36,6 +36,10 @@ const (
 	// sourceBlockchainID, address indexed deliverer, address rewardRedeemer,
 	// TeleporterMessage)
 	topicReceive = "292ee90bbaf70b5d4936025e09d56ba08f3e421156b6a568cf3c2840d9343e34"
+	// MessageExecuted(bytes32 indexed messageID, bytes32 indexed
+	// sourceBlockchainID): a received message ran, on receipt or on a retry.
+	// A receive whose execution failed moved no tokens.
+	topicExecuted = "34795cc6b122b9a0ae684946319f1e14a577b4e8f9b3dda9ac94c21a54d3188c"
 )
 
 // Start is the UTC day the TeleporterMessenger was deployed on the C-Chain
@@ -65,6 +69,8 @@ var rescans = []string{
 	"details",
 	// TokenHome remote settings, to scale ICTT amounts to C-Chain units.
 	"remotes",
+	// MessageExecuted, and ICTT call payloads read one word in.
+	"executed",
 }
 
 // Sync decodes messages from the watermark up to the C-Chain sync watermark,
@@ -118,13 +124,19 @@ func syncRange(ctx context.Context, conn driver.Conn, caller Caller, from, to, d
 		if err != nil {
 			return fmt.Errorf("window %s..%s: %w", from.Format(time.RFC3339), end.Format(time.RFC3339), err)
 		}
+		wctx, cancel := chwrapper.WriteContext(ctx)
+		err = conn.Exec(wctx, executedSQL(from, end))
+		cancel()
+		if err != nil {
+			return fmt.Errorf("executions %s..%s: %w", from.Format(time.RFC3339), end.Format(time.RFC3339), err)
+		}
 		if err := discover(ctx, conn, caller, from, end); err != nil {
 			return fmt.Errorf("apps %s..%s: %w", from.Format(time.RFC3339), end.Format(time.RFC3339), err)
 		}
 		if err := discoverRemotes(ctx, conn, caller, from, end); err != nil {
 			return fmt.Errorf("remotes %s..%s: %w", from.Format(time.RFC3339), end.Format(time.RFC3339), err)
 		}
-		wctx, cancel := chwrapper.WriteContext(ctx)
+		wctx, cancel = chwrapper.WriteContext(ctx)
 		err = conn.Exec(wctx, `
 			INSERT INTO indexer_watermarks (chain_id, indexer_name, granularity, last_period, last_block_num)
 			VALUES (?, ?, 'time', ?, 0)`, uint32(ChainID), mark, end)
@@ -246,6 +258,19 @@ func capture(ctx context.Context, conn driver.Conn, from, to time.Time) (int, er
 		return total, err
 	}
 	return total, send()
+}
+
+// executedSQL copies the window's MessageExecuted logs into icm_executions.
+func executedSQL(from, to time.Time) string {
+	return fmt.Sprintf(`
+		INSERT INTO icm_executions (message_id, source, block_time, transaction_hash)
+		SELECT assumeNotNull(topic1), assumeNotNull(topic2), block_time, transaction_hash
+		FROM raw_logs
+		WHERE chain_id = %d
+		  AND block_time >= %s AND block_time < %s
+		  AND address = unhex('%s') AND topic0 = unhex('%s')
+		  AND topic1 IS NOT NULL AND topic2 IS NOT NULL
+	`, ChainID, timeLit(from), timeLit(to), Messenger, topicExecuted)
 }
 
 func timeLit(t time.Time) string {

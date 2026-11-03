@@ -25,6 +25,7 @@ func TestTopics(t *testing.T) {
 	const msg = "(uint256,address,bytes32,address,uint256,address[],(uint256,address)[],bytes)"
 	require.Equal(t, topicSend, topic("SendCrossChainMessage(bytes32,bytes32,"+msg+",(address,uint256))"))
 	require.Equal(t, topicReceive, topic("ReceiveCrossChainMessage(bytes32,bytes32,address,address,"+msg+")"))
+	require.Equal(t, topicExecuted, topic("MessageExecuted(bytes32,bytes32)"))
 }
 
 func hexAddr(t *testing.T, s string) [20]byte {
@@ -46,7 +47,7 @@ func TestDecodeMessage(t *testing.T) {
 		Data            string
 	}
 	require.NoError(t, json.Unmarshal(raw, &logs))
-	require.Len(t, logs, 4)
+	require.Len(t, logs, 5)
 	decode := func(i int) Message {
 		l := logs[i]
 		data, err := hex.DecodeString(l.Data[2:])
@@ -93,6 +94,15 @@ func TestDecodeMessage(t *testing.T) {
 	require.Equal(t, hexAddr(t, "c59029fb6fa509624a958734c4b2f3d006922bcb"), m.ICTTRecipient)
 	require.Equal(t, "10039886999999999996", m.ICTTAmount.String())
 
+	// A USDC single-hop call to the same home. The payload struct has a
+	// dynamic field, so it sits behind an offset word. 26901 matches the USDC
+	// Transfer in the transaction.
+	m = decode(4)
+	require.Equal(t, usdcHome, m.Local)
+	require.Equal(t, int8(ICTTSingleHopCall), m.ICTTType)
+	require.Equal(t, hexAddr(t, "e47d355aebf2e2107b97650457fb9091f28be1c3"), m.ICTTRecipient)
+	require.Equal(t, "26901", m.ICTTAmount.String())
+
 	// Truncated data is an error, not a panic.
 	data, _ := hex.DecodeString(logs[0].Data[2:])
 	for _, n := range []int{0, 31, 64, 200, len(data) - 1} {
@@ -122,6 +132,14 @@ func TestDecodeICTTShape(t *testing.T) {
 	copy(bad, w(64))
 	require.Equal(t, int8(ICTTNone), decode(bad).ICTTType)
 	require.Equal(t, int8(ICTTNone), decode(append(msg(ICTTSingleHopSend, w(0xf1), w(5)), w(0)...)).ICTTType)
+	// A call payload sits behind an offset word: recipientContract is word 4
+	// and amount word 5 of the payload. Without the offset word it is rejected.
+	call := []([]byte){w(32), w(1), w(2), w(3), w(0xf3), w(9), w(256), w(0), w(0), w(0)}
+	m = decode(msg(ICTTSingleHopCall, call...))
+	require.Equal(t, int8(ICTTSingleHopCall), m.ICTTType)
+	require.Equal(t, byte(0xf3), m.ICTTRecipient[19])
+	require.Equal(t, "9", m.ICTTAmount.String())
+	require.Equal(t, int8(ICTTNone), decode(msg(ICTTSingleHopCall, call[1:]...)).ICTTType)
 	// A multi-hop send names its recipient in word 2 and amount in word 3.
 	m = decode(msg(ICTTMultiHopSend, w(1), w(2), w(0xf2), w(7), w(0), w(0), w(0)))
 	require.Equal(t, int8(ICTTMultiHopSend), m.ICTTType)

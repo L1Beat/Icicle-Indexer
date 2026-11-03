@@ -145,6 +145,10 @@ func TestHandleICMAppsAndMessages(t *testing.T) {
 				return NewMockRows([]string{"a", "f", "l"}, [][]interface{}{
 					{xom, time.Date(2026, 9, 4, 1, 0, 0, 0, time.UTC), time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)},
 				}), nil
+			case strings.Contains(q, "FROM icm_executions"):
+				require.Contains(t, q, "unhex('"+strings.Repeat("01", 32)+"')")
+				require.NotContains(t, q, strings.Repeat("02", 32)) // sends are not looked up
+				return NewMockRows([]string{"id"}, [][]interface{}{{strings.Repeat("01", 32)}}), nil
 			case strings.Contains(q, "ORDER BY block_number DESC"):
 				msgQuery, msgArgs = q, args
 				big0, amt := big.NewInt(0), new(big.Int)
@@ -201,6 +205,7 @@ func TestHandleICMAppsAndMessages(t *testing.T) {
 	require.Equal(t, ICMChainRef{BlockchainID: omnicoin.String(), Name: "Omnicoin"}, m.Counterparty)
 	require.Equal(t, "0x"+xom, m.LocalAddress)
 	require.Equal(t, "0x"+strings.Repeat("92", 20), *m.Deliverer)
+	require.True(t, *m.Executed)
 	require.Nil(t, m.FeeToken)
 	require.Equal(t, &ICMICTTValue{Type: "single_hop_send", Recipient: "0x" + strings.Repeat("c5", 20), AmountRaw: "10039886999999999996",
 		Token: &ICMToken{Address: "0x" + xom, Symbol: "XOM", Decimals: 18}}, m.ICTT)
@@ -208,6 +213,7 @@ func TestHandleICMAppsAndMessages(t *testing.T) {
 	m = msgs.Data[1]
 	require.Equal(t, "7", *m.FeeAmount)
 	require.Nil(t, m.Deliverer)
+	require.Nil(t, m.Executed)
 	require.Nil(t, m.ICTT)
 	require.Equal(t, "other", m.App.Kind)
 
@@ -254,7 +260,7 @@ func TestHandleICMValue(t *testing.T) {
 					{"2026-11-02", usdc, "USDC", true, uint64(2), 12.0, 3.0},
 				}), nil
 			case strings.Contains(q, "ORDER BY usd DESC"):
-				require.Equal(t, 5, args[4])
+				require.Equal(t, 5, args[5])
 				return NewMockRows(make([]string, 13), [][]interface{}{
 					{strings.Repeat("01", 32), "sent", int8(1), string(chainA[:]), through, strings.Repeat("0f", 32), home, usdc, "USDC", uint8(6), strings.Repeat("c5", 20), "12000000", 12.0},
 				}), nil
@@ -266,7 +272,7 @@ func TestHandleICMValue(t *testing.T) {
 
 	w := MakeRequest(t, server, "GET", "/api/v1/metrics/icm/value?days=30")
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-	require.Len(t, gotArgs, 4) // from, to, from, to
+	require.Len(t, gotArgs, 5) // from, to, from, from, to
 	var v struct {
 		Data ICMValue `json:"data"`
 	}

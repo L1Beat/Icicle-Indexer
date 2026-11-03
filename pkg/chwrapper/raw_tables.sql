@@ -755,6 +755,17 @@ CREATE TABLE IF NOT EXISTS icm_apps (
 ) ENGINE = ReplacingMergeTree(checked_at)
 ORDER BY address;
 
+-- Received ICM messages that ran on the C-Chain (pkg/icm): MessageExecuted,
+-- on receipt or on a later retry. A receive without one failed and moved no
+-- tokens.
+CREATE TABLE IF NOT EXISTS icm_executions (
+    message_id FixedString(32),
+    source FixedString(32),
+    block_time DateTime64(3, 'UTC'),
+    transaction_hash FixedString(32)
+) ENGINE = ReplacingMergeTree()
+ORDER BY message_id;
+
 -- TokenRemotes registered with C-Chain ICTT TokenHomes (pkg/icm), as the home
 -- reports them. ICTT messages carry amounts in the remote's denomination: the
 -- home amount is the message amount divided by multiplier when

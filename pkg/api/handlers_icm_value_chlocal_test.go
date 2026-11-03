@@ -22,7 +22,7 @@ func TestICMTransfersSQL_ClickHouseLocal(t *testing.T) {
 	require.NoError(t, err)
 	schema = regexp.MustCompile(`--[^\n]*`).ReplaceAll(schema, nil)
 	var ddl []string
-	for _, name := range []string{"icm_messages", "icm_apps", "icm_remotes", "stablecoins", "price_hourly"} {
+	for _, name := range []string{"icm_messages", "icm_executions", "icm_apps", "icm_remotes", "stablecoins", "price_hourly"} {
 		m := regexp.MustCompile(`(?s)CREATE TABLE IF NOT EXISTS ` + name + ` \(.*?;`).Find(schema)
 		require.NotNil(t, m, name)
 		ddl = append(ddl, string(m))
@@ -57,8 +57,10 @@ func TestICMTransfersSQL_ClickHouseLocal(t *testing.T) {
 		msg("received", "2026-11-01 13:00:00", usdcHome, chainA, rem, 3, "3000000", "05"),
 		msg("sent", "2026-11-01 13:00:00", usdcHome, chainB, "00000000000000000000000000000000000000ff", 1, "3000000", "05"),
 		msg("sent", "2026-11-01 14:00:00", fakeHome, chainA, rem, 1, "1000000000000000000", "06"),
-		msg("sent", "2026-11-01 15:00:00", other, chainA, rem, -1, "0", "07"),         // not ICTT
+		msg("sent", "2026-11-01 15:00:00", other, chainA, rem, -1, "0", "07"),       // not ICTT
 		msg("received", "2026-11-01 16:00:00", usdcHome, chainA, rem, 0, "0", "08"), // register_remote
+		// A receive whose execution failed: no MessageExecuted, left out.
+		msg("received", "2026-11-01 17:00:00", usdcHome, chainA, rem, 1, "50000000", "0a"),
 		msg("sent", "2026-10-20 10:00:00", usdcHome, chainA, rem, 1, "99000000", "09"), // before the window
 	}
 	q := strings.Join(ddl, "\n") + "\n" +
@@ -73,6 +75,9 @@ func TestICMTransfersSQL_ClickHouseLocal(t *testing.T) {
 			(unhex('%s'), unhex('%s'), unhex('%s'), true, 1, false),
 			(unhex('%s'), unhex('%s'), unhex('%s'), true, 1000000000000, true),
 			(unhex('%s'), unhex('%s'), unhex('%s'), true, 1, false);
+		INSERT INTO icm_executions (message_id, source, block_time, transaction_hash)
+			SELECT message_id, counterparty, block_time, transaction_hash FROM icm_messages
+			WHERE direction = 'received' AND transaction_hash != unhex(repeat('0a', 32));
 		INSERT INTO stablecoins (chain_id, token, symbol, name, decimals) VALUES (43114, unhex('%s'), 'USDC', 'USD Coin', 6);
 		INSERT INTO price_hourly (feed, hour, price, answered_at) VALUES ('AVAX', '2026-11-01 11:00:00', 20, '2026-11-01 11:00:00');
 		`, xom, xom, usdcHome, usdc, avaxHome, wavax, fakeHome, fake, other, strings.Repeat("00", 20),
@@ -81,7 +86,7 @@ func TestICMTransfersSQL_ClickHouseLocal(t *testing.T) {
 	// Bind the four window bounds the way clickhouse-go would.
 	from, to := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC), time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)
 	bind := func(q string, extra ...string) string {
-		for _, b := range []time.Time{from, to, from, to} {
+		for _, b := range []time.Time{from, to, from, from, to} {
 			q = strings.Replace(q, "?", "toDateTime64('"+b.Format("2006-01-02 15:04:05")+"', 3, 'UTC')", 1)
 		}
 		for _, e := range extra {

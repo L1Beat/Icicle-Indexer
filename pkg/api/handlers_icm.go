@@ -534,7 +534,8 @@ type ICMMessage struct {
 	FeeAmount        *string       `json:"fee_amount"` // sends only, in fee token units
 	Deliverer        *string       `json:"deliverer"`  // receives only: the relayer
 	RewardRedeemer   *string       `json:"reward_redeemer"`
-	ICTT             *ICMICTTValue `json:"ictt"` // ICTT apps only
+	Executed         *bool         `json:"executed"` // receives only: MessageExecuted seen, on receipt or a retry
+	ICTT             *ICMICTTValue `json:"ictt"`     // ICTT apps only
 }
 
 // ICMChainRef names another chain.
@@ -698,8 +699,35 @@ func (s *Server) loadICMMessages(ctx context.Context, where []string, args []int
 	if err != nil {
 		return page, err
 	}
+	// Message IDs come from hex() above, so they are safe to inline.
+	var received []string
+	for _, x := range got {
+		if x.m.Direction == "received" {
+			received = append(received, "unhex('"+x.m.MessageID+"')")
+		}
+	}
+	executed := map[string]bool{}
+	if len(received) > 0 {
+		erows, err := s.conn.Query(ctx, `SELECT DISTINCT lower(hex(message_id)) FROM icm_executions WHERE message_id IN (`+strings.Join(received, ", ")+`)`)
+		if err != nil {
+			return page, err
+		}
+		for erows.Next() {
+			var id string
+			if err := erows.Scan(&id); err != nil {
+				erows.Close()
+				return page, err
+			}
+			executed[id] = true
+		}
+		erows.Close()
+		if err := erows.Err(); err != nil {
+			return page, err
+		}
+	}
 	for _, x := range got {
 		m := x.m
+		ran := executed[m.MessageID]
 		m.MessageID = "0x" + m.MessageID
 		m.TxHash = "0x" + m.TxHash
 		var id ids.ID
@@ -718,7 +746,7 @@ func (s *Server) loadICMMessages(ctx context.Context, where []string, args []int
 			m.FeeToken, m.FeeAmount = &fee, &amt
 		} else {
 			d, rr := "0x"+x.deliverer, "0x"+x.redeemer
-			m.Deliverer, m.RewardRedeemer = &d, &rr
+			m.Deliverer, m.RewardRedeemer, m.Executed = &d, &rr, &ran
 		}
 		if ok && x.icttType >= 0 {
 			m.ICTT = &ICMICTTValue{
