@@ -8,6 +8,7 @@ import (
 
 	"icicle/pkg/bridges"
 	"icicle/pkg/dexvolume"
+	"icicle/pkg/icm"
 	"icicle/pkg/perps"
 	"icicle/pkg/restaking"
 
@@ -75,6 +76,10 @@ func (s *CChainSnapshotter) runOnce(ctx context.Context) {
 	// Perpetuals (GMX V2, GMX V1 history).
 	if err := perps.Sync(ctx, s.conn); err != nil {
 		slog.Warn("Failed to sync perps", "error", err)
+	}
+	// ICM (Teleporter) messages sent from and received on the C-Chain.
+	if err := icm.Sync(ctx, s.conn); err != nil {
+		slog.Warn("Failed to sync ICM messages", "error", err)
 	}
 	slog.Info("C-Chain snapshot cycle completed", "duration", time.Since(start))
 }

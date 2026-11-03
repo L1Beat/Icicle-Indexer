@@ -706,6 +706,20 @@ CREATE TABLE IF NOT EXISTS perp_oi_daily (
 ) ENGINE = ReplacingMergeTree(computed_at)
 ORDER BY (day, venue, market, collateral_token, is_long);
 
+-- C-Chain ICM (Teleporter) messages (pkg/icm), one row per messageID and
+-- direction: sent from the C-Chain or received on it. Replaying a window
+-- replaces its rows.
+CREATE TABLE IF NOT EXISTS icm_messages (
+    direction Enum8('sent' = 1, 'received' = 2),
+    message_id FixedString(32),
+    counterparty FixedString(32),  -- destination blockchain ID for sends, source for receives
+    block_time DateTime64(3, 'UTC'),
+    block_number UInt32,
+    transaction_hash FixedString(32),
+    log_index UInt32
+) ENGINE = ReplacingMergeTree()
+ORDER BY (direction, message_id);
+
 -- C-Chain bridge logs (pkg/bridges): the raw_logs rows bridge transfers are
 -- decoded from, copied in one scan per window so decoding can be re-run
 -- without scanning raw_logs again. Also holds the Chainlink price updates.

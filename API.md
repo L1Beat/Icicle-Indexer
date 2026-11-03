@@ -2569,6 +2569,73 @@ The largest liquidations by position size over the window.
 
 ---
 
+## Metrics API - ICM
+
+C-Chain ICM (Interchain Messaging) message counts, from the TeleporterMessenger's events in `raw_logs` (`pkg/icm`). Every C-Chain snapshot cycle (5 minutes by default), the indexer copies new `SendCrossChainMessage` (sent from the C-Chain) and `ReceiveCrossChainMessage` (received on it) logs into `icm_messages`, one row per messageID and direction. Endpoints are cached for 5 minutes.
+
+**History:** from 2024-03-05, the day the TeleporterMessenger was deployed on the C-Chain (block 42526120). A fresh deploy reads `raw_logs` 30 days at a time, for up to 1 minute per cycle.
+
+**What counts:**
+- Only the official TeleporterMessenger `0x253b2784c75e510dD0fF1da844684a1aC0aa5fcf` (the same address on every chain). Any contract can emit an event with the same signature, so other emitters are ignored.
+- Topics computed from `ITeleporterMessenger` in ava-labs/icm-contracts (unchanged from v1.0.0): `SendCrossChainMessage` `0x2a211ad4…`, `ReceiveCrossChainMessage` `0x292ee90b…`.
+- The other chain is `destinationBlockchainID` for sends and `sourceBlockchainID` for receives, in CB58, named from the L1 registry when listed.
+- A message is counted once per direction by messageID. A message the C-Chain sends to itself counts as both sent and received.
+- Messages between two L1s that never touch the C-Chain are not included.
+
+### GET /api/v1/metrics/icm
+
+Messages sent, received and in total over the window, overall and per other chain.
+
+**Query Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `days` | int | Complete UTC days, 1-3650 (default 30) |
+
+**Response:**
+```json
+{
+  "data": {
+    "as_of": "2026-11-02",
+    "from": "2026-10-04",
+    "days": 30,
+    "totals": { "sent": 9800, "received": 18200, "total": 28000 },
+    "by_chain": [
+      { "blockchain_id": "2LFmzhHDKxkreihEtPanVmofuFn63bsh8twnRXEbDhBtCJxURB", "name": "Example L1", "sent": 4100, "received": 9300, "total": 13400 }
+    ]
+  }
+}
+```
+
+Sample values are illustrative. `by_chain` is busiest first. `name` is empty for chains not in the L1 registry. The window is the last N complete UTC days ending `as_of`, clamped to 2024-03-05.
+
+### GET /api/v1/metrics/icm/timeseries
+
+Messages per UTC day, total and per other chain. Oldest first; every day in the window is included, with zeros on quiet days.
+
+**Query Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `days` | int | Complete UTC days, 1-3650 (default 90) |
+
+**Response:**
+```json
+{
+  "data": [
+    {
+      "date": "2026-11-02",
+      "sent": 310,
+      "received": 620,
+      "total": 930,
+      "by_chain": [
+        { "blockchain_id": "2LFmzhHDKxkreihEtPanVmofuFn63bsh8twnRXEbDhBtCJxURB", "name": "Example L1", "sent": 140, "received": 300, "total": 440 }
+      ]
+    }
+  ]
+}
+```
+
+---
+
 ## Metrics API - Chain Stats
 
 ### GET /api/v1/metrics/evm/{chainId}/stats
@@ -2840,6 +2907,8 @@ ws.onmessage = (event) => {
 | GET | `/api/v1/metrics/perps/timeseries` | Daily C-Chain perpetuals volume |
 | GET | `/api/v1/metrics/perps/open-interest` | Daily C-Chain perpetuals open interest per market |
 | GET | `/api/v1/metrics/perps/liquidations/top` | Largest C-Chain perpetuals liquidations |
+| GET | `/api/v1/metrics/icm` | C-Chain ICM (Teleporter) messages sent and received, per other chain |
+| GET | `/api/v1/metrics/icm/timeseries` | Daily C-Chain ICM messages, per other chain |
 | WS | `/ws/blocks/{chainId}` | Real-time block stream |
 
 ---
