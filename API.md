@@ -2571,9 +2571,9 @@ The largest liquidations by position size over the window.
 
 ## Metrics API - ICM
 
-C-Chain ICM (Interchain Messaging) message counts, from the TeleporterMessenger's events in `raw_logs` (`pkg/icm`). Every C-Chain snapshot cycle (5 minutes by default), the indexer copies new `SendCrossChainMessage` (sent from the C-Chain) and `ReceiveCrossChainMessage` (received on it) logs into `icm_messages`, one row per messageID and direction. Endpoints are cached for 5 minutes.
+C-Chain ICM (Interchain Messaging) messages, from the TeleporterMessenger's events in `raw_logs` (`pkg/icm`). Every C-Chain snapshot cycle (5 minutes by default), the indexer decodes new `SendCrossChainMessage` (sent from the C-Chain) and `ReceiveCrossChainMessage` (received on it) logs into `icm_messages`, one row per messageID and direction, with the C-Chain contract, the L1 address, the relayer fee or deliverer, and the ICTT payload. Endpoints are cached for 5 minutes, `/messages` for 1 minute.
 
-**History:** from 2024-03-05, the day the TeleporterMessenger was deployed on the C-Chain (block 42526120). A fresh deploy reads `raw_logs` 30 days at a time, for up to 1 minute per cycle.
+**History:** from 2024-03-05, the day the TeleporterMessenger was deployed on the C-Chain (block 42526120). A fresh deploy reads `raw_logs` a week at a time, for up to 2 minutes per cycle.
 
 **What counts:**
 - Only the official TeleporterMessenger `0x253b2784c75e510dD0fF1da844684a1aC0aa5fcf` (the same address on every chain). Any contract can emit an event with the same signature, so other emitters are ignored.
@@ -2581,6 +2581,9 @@ C-Chain ICM (Interchain Messaging) message counts, from the TeleporterMessenger'
 - The other chain is `destinationBlockchainID` for sends and `sourceBlockchainID` for receives, in CB58, named from the L1 registry when listed.
 - A message is counted once per direction by messageID. A message the C-Chain sends to itself counts as both sent and received.
 - Messages between two L1s that never touch the C-Chain are not included.
+- Delivery time is not available: it needs the L1 side's timestamp.
+
+**Apps:** each message has one C-Chain contract, `local_address`: the `originSenderAddress` of a send, the `destinationAddress` of a receive. The L1 side is `remote_address`. A contract whose messages decode as an ICTT `TransferrerMessage` (ava-labs/icm-contracts `ictt`) is checked on-chain once: a TokenHome or TokenRemote reports the C-Chain as its blockchain ID (`getBlockchainID()`, or `blockchainID()` on ICTT v1) and names its home (`getTokenHomeAddress()` / `tokenHomeAddress()`, kind `ictt-remote`, the contract is the token) or its token (`getTokenAddress()` / `tokenAddress()`, kind `ictt-home`). Other contracts are kind `other`. Names come from address labels, else the ICTT token, e.g. `XOM ICTT remote`. Token symbols are what the token contract reports.
 
 ### GET /api/v1/metrics/icm
 
@@ -2633,6 +2636,97 @@ Messages per UTC day, total and per other chain. Oldest first; every day in the 
   ]
 }
 ```
+
+With `by_app=true`, each day also has `by_app`: `[{ "address", "name", "sent", "received", "total" }]`, busiest first, left out on days without messages.
+
+**Query Parameters (timeseries):**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `by_app` | bool | Add the per-app split (default false) |
+
+### GET /api/v1/metrics/icm/apps
+
+C-Chain contracts using ICM over the window, busiest first.
+
+**Query Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `days` | int | Complete UTC days, 1-3650 (default 30) |
+| `limit` | int | Apps, 1-200 (default 50) |
+
+**Response:**
+```json
+{
+  "data": {
+    "as_of": "2026-11-02",
+    "from": "2026-08-05",
+    "days": 90,
+    "apps": [
+      {
+        "address": "0xaf72f6caf76775daeabaf5c82ce05d97359c8fa1",
+        "name": "XOM ICTT remote",
+        "kind": "ictt-remote",
+        "token": { "address": "0xaf72f6caf76775daeabaf5c82ce05d97359c8fa1", "symbol": "XOM", "decimals": 18 },
+        "label": null,
+        "sent": 1, "received": 258489, "total": 258490,
+        "first_seen": "2026-07-28T09:12:44Z",
+        "last_seen": "2026-11-02T18:03:10Z",
+        "top_chains": [ { "blockchain_id": "B5gLCyeRWScxf1CeGHfXjEkcp5au8dQYQjtSV6cRammsLjsbK", "name": "Omnicoin", "sent": 1, "received": 258489, "total": 258490 } ]
+      }
+    ]
+  }
+}
+```
+
+Sample values are illustrative. Counts and `top_chains` (up to 5) cover the window; `first_seen` and `last_seen` are all time. `token` is null and `kind` is `other` for non-ICTT apps. `label` is the address label, as on the explorer endpoints.
+
+### GET /api/v1/metrics/icm/messages
+
+Messages sent from or received on the C-Chain, newest first.
+
+**Query Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `limit` | int | Messages, 1-200 (default 50) |
+| `before` | string | Cursor: `meta.next_cursor` of the previous page |
+| `chain` | string | Other chain's blockchain ID (CB58) |
+| `direction` | string | `sent` or `received` |
+| `app` | string | C-Chain contract address |
+
+**Response:**
+```json
+{
+  "data": [
+    {
+      "message_id": "0x...",
+      "direction": "received",
+      "counterparty": { "blockchain_id": "B5gLCyeRWScxf1CeGHfXjEkcp5au8dQYQjtSV6cRammsLjsbK", "name": "Omnicoin" },
+      "block_time": "2026-09-04T08:00:12.000Z",
+      "block_number": 94483960,
+      "tx_hash": "0x1ea518f173c77a4f0994158787e19b8e639ba071b106317015e02db41c3ab966",
+      "local_address": "0xaf72f6caf76775daeabaf5c82ce05d97359c8fa1",
+      "remote_address": "0xc0fb51a663aded93983e107c962edac040e27b2d",
+      "app": { "name": "XOM ICTT remote", "kind": "ictt-remote", "label": null },
+      "required_gas_limit": 250000,
+      "fee_token": null,
+      "fee_amount": null,
+      "deliverer": "0x9227aaf8dacbd5f5c82bf5c3ea7cbfa16a00b180",
+      "reward_redeemer": "0x021868f2e3d49c059ef52b539aaa933b437e0321",
+      "ictt": {
+        "type": "single_hop_send",
+        "recipient": "0xc59029fb6fa509624a958734c4b2f3d006922bcb",
+        "amount_raw": "10039886999999999996",
+        "token": { "address": "0xaf72f6caf76775daeabaf5c82ce05d97359c8fa1", "symbol": "XOM", "decimals": 18 }
+      }
+    }
+  ],
+  "meta": { "limit": 50, "offset": 0, "has_more": true, "next_cursor": "94483960-12" }
+}
+```
+
+- `fee_token` and `fee_amount` (relayer fee, in fee token units, as a string) are set on sends, `deliverer` (the relayer) and `reward_redeemer` on receives.
+- `ictt` is set only for checked ICTT apps. `type` is `single_hop_send`, `single_hop_call`, `multi_hop_send`, `multi_hop_call` or `register_remote`. `recipient` is the recipient, or `recipientContract` for calls. `amount_raw` is the amount as encoded in the message. ICTT can scale amounts between home and remote decimals, so it is not yet converted to token units.
+- `app` is null when a message's details did not decode.
 
 ---
 
@@ -2908,7 +3002,9 @@ ws.onmessage = (event) => {
 | GET | `/api/v1/metrics/perps/open-interest` | Daily C-Chain perpetuals open interest per market |
 | GET | `/api/v1/metrics/perps/liquidations/top` | Largest C-Chain perpetuals liquidations |
 | GET | `/api/v1/metrics/icm` | C-Chain ICM (Teleporter) messages sent and received, per other chain |
-| GET | `/api/v1/metrics/icm/timeseries` | Daily C-Chain ICM messages, per other chain |
+| GET | `/api/v1/metrics/icm/timeseries` | Daily C-Chain ICM messages, per other chain and optionally per app |
+| GET | `/api/v1/metrics/icm/apps` | C-Chain contracts using ICM, with ICTT token bridges marked |
+| GET | `/api/v1/metrics/icm/messages` | Recent C-Chain ICM messages with contracts, relayers and ICTT payloads |
 | WS | `/ws/blocks/{chainId}` | Real-time block stream |
 
 ---

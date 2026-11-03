@@ -716,9 +716,44 @@ CREATE TABLE IF NOT EXISTS icm_messages (
     block_time DateTime64(3, 'UTC'),
     block_number UInt32,
     transaction_hash FixedString(32),
-    log_index UInt32
+    log_index UInt32,
+    local_address FixedString(20),  -- C-Chain side: originSenderAddress for sends, destinationAddress for receives
+    remote_address FixedString(20),  -- L1 side: destinationAddress for sends, originSenderAddress for receives
+    required_gas_limit UInt64,
+    fee_token FixedString(20),  -- Relayer fee token, sends only
+    fee_amount UInt256,
+    deliverer FixedString(20),  -- Relayer that delivered it, receives only
+    reward_redeemer FixedString(20),  -- Address that redeems the relayer reward, receives only
+    ictt_type Int8 DEFAULT -1,  -- ICTT TransferrerMessageType, -1 when the payload is not ICTT-shaped
+    ictt_recipient FixedString(20),  -- ICTT recipient, or recipientContract for calls
+    ictt_amount UInt256  -- ICTT amount as encoded in the message
 ) ENGINE = ReplacingMergeTree()
 ORDER BY (direction, message_id);
+
+ALTER TABLE icm_messages ADD COLUMN IF NOT EXISTS local_address FixedString(20) AFTER log_index;
+ALTER TABLE icm_messages ADD COLUMN IF NOT EXISTS remote_address FixedString(20) AFTER local_address;
+ALTER TABLE icm_messages ADD COLUMN IF NOT EXISTS required_gas_limit UInt64 AFTER remote_address;
+ALTER TABLE icm_messages ADD COLUMN IF NOT EXISTS fee_token FixedString(20) AFTER required_gas_limit;
+ALTER TABLE icm_messages ADD COLUMN IF NOT EXISTS fee_amount UInt256 AFTER fee_token;
+ALTER TABLE icm_messages ADD COLUMN IF NOT EXISTS deliverer FixedString(20) AFTER fee_amount;
+ALTER TABLE icm_messages ADD COLUMN IF NOT EXISTS reward_redeemer FixedString(20) AFTER deliverer;
+ALTER TABLE icm_messages ADD COLUMN IF NOT EXISTS ictt_type Int8 DEFAULT -1 AFTER reward_redeemer;
+ALTER TABLE icm_messages ADD COLUMN IF NOT EXISTS ictt_recipient FixedString(20) AFTER ictt_type;
+ALTER TABLE icm_messages ADD COLUMN IF NOT EXISTS ictt_amount UInt256 AFTER ictt_recipient;
+
+-- C-Chain contracts behind ICTT-shaped ICM messages (pkg/icm), checked
+-- on-chain: a TokenHome or TokenRemote reports the C-Chain as its blockchain
+-- ID and names its token or home. kind is empty for other contracts.
+CREATE TABLE IF NOT EXISTS icm_apps (
+    address FixedString(20),
+    kind LowCardinality(String),  -- ictt-home, ictt-remote, or empty
+    token FixedString(20),  -- The remote itself, or the home's token address
+    symbol String,
+    decimals UInt8,
+    note String,  -- Why it is (not) ICTT
+    checked_at DateTime64(3, 'UTC') DEFAULT now64(3)
+) ENGINE = ReplacingMergeTree(checked_at)
+ORDER BY address;
 
 -- C-Chain bridge logs (pkg/bridges): the raw_logs rows bridge transfers are
 -- decoded from, copied in one scan per window so decoding can be re-run

@@ -206,6 +206,10 @@ func (r *MockRows) Scan(dest ...interface{}) error {
 				if n, ok := v.(uint8); ok {
 					*d = n
 				}
+			case *int8:
+				if n, ok := v.(int8); ok {
+					*d = n
+				}
 			case *big.Int:
 				if n, ok := v.(big.Int); ok {
 					*d = n

@@ -78,7 +78,7 @@ func (s *CChainSnapshotter) runOnce(ctx context.Context) {
 		slog.Warn("Failed to sync perps", "error", err)
 	}
 	// ICM (Teleporter) messages sent from and received on the C-Chain.
-	if err := icm.Sync(ctx, s.conn); err != nil {
+	if err := icm.Sync(ctx, s.conn, caller); err != nil {
 		slog.Warn("Failed to sync ICM messages", "error", err)
 	}
 	slog.Info("C-Chain snapshot cycle completed", "duration", time.Since(start))
