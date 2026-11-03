@@ -21,6 +21,10 @@ type ValidatorSyncerConfig struct {
 	DiscoveryMode string        // "auto" or "manual"
 }
 
+// primaryRefreshInterval is how often the Primary Network validators are
+// refreshed between full cycles.
+const primaryRefreshInterval = 5 * time.Minute
+
 // ValidatorSyncer periodically syncs L1 validator state
 type ValidatorSyncer struct {
 	config   ValidatorSyncerConfig
@@ -60,11 +64,27 @@ func (vs *ValidatorSyncer) Start(ctx context.Context) {
 	ticker := time.NewTicker(vs.config.SyncInterval)
 	defer ticker.Stop()
 
+	// Between full cycles, refresh the Primary Network rows on their own, so
+	// delegator counts and delegated stake keep up with delegations starting
+	// and ending. One getCurrentValidators call (~1s). Runs in this loop, so it
+	// never overlaps a full cycle.
+	var primaryTick <-chan time.Time
+	if vs.config.SyncInterval > primaryRefreshInterval {
+		primaryTicker := time.NewTicker(primaryRefreshInterval)
+		defer primaryTicker.Stop()
+		primaryTick = primaryTicker.C
+	}
+
 	for {
 		select {
 		case <-ticker.C:
 			if err := vs.syncOnce(ctx); err != nil {
 				slog.Error("Validator state sync failed", "error", err)
+			}
+		case <-primaryTick:
+			primarySubnetID, _ := ids.FromString("11111111111111111111111111111111LpoYY")
+			if _, err := vs.syncSubnetValidators(ctx, primarySubnetID); err != nil {
+				slog.Warn("Failed to refresh Primary Network validators", "error", err)
 			}
 		case <-vs.stopCh:
 			slog.Info("Stopping L1 validator state syncer")
