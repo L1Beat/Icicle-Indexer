@@ -70,22 +70,32 @@ func (s *Server) icmWindow(ctx context.Context, days int) (PerpWindow, time.Time
 	return w, asOf, nil
 }
 
-// icmChainNames maps CB58 blockchain IDs to their L1 registry names.
+// icmChainNames maps CB58 blockchain IDs to their L1 registry names, else the
+// blockchainName of the P-Chain CreateChainTx that created them.
 func (s *Server) icmChainNames(ctx context.Context) (map[string]string, error) {
-	rows, err := s.conn.Query(ctx, `SELECT blockchain_id, name FROM l1_registry FINAL`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
 	out := map[string]string{}
-	for rows.Next() {
-		var id, name string
-		if err := rows.Scan(&id, &name); err != nil {
+	for _, q := range []string{
+		`SELECT chain_id, chain_name FROM subnet_chains FINAL WHERE chain_name != ''`,
+		`SELECT blockchain_id, name FROM l1_registry FINAL WHERE name != ''`, // wins
+	} {
+		rows, err := s.conn.Query(ctx, q)
+		if err != nil {
 			return nil, err
 		}
-		out[id] = name
+		for rows.Next() {
+			var id, name string
+			if err := rows.Scan(&id, &name); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			out[id] = name
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // icmRow is the message count for one day, direction and other chain.

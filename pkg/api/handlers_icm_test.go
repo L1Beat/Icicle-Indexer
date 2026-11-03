@@ -27,6 +27,11 @@ func TestHandleICM(t *testing.T) {
 				return NewMockRows([]string{"last_period"}, [][]interface{}{{through}}), nil
 			case strings.Contains(q, "l1_registry"):
 				return NewMockRows([]string{"blockchain_id", "name"}, [][]interface{}{{dexalot.String(), "Dexalot"}}), nil
+			case strings.Contains(q, "subnet_chains"):
+				return NewMockRows([]string{"chain_id", "chain_name"}, [][]interface{}{
+					{dexalot.String(), "dexalot-raw"}, // the registry name wins
+					{gunz.String(), "QRQMP"},          // not in the registry
+				}), nil
 			case strings.Contains(q, "FROM icm_apps"):
 				return NewMockRows([]string{"a", "k", "t", "s", "d"}, nil), nil
 			case strings.Contains(q, "GROUP BY day, app, direction"):
@@ -61,7 +66,7 @@ func TestHandleICM(t *testing.T) {
 	require.Equal(t, ICMCounts{Sent: 507, Received: 400, Total: 907}, d.Totals)
 	require.Len(t, d.ByChain, 2)
 	require.Equal(t, ICMChain{BlockchainID: dexalot.String(), Name: "Dexalot", ICMCounts: ICMCounts{Sent: 500, Received: 400, Total: 900}}, d.ByChain[0])
-	require.Equal(t, "", d.ByChain[1].Name) // not in the registry
+	require.Equal(t, "QRQMP", d.ByChain[1].Name) // not in the registry: its CreateChainTx name
 
 	// The full history starts the day the messenger was deployed.
 	w = MakeRequest(t, server, "GET", "/api/v1/metrics/icm?days=3650")
@@ -129,6 +134,8 @@ func TestHandleICMAppsAndMessages(t *testing.T) {
 			switch {
 			case strings.Contains(q, "indexer_watermarks"):
 				return NewMockRows([]string{"last_period"}, [][]interface{}{{through}}), nil
+			case strings.Contains(q, "subnet_chains"):
+				return NewMockRows([]string{"chain_id", "chain_name"}, nil), nil
 			case strings.Contains(q, "l1_registry"):
 				return NewMockRows([]string{"blockchain_id", "name"}, [][]interface{}{{omnicoin.String(), "Omnicoin"}}), nil
 			case strings.Contains(q, "FROM icm_apps"):
@@ -242,6 +249,8 @@ func TestHandleICMValue(t *testing.T) {
 			switch {
 			case strings.Contains(q, "indexer_watermarks"):
 				return NewMockRows([]string{"last_period"}, [][]interface{}{{through}}), nil
+			case strings.Contains(q, "subnet_chains"):
+				return NewMockRows([]string{"chain_id", "chain_name"}, nil), nil
 			case strings.Contains(q, "l1_registry"):
 				return NewMockRows([]string{"blockchain_id", "name"}, [][]interface{}{{chainA.String(), "Henesys"}}), nil
 			case strings.Contains(q, "WHERE kind != ''") && !strings.Contains(q, "icm_messages"):

@@ -2578,7 +2578,7 @@ C-Chain ICM (Interchain Messaging) messages, from the TeleporterMessenger's even
 **What counts:**
 - Only the official TeleporterMessenger `0x253b2784c75e510dD0fF1da844684a1aC0aa5fcf` (the same address on every chain). Any contract can emit an event with the same signature, so other emitters are ignored.
 - Topics computed from `ITeleporterMessenger` in ava-labs/icm-contracts (unchanged from v1.0.0): `SendCrossChainMessage` `0x2a211ad4…`, `ReceiveCrossChainMessage` `0x292ee90b…`.
-- The other chain is `destinationBlockchainID` for sends and `sourceBlockchainID` for receives, in CB58, named from the L1 registry when listed.
+- The other chain is `destinationBlockchainID` for sends and `sourceBlockchainID` for receives, in CB58, named from the L1 registry when listed, else by the `blockchainName` of the P-Chain CreateChainTx that created it (as on `/data/subnets`).
 - A message is counted once per direction by messageID. A message the C-Chain sends to itself counts as both sent and received.
 - Messages between two L1s that never touch the C-Chain are not included.
 - Delivery time is not available: it needs the L1 side's timestamp.
@@ -2609,7 +2609,7 @@ Messages sent, received and in total over the window, overall and per other chai
 }
 ```
 
-Sample values are illustrative. `by_chain` is busiest first. `name` is empty for chains not in the L1 registry. The window is the last N complete UTC days ending `as_of`, clamped to 2024-03-05.
+Sample values are illustrative. `by_chain` is busiest first. `name` is empty only for a chain with neither a registry entry nor a known CreateChainTx. The window is the last N complete UTC days ending `as_of`, clamped to 2024-03-05.
 
 ### GET /api/v1/metrics/icm/timeseries
 
