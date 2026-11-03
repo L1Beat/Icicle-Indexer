@@ -309,7 +309,11 @@ func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 
 	var query string
 	if isLegacySubnet {
-		// JOIN with Primary Network entries to get real stake and uptime
+		// JOIN with Primary Network entries to get real stake and uptime. A node
+		// has one Primary Network validation per staking period, so pick, for
+		// each subnet validation, the node's Primary validation covering it: the
+		// active one for an active row, else the latest that started before the
+		// subnet validation ended.
 		query = fmt.Sprintf(`
 			SELECT
 				v.subnet_id, v.validation_id, v.node_id, v.balance, v.weight,
@@ -324,10 +328,24 @@ func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 			LEFT JOIN (SELECT * FROM l1_validator_history FINAL) h
 				ON v.validation_id = h.validation_id AND v.subnet_id = h.subnet_id
 			LEFT JOIN (
-				SELECT node_id, weight, uptime_percentage
-				FROM l1_validator_state FINAL
-				WHERE subnet_id = '%s'
-			) p ON v.node_id = p.node_id
+				SELECT sv.validation_id AS vid,
+					argMax(pv.weight, (sv.active AND pv.active,
+						pv.start_time <= sv.covered_until, pv.start_time)) AS weight,
+					argMax(pv.uptime_percentage, (sv.active AND pv.active,
+						pv.start_time <= sv.covered_until, pv.start_time)) AS uptime_percentage
+				FROM (
+					SELECT validation_id, node_id, active,
+						if(active, now64(3), end_time) AS covered_until
+					FROM l1_validator_state FINAL
+					WHERE subnet_id = ?
+				) sv
+				INNER JOIN (
+					SELECT node_id, weight, uptime_percentage, start_time, active
+					FROM l1_validator_state FINAL
+					WHERE subnet_id = '%s'
+				) pv ON sv.node_id = pv.node_id
+				GROUP BY sv.validation_id
+			) p ON v.validation_id = p.vid
 			%s
 			ORDER BY p.weight DESC, v.weight DESC, v.validation_id
 			LIMIT ? OFFSET ?
@@ -351,7 +369,11 @@ func (s *Server) handleListValidators(w http.ResponseWriter, r *http.Request) {
 			LIMIT ? OFFSET ?
 		`, whereClause, orderBy)
 	}
-	args := append(whereArgs, fetchLimit, offset)
+	var args []interface{}
+	if isLegacySubnet {
+		args = append(args, subnetID)
+	}
+	args = append(append(args, whereArgs...), fetchLimit, offset)
 
 	rows, err := s.conn.Query(ctx, query, args...)
 	if err != nil {
@@ -587,12 +609,19 @@ func (s *Server) handleGetValidator(w http.ResponseWriter, r *http.Request) {
 			// Legacy subnet validator — enrich with Primary Network data
 			var primaryStake uint64
 			var primaryUptime float64
+			// The node's Primary validation covering this one: the active one
+			// for an active row, else the latest started before it ended.
+			coveredUntil := endTime
+			if v.Active {
+				coveredUntil = now
+			}
 			err := s.conn.QueryRow(ctx, `
 				SELECT weight, uptime_percentage
 				FROM l1_validator_state FINAL
 				WHERE node_id = ? AND subnet_id = ?
+				ORDER BY (? AND active) DESC, start_time <= ? DESC, start_time DESC
 				LIMIT 1
-			`, v.NodeID, primaryNetworkSubnetID).Scan(&primaryStake, &primaryUptime)
+			`, v.NodeID, primaryNetworkSubnetID, v.Active, coveredUntil).Scan(&primaryStake, &primaryUptime)
 			if err == nil && primaryStake > 0 {
 				v.PrimaryStake = &primaryStake
 				v.PrimaryUptime = &primaryUptime

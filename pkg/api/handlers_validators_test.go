@@ -478,3 +478,33 @@ func TestHandleListValidators_FilterByNodeID(t *testing.T) {
 
 	AssertJSONResponse(t, w, http.StatusOK)
 }
+
+func TestHandleListValidators_LegacyOnePrimaryPerValidation(t *testing.T) {
+	var gotQuery string
+	var gotArgs []interface{}
+	mock := &MockConn{
+		QueryRowFunc: func(ctx context.Context, query string, args ...interface{}) driver.Row {
+			if strings.Contains(query, "subnet_type") {
+				return &MockRow{scanFunc: func(dest ...interface{}) error {
+					*dest[0].(*string) = "legacy"
+					return nil
+				}}
+			}
+			return &MockRow{err: ErrMockDB}
+		},
+		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
+			gotQuery, gotArgs = query, args
+			return NewMockRows(validatorColumns, nil), nil
+		},
+	}
+
+	server := NewTestServer(mock)
+	w := MakeRequest(t, server, "GET", "/api/v1/data/validators?subnet_id=legacy1&active=true&limit=10")
+	AssertJSONResponse(t, w, http.StatusOK)
+
+	// One Primary validation per subnet validation, not one row per Primary
+	// validation the node ever had.
+	require.Contains(t, gotQuery, "GROUP BY sv.validation_id")
+	require.Contains(t, gotQuery, "ON v.validation_id = p.vid")
+	require.Equal(t, []interface{}{"legacy1", "legacy1", 11, 0}, gotArgs)
+}
