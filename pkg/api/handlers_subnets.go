@@ -125,8 +125,8 @@ type ChainInfo struct {
 // fraction of total active weight. Raw weights are strings; counts are numbers.
 type Decentralization struct {
 	ActiveValidatorCount uint32   `json:"active_validator_count"`
-	Nakamoto33           *uint32  `json:"nakamoto_33"`       // min validators controlling >33% of active weight; null if unknown
-	Nakamoto50           *uint32  `json:"nakamoto_50"`       // min validators controlling >50% of active weight; null if unknown
+	Nakamoto33           *uint32  `json:"nakamoto_33"`       // min validators controlling more than 1/3 of active weight; null if unknown
+	Nakamoto50           *uint32  `json:"nakamoto_50"`       // min validators controlling more than 1/2 of active weight; null if unknown
 	TotalWeight          string   `json:"total_weight"`      // sum of active validator weights, raw
 	Weights              []string `json:"weights,omitempty"` // active validator weights sorted desc, raw (full detail only)
 }
@@ -263,17 +263,20 @@ type EconomicSecurity struct {
 
 // decentralizationSubquery aggregates l1_validator_state into per-subnet
 // decentralization metrics. Shared by the chains list and the /risk endpoint so
-// the Nakamoto math stays in one place. Weights are sorted descending; the
-// Nakamoto coefficient is the 1-based index at which the cumulative weight first
-// exceeds the threshold fraction of total active weight.
+// the Nakamoto math stays in one place. A validator's weight is its consensus
+// weight: on the Primary Network its own stake plus the stake delegated to it,
+// on L1s the P-Chain weight. Weights are sorted descending; the Nakamoto
+// coefficient is the 1-based index at which the cumulative weight first exceeds
+// a third (or half) of total active weight. Compared in integers, so the
+// threshold is exactly 1/3, not 0.33.
 const decentralizationSubquery = `(
 		SELECT subnet_id,
 			toUInt32(countIf(active = true)) AS active_validators,
-			sumIf(weight, active = true) AS total_staked,
-			arrayReverseSort(groupArrayIf(weight, active = true)) AS sorted_weights,
+			sumIf(weight + if(subnet_id = '` + primaryNetworkSubnetID + `', delegated_stake, 0), active = true) AS total_staked,
+			arrayReverseSort(groupArrayIf(weight + if(subnet_id = '` + primaryNetworkSubnetID + `', delegated_stake, 0), active = true)) AS sorted_weights,
 			arraySum(sorted_weights) AS active_weight,
-			toUInt32(arrayFirstIndex(x -> x > active_weight * 0.33, arrayCumSum(sorted_weights))) AS nakamoto_33,
-			toUInt32(arrayFirstIndex(x -> x > active_weight * 0.50, arrayCumSum(sorted_weights))) AS nakamoto_50
+			toUInt32(arrayFirstIndex(x -> x * 3 > active_weight, arrayCumSum(sorted_weights))) AS nakamoto_33,
+			toUInt32(arrayFirstIndex(x -> x * 2 > active_weight, arrayCumSum(sorted_weights))) AS nakamoto_50
 		FROM l1_validator_state FINAL
 		GROUP BY subnet_id
 	)`

@@ -1169,7 +1169,7 @@ Per-chain decentralization and ValidatorManager risk profile (L2Beat-style). Key
 - `owner.kind` — `eoa`, `multisig`, `timelock`, `dao`, `contract`, or `unknown`; `multisig` populated only for detected Gnosis Safes
 - `proxy.upgrade_delay_seconds` — `0` means upgrades are instant; a timelock delay otherwise
 - `balancer_owner` and `security_modules` — null unless `type` is `balancer`. For a balancer, `owner` is the balancer contract, `balancer_owner` is whoever controls it (it sets module weights), and `security_modules` lists each module: `{address, kind, weight, max_weight, owner}`. `kind` is `suzaku_middleware` (validators admitted through Suzaku restaking), `poa` (a module that only points back at its balancer, Suzaku's PoA module), or `unknown`. `weight` is the validator weight the module holds now, `max_weight` its cap. Example (Dexalot): a `poa` module at weight 0 and a `suzaku_middleware` at 5000000, both owned by the same EOA as the balancer.
-- `decentralization` — present only when the chain has active L1 validators; `nakamoto_33`/`nakamoto_50` are the min validators controlling >33%/>50% of active weight; `weights` are raw, sorted descending
+- `decentralization` — present only when the chain has active L1 validators; `nakamoto_33`/`nakamoto_50` are the min validators controlling more than 1/3 / 1/2 of active weight; `weights` are consensus weights, sorted descending: on the Primary Network own stake plus delegated stake, on L1s the P-Chain weight
 - `economic` — reserved for a later tier; currently always `null`
 - Returns 404 if the chain ID is unknown
 
@@ -1637,8 +1637,8 @@ Staking overview in one request. Cached for 1 minute.
       "top10_percent": 14.74,
       "top50_percent": 54.9,
       "top100_percent": 77.17,
-      "nakamoto_33": 25,
-      "nakamoto_50": 44
+      "nakamoto_33": 26,
+      "nakamoto_50": 45
     }
   }
 }
@@ -1648,7 +1648,7 @@ Staking overview in one request. Cached for 1 minute.
 - `delegation_count` counts active delegations, not unique delegator addresses
 - `total_supply` is AVAX **total** supply from `platform.getCurrentSupply` (not circulating). It and `staked_supply_percent` are null until the first daily snapshot exists
 - Histogram buckets cover `(min_percent, max_percent]`; the first is exactly the 2% protocol minimum, the last is open-ended
-- Concentration and Nakamoto use total stake (own + delegated); Nakamoto is the fewest validators holding **more than** 33% / 50%
+- Concentration and Nakamoto use total stake (own + delegated); Nakamoto is the fewest validators holding **more than** 1/3 / 1/2 (exactly, not 33%)
 
 ### GET /api/v1/metrics/staking/unlocks
 

@@ -52,8 +52,8 @@ type StakeConcentration struct {
 	Top10Percent  float64 `json:"top10_percent"`
 	Top50Percent  float64 `json:"top50_percent"`
 	Top100Percent float64 `json:"top100_percent"`
-	Nakamoto33    uint32  `json:"nakamoto_33"` // fewest validators holding > 33% of total stake
-	Nakamoto50    uint32  `json:"nakamoto_50"` // fewest validators holding > 50% of total stake
+	Nakamoto33    uint32  `json:"nakamoto_33"` // fewest validators holding more than 1/3 of total stake
+	Nakamoto50    uint32  `json:"nakamoto_50"` // fewest validators holding more than 1/2 of total stake
 }
 
 // StakingUnlockWeek is the stake whose lock ends during one week.
@@ -278,10 +278,10 @@ func buildStakingSummary(vals []stakeRow, supply uint64, asOf time.Time) Staking
 			case 100:
 				out.Concentration.Top100Percent = cum / totalF * 100
 			}
-			if out.Concentration.Nakamoto33 == 0 && cum > totalF*0.33 {
+			if out.Concentration.Nakamoto33 == 0 && cum*3 > totalF {
 				out.Concentration.Nakamoto33 = uint32(n)
 			}
-			if out.Concentration.Nakamoto50 == 0 && cum > totalF*0.50 {
+			if out.Concentration.Nakamoto50 == 0 && cum*2 > totalF {
 				out.Concentration.Nakamoto50 = uint32(n)
 			}
 		}
