@@ -82,13 +82,19 @@ func TestLiveProbe(t *testing.T) {
 		if leg.NotEntered {
 			continue
 		}
-		collSum.Add(collSum, leg.BaseValue)
 		r := a.byAsset[leg.Asset]
 		dyn, err := rpc.EthCall(ctx, spoke, lending.EncodeCall2Uint(fnGetDynamicConfig, r.id, big.NewInt(int64(leg.ConfigKey))), "latest")
 		if err != nil {
 			t.Fatalf("dynamic config: %v", err)
 		}
 		cf := lending.Word(lending.DecodeHexBytes(dyn), 0)
+		// A leg flagged as collateral whose factor is 0 at its key (for example USDC
+		// on Main, borrow-only) is left out of totalCollateralValue by the spoke.
+		if cf.Sign() == 0 {
+			t.Logf("leg %s has collateral factor 0 at key %d, excluded by the spoke", leg.Asset, leg.ConfigKey)
+			continue
+		}
+		collSum.Add(collSum, leg.BaseValue)
 		weighted.Add(weighted, new(big.Int).Div(new(big.Int).Mul(leg.BaseValue, cf), big.NewInt(10000)))
 	}
 	t.Logf("spoke: hf=%s collateral_base=%s debt_base=%s", h.HealthFactor, h.CollateralBase, h.DebtBase)
