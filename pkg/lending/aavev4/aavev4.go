@@ -170,6 +170,12 @@ func (a *Adapter) exposure(user, reserveTopic string, side lending.Side, block u
 		return nil
 	}
 	asset := ""
+	// The store reports an all-zero topic as "" (absent). Every event decoded here
+	// always carries its reserve id topic, so "" is reserve id 0, which is a real
+	// reserve (WAVAX on Main, sAVAX on AVAX Correlated, USDe on Ethena, EURC on Forex).
+	if reserveTopic == "" {
+		reserveTopic = "0x0"
+	}
 	if id, ok := new(big.Int).SetString(trim0x(reserveTopic), 16); ok {
 		a.mu.RLock()
 		if r, found := a.byID[id.String()]; found {

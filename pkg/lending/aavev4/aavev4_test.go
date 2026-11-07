@@ -137,6 +137,15 @@ func TestDecodeLog(t *testing.T) {
 	if len(got) != 1 || got[0].Account != user || got[0].Asset != usdc {
 		t.Fatalf("deficit: %+v", got)
 	}
+	// Reserve id 0 arrives as an empty topic (the store drops all-zero topics).
+	got = a.DecodeLog(lending.LogRow{Topic0: a.topicSupply, Topic1: "", Topic2: caller, Topic3: u})
+	if len(got) != 1 || got[0].Asset != wavax || got[0].Side != lending.SideCollateral {
+		t.Fatalf("reserve 0 supply: %+v", got)
+	}
+	got = a.DecodeLog(lending.LogRow{Topic0: a.topicLiquidation, Topic1: "", Topic2: pad(topic("2")), Topic3: u})
+	if len(got) != 2 || got[0].Asset != wavax || got[1].Asset != usdc {
+		t.Fatalf("reserve 0 liquidation: %+v", got)
+	}
 	// Unknown reserve id: the account is still tracked, with no asset.
 	got = a.DecodeLog(lending.LogRow{Topic0: a.topicSupply, Topic1: pad(topic("9")), Topic2: caller, Topic3: u})
 	if len(got) != 1 || got[0].Account != user || got[0].Asset != "" {

@@ -19,6 +19,17 @@ type Discovery struct {
 }
 
 // NewDiscovery builds a discovery cursor for one protocol.
+// discoveryName is the watermark name of a protocol's discovery cursor. Aave V4
+// uses a _v2 cursor so the spokes rescan from creation after the reserve-id-0 fix
+// (exposures to each spoke's reserve 0 were dropped before it). Other protocols
+// keep their original cursor.
+func discoveryName(p Protocol) string {
+	if IsAaveV4(p) {
+		return "lending_discovery_v2:" + string(p)
+	}
+	return "lending_discovery:" + string(p)
+}
+
 func NewDiscovery(store *Store, adapter Adapter, batch uint64) *Discovery {
 	if batch == 0 {
 		batch = 5000
@@ -26,7 +37,7 @@ func NewDiscovery(store *Store, adapter Adapter, batch uint64) *Discovery {
 	return &Discovery{
 		store:   store,
 		adapter: adapter,
-		name:    "lending_discovery:" + string(adapter.Protocol()),
+		name:    discoveryName(adapter.Protocol()),
 		batch:   batch,
 	}
 }
