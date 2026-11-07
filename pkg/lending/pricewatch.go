@@ -214,6 +214,13 @@ func (p *PriceWatch) checkMove(ctx context.Context, proto Protocol, asset string
 		return
 	}
 	p.engine.RecomputeAsset(ctx, proto, NormalizeAddr(asset))
+	// Aave V4 spoke oracles read the same Chainlink feeds as Aave V3, so a V3 move
+	// also rechecks V4 positions exposed to the asset.
+	if proto == ProtocolAaveV3 {
+		for _, v4 := range p.engine.aaveV4Protocols() {
+			p.engine.RecomputeAsset(ctx, v4, NormalizeAddr(asset))
+		}
+	}
 }
 
 func (p *PriceWatch) callAddr(ctx context.Context, to, data string) (string, error) {

@@ -170,6 +170,17 @@ func (e *HealthEngine) refreshTier(ctx context.Context, tier Tier) {
 	}
 }
 
+// aaveV4Protocols returns the active per-spoke Aave V4 protocols.
+func (e *HealthEngine) aaveV4Protocols() []Protocol {
+	var out []Protocol
+	for p := range e.adapters {
+		if IsAaveV4(p) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // RecomputeAsset refreshes, with detail, every account exposed to a moved asset
 // whose last-known health sits within the price band, regardless of timer tier
 // (rule 1). Accounts with no cached health are included to be safe.

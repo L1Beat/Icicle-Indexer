@@ -22,6 +22,7 @@ type LiqAsset struct {
 // LiqEvent is one executed liquidation.
 type LiqEvent struct {
 	ProtocolID  string    `json:"protocol_id"`
+	Market      string    `json:"market,omitempty"` // Aave V4 spoke that emitted the liquidation
 	TxHash      string    `json:"tx_hash"`
 	BlockNumber uint32    `json:"block_number"`
 	BlockTime   time.Time `json:"block_time"`
@@ -287,6 +288,15 @@ func (s *Server) handleLendingLiqTop(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, Response{Data: v})
 }
 
+// liqMarket returns the 0x market of a liquidation row, or "" when it is the zero
+// address (Aave V3 and BENQI rows carry no market).
+func liqMarket(hexAddr string) string {
+	if hexAddr == "" || strings.Trim(hexAddr, "0") == "" {
+		return ""
+	}
+	return "0x" + hexAddr
+}
+
 // loadLiqEvents reads liquidations matching where (one ? bound to arg).
 func (s *Server) loadLiqEvents(ctx context.Context, where, order string, limit int, arg interface{}) ([]LiqEvent, error) {
 	assets, err := s.liqAssets(ctx)
@@ -297,7 +307,7 @@ func (s *Server) loadLiqEvents(ctx context.Context, where, order string, limit i
 		SELECT protocol, lower(hex(tx_hash)), block_number, block_time, lower(hex(borrower)), lower(hex(liquidator)),
 			lower(hex(debt_asset)), toString(repay_amount), toFloat64(repaid_usd) / 1e18,
 			lower(hex(collateral_asset)), toString(seized_underlying), toString(seize_amount),
-			toFloat64(seized_usd) / 1e18
+			toFloat64(seized_usd) / 1e18, lower(hex(market))
 		FROM lending_liquidations FINAL
 		WHERE chain_id = 43114 AND `+where+`
 		ORDER BY `+order+`
@@ -310,12 +320,13 @@ func (s *Server) loadLiqEvents(ctx context.Context, where, order string, limit i
 	out := []LiqEvent{}
 	for rows.Next() {
 		var e LiqEvent
-		var debt, coll, repaid, seizedUnderlying, seized string
+		var debt, coll, repaid, seizedUnderlying, seized, market string
 		var repaidUSD, seizedUSD float64
 		if err := rows.Scan(&e.ProtocolID, &e.TxHash, &e.BlockNumber, &e.BlockTime, &e.Borrower, &e.Liquidator,
-			&debt, &repaid, &repaidUSD, &coll, &seizedUnderlying, &seized, &seizedUSD); err != nil {
+			&debt, &repaid, &repaidUSD, &coll, &seizedUnderlying, &seized, &seizedUSD, &market); err != nil {
 			return nil, err
 		}
+		e.Market = liqMarket(market)
 		e.Debt.Amount = &repaid
 		e.Collateral.Amount = seizedAmount(e.ProtocolID, seizedUnderlying, seized)
 		e.TxHash, e.Borrower, e.Liquidator = "0x"+e.TxHash, "0x"+e.Borrower, "0x"+e.Liquidator

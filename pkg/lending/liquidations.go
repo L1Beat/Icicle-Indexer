@@ -52,6 +52,11 @@ var aaveV4Spokes = []string{
 	"0x6a37776b5e026dbdf043b4f933c323c84dd1b514", // forex
 }
 
+// AaveV4Spokes returns the Core Hub spoke addresses, lowercase.
+func AaveV4Spokes() []string {
+	return append([]string(nil), aaveV4Spokes...)
+}
+
 // AaveV4LiqSources returns one liquidation source per Aave V4 spoke. They need
 // no adapter: reserves and oracle are resolved lazily from the spoke.
 func AaveV4LiqSources() []liqSource {
@@ -78,6 +83,7 @@ type LiquidationRow struct {
 	Liquidator, Borrower, Collateral, Debt [20]byte
 	RepayAmount, SeizeAmount, RepaidUSD    *big.Int
 	SeizedUnderlying, SeizedUSD            *big.Int // seized collateral in underlying units, and in 1e18 USD
+	Market                                 [20]byte // Aave V4 spoke that emitted the event, zero for other protocols
 }
 
 // LiquidationIngester scans, values, and persists executed liquidations.
@@ -142,6 +148,9 @@ func (li *LiquidationIngester) Loop(ctx context.Context) {
 	if len(li.addrSet) == 0 {
 		return
 	}
+	if err := li.backfillV4Market(ctx); err != nil {
+		slog.Warn("lending: aave v4 liquidation market backfill failed, will retry on next start", "error", err)
+	}
 	for {
 		behind, err := li.Sync(ctx)
 		if err != nil {
@@ -157,6 +166,41 @@ func (li *LiquidationIngester) Loop(ctx context.Context) {
 		case <-time.After(wait):
 		}
 	}
+}
+
+// v4MarketBackfill marks the one-time fill of the market column on Aave V4
+// liquidation rows written before the column existed.
+const (
+	v4MarketBackfill = "lending_liquidations_v4_market"
+	aaveV4StartBlock = 89_721_383 // Core Hub spokes created
+)
+
+// backfillV4Market fills market (the emitting spoke) on Aave V4 liquidation rows
+// stored before the column existed, by joining them back to raw_logs. It rewrites
+// those rows once with a newer updated_at, so ReplacingMergeTree keeps the filled
+// copy, then records a watermark so it never runs again.
+func (li *LiquidationIngester) backfillV4Market(ctx context.Context) error {
+	done, err := li.store.GetWatermark(ctx, v4MarketBackfill)
+	if err != nil || done > 0 {
+		return err
+	}
+	q := fmt.Sprintf(`
+		INSERT INTO lending_liquidations
+			(chain_id, protocol, market, block_number, block_time, tx_hash, log_index, liquidator, borrower,
+			 collateral_asset, debt_asset, repay_amount, seize_amount, repaid_usd, seized_underlying, seized_usd, updated_at)
+		SELECT l.chain_id, l.protocol, r.address, l.block_number, l.block_time, l.tx_hash, l.log_index, l.liquidator, l.borrower,
+			l.collateral_asset, l.debt_asset, l.repay_amount, l.seize_amount, l.repaid_usd, l.seized_underlying, l.seized_usd, now64(3)
+		FROM (SELECT * FROM lending_liquidations FINAL WHERE chain_id = %[1]d AND protocol = '%[2]s') AS l
+		INNER JOIN (
+			SELECT address, transaction_hash, log_index FROM raw_logs
+			WHERE chain_id = %[1]d AND block_number >= %[3]d AND address IN (%[4]s) AND topic0 IN (%[5]s)
+		) AS r ON l.tx_hash = r.transaction_hash AND l.log_index = r.log_index
+	`, li.chainID, ProtocolAaveV4, aaveV4StartBlock, addrInList(aaveV4Spokes), topicInList([]string{topicV4Liquidation}))
+	if err := li.store.conn.Exec(ctx, q); err != nil {
+		return err
+	}
+	slog.Info("lending: aave v4 liquidation market backfill done")
+	return li.store.SetWatermark(ctx, v4MarketBackfill, 1)
 }
 
 // Sync processes one block range from the watermark forward and returns whether
@@ -274,7 +318,8 @@ func (li *LiquidationIngester) scan(ctx context.Context, from, to uint64) ([]Liq
 				slog.Warn("lending: aave v4 reserve unresolved, skipping liquidation", "spoke", la, "tx", hex.EncodeToString(tx[:]))
 				continue
 			}
-			r.Protocol = "aave-v4"
+			r.Protocol = string(ProtocolAaveV4)
+			r.Market = addr
 			r.Collateral = coll.underlying
 			r.Debt = debt.underlying
 			r.Borrower = last20(t3)
@@ -372,7 +417,7 @@ func (li *LiquidationIngester) persist(ctx context.Context, rows []LiquidationRo
 	batch, err := li.store.conn.PrepareBatch(ctx, `INSERT INTO lending_liquidations (
 		chain_id, protocol, block_number, block_time, tx_hash, log_index,
 		liquidator, borrower, collateral_asset, debt_asset,
-		repay_amount, seize_amount, repaid_usd, seized_underlying, seized_usd
+		repay_amount, seize_amount, repaid_usd, seized_underlying, seized_usd, market
 	)`)
 	if err != nil {
 		return err
@@ -383,7 +428,7 @@ func (li *LiquidationIngester) persist(ctx context.Context, rows []LiquidationRo
 			li.chainID, r.Protocol, r.Block, r.BlockTime, r.TxHash[:], r.LogIndex,
 			r.Liquidator[:], r.Borrower[:], r.Collateral[:], r.Debt[:],
 			orZero(r.RepayAmount), orZero(r.SeizeAmount), orZero(r.RepaidUSD),
-			orZero(r.SeizedUnderlying), orZero(r.SeizedUSD),
+			orZero(r.SeizedUnderlying), orZero(r.SeizedUSD), r.Market[:],
 		); err != nil {
 			return err
 		}

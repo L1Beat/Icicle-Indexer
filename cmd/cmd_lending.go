@@ -14,6 +14,7 @@ import (
 	"icicle/pkg/chwrapper"
 	"icicle/pkg/lending"
 	"icicle/pkg/lending/aave"
+	"icicle/pkg/lending/aavev4"
 	"icicle/pkg/lending/benqi"
 )
 
@@ -66,6 +67,10 @@ func RunLending(ctx context.Context, opts LendingOptions) {
 	adapters := []lending.Adapter{
 		aave.New(opts.AaveProvider),
 		benqi.New(opts.BenqiComptroller),
+	}
+	// One Aave V4 adapter per Core Hub spoke: positions are per (spoke, user).
+	for _, spoke := range lending.AaveV4Spokes() {
+		adapters = append(adapters, aavev4.New(spoke))
 	}
 
 	engine, err := lending.NewEngine(conn, adapters, cfg)

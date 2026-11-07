@@ -8,6 +8,8 @@ import (
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/stretchr/testify/assert"
+
+	"icicle/pkg/lending"
 )
 
 const lendingAddr = "0x9674fc77a3f5773002877cae189a51ea89cc4316"
@@ -60,4 +62,39 @@ func TestLendingLiquidations_EmptyIsList(t *testing.T) {
 	w := MakeRequest(t, server, "GET", "/api/v1/data/evm/43114/lending/liquidations?account="+lendingAddr)
 	assert.Equal(t, http.StatusOK, w.Code)
 	assert.Contains(t, w.Body.String(), `"data":[]`)
+}
+
+func TestProtocolConds(t *testing.T) {
+	if c, a := protocolConds("", ""); c != "" || len(a) != 0 {
+		t.Fatalf("empty: %q %v", c, a)
+	}
+	c, a := protocolConds("aave-v4", "435272ceff93a1e657e8abfdf0a13e95900a3a56")
+	if c != "(protocol = ? OR startsWith(protocol, ?)) AND endsWith(protocol, ?)" {
+		t.Fatalf("conds: %q", c)
+	}
+	if len(a) != 3 || a[0] != "aave-v4" || a[1] != "aave-v4:" || a[2] != ":0x435272ceff93a1e657e8abfdf0a13e95900a3a56" {
+		t.Fatalf("args: %v", a)
+	}
+}
+
+func TestLiqMarket(t *testing.T) {
+	if got := liqMarket(strings.Repeat("0", 40)); got != "" {
+		t.Fatalf("zero market: %q", got)
+	}
+	if got := liqMarket("435272ceff93a1e657e8abfdf0a13e95900a3a56"); got != "0x435272ceff93a1e657e8abfdf0a13e95900a3a56" {
+		t.Fatalf("spoke market: %q", got)
+	}
+}
+
+func TestSplitProtocolForFeed(t *testing.T) {
+	for in, want := range map[string][2]string{
+		"aave-v3": {"aave-v3", ""},
+		"benqi":   {"benqi", ""},
+		"aave-v4:0x435272ceff93a1e657e8abfdf0a13e95900a3a56": {"aave-v4", "0x435272ceff93a1e657e8abfdf0a13e95900a3a56"},
+	} {
+		p, m := lending.SplitProtocol(in)
+		if p != want[0] || m != want[1] {
+			t.Fatalf("%s -> %s %s", in, p, m)
+		}
+	}
 }

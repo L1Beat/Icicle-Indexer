@@ -6,7 +6,7 @@
 -- Resolved and on-chain-verified protocol addresses. One row per role.
 CREATE TABLE IF NOT EXISTS lending_protocol_addresses (
     chain_id UInt32,
-    protocol LowCardinality(String),       -- aave-v3 | benqi
+    protocol LowCardinality(String),       -- aave-v3 | benqi | aave-v4:<spoke>
     role LowCardinality(String),           -- pool | oracle | provider | data_provider | comptroller | market | multicall
     address FixedString(20),
     verified Bool,                         -- on-chain check passed
@@ -110,6 +110,8 @@ ORDER BY (chain_id, protocol, account, asset, side);
 
 -- Backfill the entered column onto an already-created table (idempotent).
 ALTER TABLE lending_position_assets ADD COLUMN IF NOT EXISTS entered Bool DEFAULT true AFTER base_value;
+-- Aave V4 dynamic config key of a collateral leg (collateral factor is per reserve and key). 0 for other protocols.
+ALTER TABLE lending_position_assets ADD COLUMN IF NOT EXISTS config_key UInt32 DEFAULT 0 AFTER entered;
 
 -- Executed on-chain liquidations (Aave LiquidationCall, Benqi LiquidateBorrow),
 -- valued in USD at the event block. ReplacingMergeTree keyed by the event identity
@@ -133,6 +135,8 @@ CREATE TABLE IF NOT EXISTS lending_liquidations (
 ORDER BY (chain_id, block_number, tx_hash, log_index);
 ALTER TABLE lending_liquidations ADD COLUMN IF NOT EXISTS seized_underlying UInt256 DEFAULT 0 AFTER repaid_usd;
 ALTER TABLE lending_liquidations ADD COLUMN IF NOT EXISTS seized_usd UInt256 DEFAULT 0 AFTER seized_underlying;
+-- Aave V4 spoke that emitted the liquidation, zero for Aave V3 and Benqi.
+ALTER TABLE lending_liquidations ADD COLUMN IF NOT EXISTS market FixedString(20) AFTER protocol;
 
 -- Periodic aggregate-risk snapshots per protocol, for the dashboard's risk-trend
 -- timeseries. Append-only, one row per (protocol, sample time) at a fixed debt

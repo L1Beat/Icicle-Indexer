@@ -24,7 +24,10 @@ type lendingLeg struct {
 	Decimals   uint8  `json:"decimals"`             // underlying decimals, for scaling Amount
 	Amount     string `json:"amount"`
 	BaseValue  string `json:"base_value"`
-	Entered    bool   `json:"entered"` // false: Benqi supply not entered as collateral. Excluded from collateral_base and HF, but seizable
+	Entered    bool   `json:"entered"` // false: supply not used as collateral (Benqi not entered, Aave V4 usingAsCollateral off). Excluded from collateral_base and HF
+	// ConfigKey is the Aave V4 dynamic config key of a collateral leg. V4 collateral
+	// factors are per (reserve, key), so the key weights the leg in the HF. Aave V4 only.
+	ConfigKey *uint32 `json:"config_key,omitempty"`
 }
 
 type lendingEstimate struct {
@@ -42,6 +45,7 @@ type lendingEstimate struct {
 type lendingPosition struct {
 	Account        string           `json:"account"`
 	Protocol       string           `json:"protocol"`
+	Market         string           `json:"market"` // Aave V4 spoke (positions are per spoke and user), empty for single-market protocols
 	HealthFactor   string           `json:"health_factor"`
 	Liquidatable   bool             `json:"liquidatable"`
 	CollateralBase string           `json:"collateral_base"`
@@ -87,6 +91,11 @@ func (s *Server) handleLendingPositions(w http.ResponseWriter, r *http.Request) 
 		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid asset address")
 		return
 	}
+	market, ok := addrFilter(r, "market")
+	if !ok {
+		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid market address")
+		return
+	}
 
 	// Opt-in dust filter: only positions whose debt in the oracle base currency is
 	// greater than this value. Validated as a base-10 integer so it is
@@ -104,9 +113,9 @@ func (s *Server) handleLendingPositions(w http.ResponseWriter, r *http.Request) 
 	var conds []string
 	args := []interface{}{chainID}
 	conds = append(conds, "chain_id = ?")
-	if protocol != "" {
-		conds = append(conds, "protocol = ?")
-		args = append(args, protocol)
+	if c, a := protocolConds(protocol, market); c != "" {
+		conds = append(conds, c)
+		args = append(args, a...)
 	}
 	if asset != "" {
 		conds = append(conds, fmt.Sprintf("account IN (SELECT account FROM lending_position_assets WHERE chain_id = ? AND asset = unhex('%s'))", asset))
@@ -186,6 +195,7 @@ func (s *Server) handleLendingPositions(w http.ResponseWriter, r *http.Request) 
 	globals := s.loadGlobalMeta(ctx, chainID)
 	for i := range positions {
 		s.enrich(&positions[i], legs, params, globals)
+		positions[i].Protocol, positions[i].Market = lending.SplitProtocol(positions[i].Protocol)
 	}
 
 	meta := &Meta{Limit: limit, Offset: offset, HasMore: hasMore}
@@ -264,6 +274,7 @@ func (s *Server) handleLendingAccount(w http.ResponseWriter, r *http.Request) {
 	globals := s.loadGlobalMeta(ctx, chainID)
 	for i := range positions {
 		s.enrich(&positions[i], legs, params, globals)
+		positions[i].Protocol, positions[i].Market = lending.SplitProtocol(positions[i].Protocol)
 	}
 	writeJSON(w, http.StatusOK, Response{Data: positions})
 }
@@ -281,7 +292,7 @@ func (s *Server) handleLendingStats(w http.ResponseWriter, r *http.Request) {
 	// sweeps are summary-only, so a liquidatable account can have debt_base 0 until
 	// a detail read lands; counting it as open keeps liquidatable a subset of open.
 	rows, err := s.conn.Query(ctx, `
-		SELECT protocol,
+		SELECT `+lending.BaseProtocolSQL+` AS proto_base,
 			countIf(debt > 0 OR liq) AS open_positions,
 			countIf(liq) AS liquidatable
 		FROM (
@@ -292,7 +303,7 @@ func (s *Server) handleLendingStats(w http.ResponseWriter, r *http.Request) {
 			WHERE chain_id = ?
 			GROUP BY account, protocol
 		)
-		GROUP BY protocol
+		GROUP BY proto_base
 	`, chainID)
 	if err != nil {
 		writeInternalError(w, err.Error())
@@ -378,16 +389,16 @@ func (s *Server) handleLendingRisk(w http.ResponseWriter, r *http.Request) {
 
 	conds := "chain_id = ?"
 	args := []interface{}{chainID}
-	if protocol != "" {
-		conds += " AND protocol = ?"
-		args = append(args, protocol)
+	if c, a := protocolConds(protocol, ""); c != "" {
+		conds += " AND " + c
+		args = append(args, a...)
 	}
 
 	// Pass 1: per-protocol aggregates over the deduped current positions. The debt
 	// floor (and all HF bounds) are validated base-10 integers, so they are
 	// injection-safe to inline; chain_id and protocol stay bound parameters.
 	aggQ := fmt.Sprintf(`
-		SELECT protocol,
+		SELECT %[9]s AS proto_base,
 			countIf(debt > %[1]s) AS open_positions,
 			countIf(liq AND debt > %[1]s) AS liquidatable,
 			countIf(coll < debt AND debt > %[1]s) AS bad_debt_count,
@@ -411,9 +422,9 @@ func (s *Server) handleLendingRisk(w http.ResponseWriter, r *http.Request) {
 			WHERE %[8]s
 			GROUP BY account, protocol
 		)
-		GROUP BY protocol
-		ORDER BY protocol
-	`, floor, hfWAD, nearMax, hf110, hf125, hf150, hf200, conds)
+		GROUP BY proto_base
+		ORDER BY proto_base
+	`, floor, hfWAD, nearMax, hf110, hf125, hf150, hf200, conds, lending.BaseProtocolSQL)
 
 	rows, err := s.conn.Query(ctx, aggQ, args...)
 	if err != nil {
@@ -466,7 +477,7 @@ func (s *Server) handleLendingRisk(w http.ResponseWriter, r *http.Request) {
 // floor), and resolves the asset symbol (covering Benqi qiToken markets too).
 func (s *Server) attachRiskByAsset(ctx context.Context, chainID uint32, conds string, args []interface{}, floor string, statsByProto map[string]*riskStat) {
 	q := fmt.Sprintf(`
-		SELECT l.protocol, l.asset, l.side, sum(l.val) AS total_base FROM (
+		SELECT splitByChar(':', l.protocol)[1] AS proto_base, l.asset, l.side, sum(l.val) AS total_base FROM (
 			SELECT account, protocol, asset, side,
 				argMax(base_value, updated_at) AS val,
 				argMax(entered, updated_at) AS ent,
@@ -484,7 +495,7 @@ func (s *Server) attachRiskByAsset(ctx context.Context, chainID uint32, conds st
 		WHERE l.val > 0 AND (l.side != 'collateral' OR l.ent)
 			AND l.leg_ts >= p.pos_ts
 			AND p.debt > %[2]s
-		GROUP BY l.protocol, l.asset, l.side
+		GROUP BY proto_base, l.asset, l.side
 		ORDER BY total_base DESC
 	`, conds, floor)
 
@@ -558,9 +569,12 @@ func (s *Server) loadAssetSymbols(ctx context.Context, chainID uint32) map[strin
 		if symbol == "" {
 			continue
 		}
-		out[proto+"|0x"+hex.EncodeToString(asset[:])] = symbol
-		if market != ([20]byte{}) {
-			out[proto+"|0x"+hex.EncodeToString(market[:])] = symbol
+		base, _ := lending.SplitProtocol(proto)
+		for _, p := range []string{proto, base} {
+			out[p+"|0x"+hex.EncodeToString(asset[:])] = symbol
+			if market != ([20]byte{}) {
+				out[p+"|0x"+hex.EncodeToString(market[:])] = symbol
+			}
 		}
 	}
 	return out
@@ -680,6 +694,7 @@ func (s *Server) handleLendingAlerts(w http.ResponseWriter, r *http.Request) {
 	type alert struct {
 		Account        string    `json:"account"`
 		Protocol       string    `json:"protocol"`
+		Market         string    `json:"market"`
 		Kind           string    `json:"kind"`
 		HealthFactor   string    `json:"health_factor"`
 		CollateralBase string    `json:"collateral_base"`
@@ -697,6 +712,7 @@ func (s *Server) handleLendingAlerts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		a.Account = "0x" + hex.EncodeToString(acc[:])
+		a.Protocol, a.Market = lending.SplitProtocol(a.Protocol)
 		a.HealthFactor = bigStr(hf)
 		a.CollateralBase = bigStr(coll)
 		a.DebtBase = bigStr(debt)
@@ -743,6 +759,11 @@ func applyLegMeta(leg *lendingLeg, m assetMeta) {
 // buildEstimate sizes the largest collateral and debt legs into a gross-only
 // liquidation estimate. Slippage is not modeled in v1 (rule 4).
 func buildEstimate(p *lendingPosition, params map[string]assetMeta, globals map[string]globalMeta) *lendingEstimate {
+	// Aave V4 has no close factor and per-user collateral factors, so the gross
+	// V3-style estimate would mislead. Omitted for V4.
+	if lending.IsAaveV4(lending.Protocol(p.Protocol)) {
+		return nil
+	}
 	coll := largestLeg(p.Collateral)
 	debt := largestLeg(p.Debt)
 	if coll == nil || debt == nil {
@@ -785,11 +806,12 @@ func (s *Server) loadLegs(ctx context.Context, chainID uint32, accounts []string
 	// the account's latest refresh (leg_ts >= pos_ts). Without this a repaid debt
 	// or withdrawn collateral leg lingers forever and legs overstate the totals.
 	rows, err := s.conn.Query(ctx, fmt.Sprintf(`
-		SELECT l.account, l.protocol, l.asset, l.side, l.amt, l.val, l.ent FROM (
+		SELECT l.account, l.protocol, l.asset, l.side, l.amt, l.val, l.ent, l.cfg FROM (
 			SELECT account, protocol, asset, side,
 				argMax(amount, updated_at) AS amt,
 				argMax(base_value, updated_at) AS val,
 				argMax(entered, updated_at) AS ent,
+				argMax(config_key, updated_at) AS cfg,
 				max(updated_at) AS leg_ts
 			FROM lending_position_assets
 			WHERE chain_id = ? AND account IN (%[1]s)
@@ -812,13 +834,19 @@ func (s *Server) loadLegs(ctx context.Context, chainID uint32, accounts []string
 		var proto, side string
 		var amt, val *big.Int
 		var entered bool
-		if err := rows.Scan(&acc, &proto, &asset, &side, &amt, &val, &entered); err != nil {
+		var cfg uint32
+		if err := rows.Scan(&acc, &proto, &asset, &side, &amt, &val, &entered, &cfg); err != nil {
 			return out
 		}
 		key := proto + "|0x" + hex.EncodeToString(acc[:]) + "|" + side
-		out[key] = append(out[key], lendingLeg{
+		leg := lendingLeg{
 			Asset: "0x" + hex.EncodeToString(asset[:]), Amount: bigStr(amt), BaseValue: bigStr(val), Entered: entered,
-		})
+		}
+		if side == string(lending.SideCollateral) && lending.IsAaveV4(lending.Protocol(proto)) {
+			k := cfg
+			leg.ConfigKey = &k
+		}
+		out[key] = append(out[key], leg)
 	}
 	return out
 }
@@ -879,6 +907,23 @@ func (s *Server) loadGlobalMeta(ctx context.Context, chainID uint32) map[string]
 }
 
 // --- small helpers ---
+
+// protocolConds builds the lending_positions filter for a public protocol name and
+// an optional Aave V4 market (spoke). "aave-v4" matches every spoke, which is
+// stored as "aave-v4:<spoke>". market is a validated 40-hex address without 0x.
+func protocolConds(protocol, market string) (string, []interface{}) {
+	var conds []string
+	var args []interface{}
+	if protocol != "" {
+		conds = append(conds, "(protocol = ? OR startsWith(protocol, ?))")
+		args = append(args, protocol, protocol+":")
+	}
+	if market != "" {
+		conds = append(conds, "endsWith(protocol, ?)")
+		args = append(args, ":0x"+market)
+	}
+	return strings.Join(conds, " AND "), args
+}
 
 func largestLeg(legs []lendingLeg) *lendingLeg {
 	var best *lendingLeg

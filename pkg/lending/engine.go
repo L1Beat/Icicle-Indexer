@@ -90,7 +90,11 @@ func (e *Engine) Bootstrap(ctx context.Context, adapters []Adapter) error {
 
 		e.active = append(e.active, a)
 		e.discoveries = append(e.discoveries, NewDiscovery(e.store, a, e.cfg.DiscoveryBatch))
-		e.liqSources = append(e.liqSources, buildLiqSource(a.Protocol(), addrs, params))
+		// Aave V4 spokes feed liquidations through AaveV4LiqSources (reserve ids,
+		// spoke oracle), not the Aave V3-style source built from params.
+		if !IsAaveV4(a.Protocol()) {
+			e.liqSources = append(e.liqSources, buildLiqSource(a.Protocol(), addrs, params))
+		}
 		slog.Info("lending: protocol ready", "protocol", a.Protocol(), "assets", len(params),
 			"close_factor_bps", globals.CloseFactorBps, "incentive_bps", globals.LiquidationIncentiveBps)
 	}
@@ -99,7 +103,8 @@ func (e *Engine) Bootstrap(ctx context.Context, adapters []Adapter) error {
 		return errNoProtocols
 	}
 
-	// Aave V4 has no position adapter yet; its spokes only feed liquidations.
+	// Aave V4 liquidations are ingested per spoke, whether or not its position
+	// adapter came up.
 	e.liqSources = append(e.liqSources, AaveV4LiqSources()...)
 	e.liq = NewLiquidationIngester(e.store, e.rpc, e.cfg.ChainID, e.liqSources)
 	e.risk = NewRiskSampler(e.store, e.cfg.ChainID, e.cfg.RiskSnapshotInterval, nil, nil)

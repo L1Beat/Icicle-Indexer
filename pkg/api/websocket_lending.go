@@ -8,12 +8,15 @@ import (
 	"math/big"
 	"net/http"
 	"time"
+
+	"icicle/pkg/lending"
 )
 
 // WSLendingAlert is the payload pushed when a position crosses a risk threshold.
 type WSLendingAlert struct {
 	Account        string    `json:"account"`
 	Protocol       string    `json:"protocol"`
+	Market         string    `json:"market"` // Aave V4 spoke, empty for single-market protocols
 	Kind           string    `json:"kind"`
 	HealthFactor   string    `json:"health_factor"`
 	CollateralBase string    `json:"collateral_base"`
@@ -163,6 +166,7 @@ func scanAlerts(rows interface {
 			return out
 		}
 		a.Account = "0x" + hex.EncodeToString(acc[:])
+		a.Protocol, a.Market = lending.SplitProtocol(a.Protocol)
 		a.HealthFactor = bigStr(hf)
 		a.CollateralBase = bigStr(coll)
 		a.DebtBase = bigStr(debt)

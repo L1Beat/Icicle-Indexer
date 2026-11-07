@@ -15,6 +15,7 @@ import (
 
 type liquidationEvent struct {
 	Protocol         string    `json:"protocol"`
+	Market           string    `json:"market,omitempty"` // Aave V4 spoke that emitted the liquidation
 	BlockNumber      uint32    `json:"block_number"`
 	BlockTime        time.Time `json:"block_time"`
 	TxHash           string    `json:"tx_hash"`
@@ -69,7 +70,7 @@ func (s *Server) handleLendingLiquidations(w http.ResponseWriter, r *http.Reques
 		SELECT protocol, block_number, block_time, lower(hex(tx_hash)),
 			lower(hex(liquidator)), lower(hex(borrower)),
 			lower(hex(collateral_asset)), lower(hex(debt_asset)),
-			repay_amount, seize_amount, repaid_usd
+			repay_amount, seize_amount, repaid_usd, lower(hex(market))
 		FROM (SELECT * FROM lending_liquidations FINAL)
 		WHERE %s
 		ORDER BY block_number DESC, log_index DESC
@@ -88,13 +89,14 @@ func (s *Server) handleLendingLiquidations(w http.ResponseWriter, r *http.Reques
 	events := []liquidationEvent{}
 	for rows.Next() {
 		var e liquidationEvent
-		var tx, liq, borrower, coll, debt string
+		var tx, liq, borrower, coll, debt, market string
 		var repay, seize, usd *big.Int
-		if err := rows.Scan(&e.Protocol, &e.BlockNumber, &e.BlockTime, &tx, &liq, &borrower, &coll, &debt, &repay, &seize, &usd); err != nil {
+		if err := rows.Scan(&e.Protocol, &e.BlockNumber, &e.BlockTime, &tx, &liq, &borrower, &coll, &debt, &repay, &seize, &usd, &market); err != nil {
 			writeInternalError(w, err.Error())
 			return
 		}
 		e.TxHash = "0x" + tx
+		e.Market = liqMarket(market)
 		e.Liquidator = "0x" + liq
 		e.Borrower = "0x" + borrower
 		e.CollateralAsset = "0x" + coll

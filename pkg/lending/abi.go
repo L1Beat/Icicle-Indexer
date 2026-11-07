@@ -181,6 +181,41 @@ func EncodeCall2Addr(sig, a, b string) string {
 	return Selector(sig) + hex.EncodeToString(leftPadAddress(a)) + hex.EncodeToString(leftPadAddress(b))
 }
 
+// EncodeCall1Uint builds calldata for a function taking one uint256 argument.
+func EncodeCall1Uint(sig string, n *big.Int) string {
+	return Selector(sig) + hex.EncodeToString(u256Word(n))
+}
+
+// EncodeCallUintAddr builds calldata for a function taking (uint256, address).
+func EncodeCallUintAddr(sig string, n *big.Int, addr string) string {
+	return Selector(sig) + hex.EncodeToString(u256Word(n)) + hex.EncodeToString(leftPadAddress(addr))
+}
+
+// EncodeCall2Uint builds calldata for a function taking two uint256 arguments.
+func EncodeCall2Uint(sig string, a, b *big.Int) string {
+	return Selector(sig) + hex.EncodeToString(u256Word(a)) + hex.EncodeToString(u256Word(b))
+}
+
+// DecodeString decodes an ABI-encoded dynamic string return value. It returns ""
+// for malformed data, and also accepts a bytes32 left-aligned string (old tokens).
+func DecodeString(b []byte) string {
+	if len(b) == 32 {
+		return strings.TrimRight(string(b), "\x00")
+	}
+	if len(b) < 64 {
+		return ""
+	}
+	off := wordU64(b, 0)
+	if off+32 > uint64(len(b)) {
+		return ""
+	}
+	n := new(big.Int).SetBytes(b[off : off+32]).Uint64()
+	if off+32+n > uint64(len(b)) {
+		return ""
+	}
+	return string(b[off+32 : off+32+n])
+}
+
 // EncodeCall1AddrArray builds calldata for a function taking one address[] arg.
 func EncodeCall1AddrArray(sig string, addrs []string) string {
 	var b []byte

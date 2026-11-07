@@ -65,8 +65,10 @@ func (rs *RiskSampler) Sample(ctx context.Context) error {
 	nearMax := rs.nearMax.String()
 	wad := WAD.String()
 
+	// Aave V4 spokes are stored per spoke ("aave-v4:<spoke>") and roll up into one
+	// "aave-v4" snapshot, like the other protocols.
 	q := fmt.Sprintf(`
-		SELECT protocol,
+		SELECT %[4]s AS proto_base,
 			countIf(debt > %[1]s) AS open_positions,
 			countIf(liq AND debt > %[1]s) AS liquidatable,
 			countIf(coll < debt AND debt > %[1]s) AS bad_debt_count,
@@ -84,8 +86,8 @@ func (rs *RiskSampler) Sample(ctx context.Context) error {
 			WHERE chain_id = ?
 			GROUP BY account, protocol
 		)
-		GROUP BY protocol
-	`, floor, wad, nearMax)
+		GROUP BY proto_base
+	`, floor, wad, nearMax, BaseProtocolSQL)
 
 	rows, err := rs.store.conn.Query(ctx, q, rs.chainID)
 	if err != nil {

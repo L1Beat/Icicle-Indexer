@@ -7,7 +7,10 @@
 // collateral-swap routing, and transaction submission are out of scope.
 package lending
 
-import "math/big"
+import (
+	"math/big"
+	"strings"
+)
 
 // Protocol identifies a supported lending market.
 type Protocol string
@@ -15,7 +18,39 @@ type Protocol string
 const (
 	ProtocolAaveV3 Protocol = "aave-v3"
 	ProtocolBenqi  Protocol = "benqi"
+	ProtocolAaveV4 Protocol = "aave-v4"
 )
+
+// Aave V4 keeps one independent position per (spoke, user), so each spoke runs as
+// its own adapter. Its stored protocol value is "aave-v4:<spoke address>", which
+// keeps every table key, the discovery watermark and the health cache per spoke
+// with no schema change. The API splits it back into protocol "aave-v4" and
+// market "<spoke>" (see SplitProtocol).
+const aaveV4Prefix = string(ProtocolAaveV4) + ":"
+
+// AaveV4Protocol returns the stored protocol value for one Aave V4 spoke.
+func AaveV4Protocol(spoke string) Protocol {
+	return Protocol(aaveV4Prefix + NormalizeAddr(spoke))
+}
+
+// IsAaveV4 reports whether p is a per-spoke Aave V4 protocol value.
+func IsAaveV4(p Protocol) bool {
+	return strings.HasPrefix(string(p), aaveV4Prefix)
+}
+
+// BaseProtocolSQL is the ClickHouse expression for the public protocol name of a
+// stored protocol column ("aave-v4:<spoke>" -> "aave-v4", others unchanged).
+const BaseProtocolSQL = "splitByChar(':', protocol)[1]"
+
+// SplitProtocol splits a stored protocol value into the public protocol name and
+// its market. Only Aave V4 carries a market (the spoke). Every other protocol
+// returns its value unchanged and an empty market.
+func SplitProtocol(p string) (protocol, market string) {
+	if i := strings.IndexByte(p, ':'); i >= 0 {
+		return p[:i], p[i+1:]
+	}
+	return p, ""
+}
 
 // Side labels an asset leg of a position.
 type Side string
@@ -44,6 +79,7 @@ const (
 	RoleComptroller  = "comptroller"
 	RoleMarket       = "market"
 	RoleMulticall    = "multicall"
+	RoleSpoke        = "spoke"
 )
 
 // Multicall3 is deployed at the same address on every chain, including Avalanche.
@@ -111,6 +147,10 @@ type AssetPosition struct {
 	// checks only that both markets are listed). Zero value = entered, so Aave and
 	// debt legs are unaffected.
 	NotEntered bool
+	// ConfigKey is the Aave V4 dynamic config key of a collateral leg. V4 collateral
+	// factors are set per (reserve, key) and each user position pins a key, so the
+	// key is needed to weight the leg correctly. 0 for every other protocol.
+	ConfigKey uint32
 }
 
 // Health is the unified per-account health snapshot produced by an adapter.
