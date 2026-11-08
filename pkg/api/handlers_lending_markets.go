@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"math"
 	"math/big"
 	"net/http"
@@ -44,11 +45,17 @@ type LendingMarket struct {
 	SupplyCap               *string   `json:"supply_cap"`
 	BorrowCap               *string   `json:"borrow_cap"`
 	SampledAt               time.Time `json:"sampled_at"`
+	// LTVChangedAt is when ltv_percent took its current value, and LTVChangedTx
+	// the config transaction. Null when unchanged since listing, when not dated
+	// yet, and where the market has no LTV (Aave V4).
+	LTVChangedAt *time.Time `json:"ltv_changed_at"`
+	LTVChangedTx *string    `json:"ltv_changed_tx"`
 	// EMode lists the Aave V3 E-Mode categories, or Aave V4 spokes, that
 	// include the asset. Empty when none (always for BENQI).
 	EMode                []LendingMarketEMode `json:"emode"`
 	supplied, borrowed   *big.Int
 	supplyAPR, borrowAPR float64
+	ltvBps               *uint16
 }
 
 // LendingAssetFlow is supply and borrow of one asset, in its base units.
@@ -103,6 +110,13 @@ type LendingMarketEMode struct {
 	AsCollateral            bool     `json:"as_collateral"`
 	Borrowable              bool     `json:"borrowable"`
 	PreviousLTVPct          *float64 `json:"previous_ltv_percent"` // V4: config before the current one, kept by older positions
+	// LTVChangedAt is when a V4 spoke entry's LTV took its current value (the
+	// dynamic config that set it), LTVChangedTx its transaction. Null for V3
+	// categories, when unchanged since listing, and when not dated yet.
+	LTVChangedAt *time.Time `json:"ltv_changed_at"`
+	LTVChangedTx *string    `json:"ltv_changed_tx"`
+	ltvBps       uint16
+	protocol     string
 }
 
 // LendingEModeCategory is one collateral group. V3 categories share one LTV,
@@ -192,6 +206,7 @@ func (s *Server) loadLendingMarkets(ctx context.Context) (interface{}, error) {
 		}
 		m.SupplyCap, m.BorrowCap = supplyCap, borrowCap
 		m.LTVPct, m.LiquidationThresholdPct = bpsPct(ltv), bpsPct(lt)
+		m.ltvBps = ltv
 		fillLendingMarket(&m, supplied, borrowed)
 		m.EMode = []LendingMarketEMode{}
 		markets = append(markets, m)
@@ -220,6 +235,7 @@ func (s *Server) loadLendingMarkets(ctx context.Context) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
+	s.fillLTVChanges(ctx, markets)
 	out := LendingOverview{Protocols: lendingProtocols, EModeCategories: cats, Markets: markets, Summary: summarizeLending(markets, savaxSupply)}
 	for i := range markets {
 		if out.SampledAt == nil || markets[i].SampledAt.After(*out.SampledAt) {
@@ -618,6 +634,7 @@ func (s *Server) loadLendingEMode(ctx context.Context, markets []LendingMarket) 
 		e.LTVPct, e.ConfiguredLTVPct = float64(ltv)/100, float64(conf)/100
 		e.LiquidationThresholdPct, e.LiquidationBonusPct = float64(lt)/100, float64(bonus)/100
 		e.PreviousLTVPct = bpsPct(prev)
+		e.ltvBps, e.protocol = conf, protocol
 
 		key := protocol + "|" + e.ID
 		ci, ok := idx[key]
@@ -647,4 +664,67 @@ func (s *Server) loadLendingEMode(ctx context.Context, markets []LendingMarket) 
 		}
 	}
 	return cats, rows.Err()
+}
+
+// fillLTVChanges dates each market's LTV and each Aave V4 spoke entry's from
+// lending_ltv_changes. A stored row counts only while its LTV is still the
+// current one. A failed read leaves the dates null rather than failing the
+// overview.
+func (s *Server) fillLTVChanges(ctx context.Context, markets []LendingMarket) {
+	rows, err := s.conn.Query(ctx, `
+		SELECT protocol_id, group_id, asset, ltv_bps, changed_at, changed_tx
+		FROM lending_ltv_changes FINAL
+		WHERE changed_at IS NOT NULL`)
+	if err != nil {
+		slog.Warn("Failed to read lending LTV changes", "error", err)
+		return
+	}
+	defer rows.Close()
+	type change struct {
+		ltv uint16
+		at  time.Time
+		tx  string
+	}
+	changes := map[string]change{}
+	for rows.Next() {
+		var protocol, group, asset string
+		var c change
+		var at *time.Time
+		if err := rows.Scan(&protocol, &group, &asset, &c.ltv, &at, &c.tx); err != nil {
+			slog.Warn("Failed to read lending LTV changes", "error", err)
+			return
+		}
+		if at != nil {
+			c.at = at.UTC()
+			changes[protocol+"|"+group+"|"+asset] = c
+		}
+	}
+	if err := rows.Err(); err != nil {
+		slog.Warn("Failed to read lending LTV changes", "error", err)
+		return
+	}
+	set := func(key string, ltv uint16, at **time.Time, tx **string) {
+		c, ok := changes[key]
+		if !ok || c.ltv != ltv {
+			return
+		}
+		t := c.at
+		*at = &t
+		if c.tx != "" {
+			h := c.tx
+			*tx = &h
+		}
+	}
+	for i := range markets {
+		m := &markets[i]
+		if m.ltvBps != nil {
+			set(m.ProtocolID+"||"+m.Asset, *m.ltvBps, &m.LTVChangedAt, &m.LTVChangedTx)
+		}
+		for j := range m.EMode {
+			e := &m.EMode[j]
+			if e.protocol == lendingmarkets.ProtocolAaveV4 {
+				set(e.protocol+"|"+e.ID+"|"+m.Asset, e.ltvBps, &e.LTVChangedAt, &e.LTVChangedTx)
+			}
+		}
+	}
 }

@@ -106,10 +106,12 @@ func ReadAll(ctx context.Context, c Caller) ([]Market, error) {
 
 // Minimal ABI codec. Arguments are static words; returns are sliced as words.
 
-func selector(sig string) []byte {
+func selector(sig string) []byte { return keccak([]byte(sig))[:4] }
+
+func keccak(b []byte) []byte {
 	h := sha3.NewLegacyKeccak256()
-	h.Write([]byte(sig))
-	return h.Sum(nil)[:4]
+	h.Write(b)
+	return h.Sum(nil)
 }
 
 func addrWord(addr string) []byte {

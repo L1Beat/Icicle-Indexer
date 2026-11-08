@@ -19,10 +19,19 @@ func ptrOf[T any](v T) *T { return &v }
 func TestHandleLendingMarkets(t *testing.T) {
 	lendingCache = newTTLCache(2 * time.Minute)
 	at := time.Date(2026, 11, 1, 20, 0, 0, 0, time.UTC)
+	changedV3 := time.Date(2026, 10, 29, 22, 42, 53, 0, time.UTC)
+	changedV4 := time.Date(2026, 10, 30, 11, 42, 49, 0, time.UTC)
 	cols := []string{"protocol_id", "market", "asset", "symbol", "decimals", "supplied", "borrowed",
 		"supply_apr", "borrow_apr", "collateral_enabled", "ltv_bps", "lt_bps", "price_usd", "supply_cap", "borrow_cap", "sampled_at"}
 	mock := &MockConn{
 		QueryFunc: func(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
+			if strings.Contains(query, "lending_ltv_changes") {
+				return NewMockRows([]string{"p", "g", "a", "ltv", "at", "tx"}, [][]interface{}{
+					{"aave-v3", "", lendingmarkets.WAVAX, uint16(0), ptrOf(changedV3), "0xabc"},
+					{"aave-v3", "", lendingmarkets.SAVAX, uint16(5000), ptrOf(changedV3), "0xdef"}, // stale: market is at 2500 now
+					{"aave-v4", "0xspoke", lendingmarkets.WAVAX, uint16(0), ptrOf(changedV4), ""},
+				}), nil
+			}
 			if strings.Contains(query, "lending_emode_snapshots") {
 				return NewMockRows([]string{"p", "g", "l", "a", "ltv", "conf", "lt", "b", "c", "br", "prev"}, [][]interface{}{
 					{"aave-v3", "2", "AVAX correlated", lendingmarkets.WAVAX, uint16(0), uint16(9300), uint16(9500), uint16(100), true, true, (*uint16)(nil)},
@@ -75,10 +84,14 @@ func TestHandleLendingMarkets(t *testing.T) {
 	require.InDelta(t, 160e6, *wavax.SuppliedUSD, 1)
 	require.Equal(t, "14000000000000000000000000", *wavax.SupplyCap)
 	require.Nil(t, wavax.BorrowCap)
+	require.Equal(t, changedV3, *wavax.LTVChangedAt)
+	require.Equal(t, "0xabc", *wavax.LTVChangedTx)
 
 	savaxAave := d.Markets[1]
 	require.Nil(t, savaxAave.PriceUSD)
-	require.Nil(t, savaxAave.SuppliedUSD) // no oracle price: null, not 0
+	require.Nil(t, savaxAave.SuppliedUSD)  // no oracle price: null, not 0
+	require.Nil(t, savaxAave.LTVChangedAt) // stored date is for another LTV
+	require.Nil(t, savaxAave.LTVChangedTx)
 
 	v4 := d.Markets[2]
 	require.Nil(t, v4.CollateralEnabled)
@@ -112,6 +125,11 @@ func TestHandleLendingMarkets(t *testing.T) {
 	require.Len(t, v4.EMode, 1)
 	require.InDelta(t, 73.0, *v4.EMode[0].PreviousLTVPct, 1e-9)
 	require.InDelta(t, 10.0, v4.EMode[0].LiquidationBonusPct, 1e-9)
+	require.Equal(t, changedV4, *v4.EMode[0].LTVChangedAt)
+	require.Nil(t, v4.EMode[0].LTVChangedTx)
+	require.Nil(t, v4.LTVChangedAt)
+	require.Nil(t, wavax.EMode[0].LTVChangedAt) // V3 categories are not dated
+	require.Contains(t, w.Body.String(), `"ltv_changed_at":null`)
 	require.NotNil(t, d.Markets[3].EMode) // BENQI: empty array, not null
 	require.Len(t, d.Markets[3].EMode, 0)
 }

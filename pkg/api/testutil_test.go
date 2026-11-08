@@ -148,6 +148,10 @@ func (r *MockRows) Scan(dest ...interface{}) error {
 				if t, ok := v.(time.Time); ok {
 					*d = t
 				}
+			case **time.Time:
+				if ptr, ok := v.(*time.Time); ok {
+					*d = ptr
+				}
 			case **uint32:
 				// Handle nullable uint32 pointers
 				if ptr, ok := v.(*uint32); ok {

@@ -60,6 +60,10 @@ func (s *CChainSnapshotter) runOnce(ctx context.Context) {
 	if err := SnapshotLendingMarkets(ctx, s.conn, s.nodeURL); err != nil {
 		slog.Warn("Failed to snapshot lending markets", "error", err)
 	}
+	// When each market's and V4 spoke entry's LTV took its current value.
+	if err := TrackLendingLTVChanges(ctx, s.conn, s.nodeURL); err != nil {
+		slog.Warn("Failed to date lending LTV changes", "error", err)
+	}
 	if err := BackfillLendingHistory(ctx, s.conn, s.nodeURL); err != nil {
 		slog.Warn("Failed to backfill lending history", "error", err)
 	}

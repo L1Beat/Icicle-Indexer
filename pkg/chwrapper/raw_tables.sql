@@ -627,6 +627,22 @@ CREATE TABLE IF NOT EXISTS lending_emode_snapshots (
 ) ENGINE = ReplacingMergeTree(sampled_at)
 ORDER BY (protocol_id, group_id, asset);
 
+-- When each lending LTV took its current value: Aave V3 and BENQI markets
+-- (group_id empty) and Aave V4 spoke entries (group_id = spoke). Dated by
+-- bisecting archive reads, written by the C-Chain snapshot cycle when a value
+-- is new or differs from the stored one.
+CREATE TABLE IF NOT EXISTS lending_ltv_changes (
+    protocol_id LowCardinality(String),  -- aave-v3, aave-v4, benqi
+    group_id String,  -- Empty for a market, V4 spoke address
+    asset String,  -- Underlying token, lowercase
+    ltv_bps UInt16,  -- The value being dated (V4 collateral factor)
+    changed_block UInt64,  -- 0 when unchanged since listing
+    changed_at Nullable(DateTime64(3, 'UTC')),  -- NULL when unchanged since listing
+    changed_tx String,  -- Config transaction, empty when unchanged or not found
+    checked_at DateTime64(3, 'UTC')
+) ENGINE = ReplacingMergeTree(checked_at)
+ORDER BY (protocol_id, group_id, asset);
+
 -- C-Chain DEX pools, registered from their factory's creation event (pkg/dexvolume).
 CREATE TABLE IF NOT EXISTS dex_pools (
     pool FixedString(20),
