@@ -261,12 +261,14 @@ func callString(ctx context.Context, caller Caller, to, fn string) (string, erro
 		return "", err
 	}
 	off := new(big.Int).SetBytes(b[:32])
-	if !off.IsUint64() || off.Uint64()+32 > uint64(len(b)) {
+	if !off.IsUint64() || off.Uint64() > uint64(len(b)-32) {
 		return "", nil
 	}
 	o := int(off.Uint64())
 	n := new(big.Int).SetBytes(b[o : o+32])
-	if !n.IsUint64() || uint64(o)+32+n.Uint64() > uint64(len(b)) {
+	// Compare against the bytes left after the length word; adding n to the
+	// offset first can wrap uint64 and pass the check with a huge n.
+	if !n.IsUint64() || n.Uint64() > uint64(len(b)-o-32) {
 		return "", nil
 	}
 	return string(b[o+32 : o+32+int(n.Uint64())]), nil

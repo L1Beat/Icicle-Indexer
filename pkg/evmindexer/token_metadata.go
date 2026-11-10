@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"icicle/pkg/chwrapper"
 	"log/slog"
+	"math/big"
 	"net/http"
 	"strings"
 	"time"
@@ -288,29 +289,13 @@ func decodeString(hexData string) (string, error) {
 		return "", fmt.Errorf("data too short for ABI string")
 	}
 
-	// Read length from bytes 32-64
-	length := int(data[63]) // Simple case: length < 256
-	if len(data) >= 32 {
-		// Parse length from offset 32
-		for i := 32; i < 64; i++ {
-			if data[i] != 0 {
-				// More complex length encoding
-				length = 0
-				for j := 32; j < 64; j++ {
-					length = length*256 + int(data[j])
-				}
-				break
-			}
-		}
-	}
-
-	if length == 0 {
-		return "", nil
-	}
-
-	// Read string data starting at byte 64
-	if len(data) < 64+length {
-		length = len(data) - 64
+	// Length word is bytes 32-64. The contract controls it, so compare it
+	// against the bytes actually present instead of converting it to int,
+	// which can wrap negative and panic the slice below.
+	avail := len(data) - 64
+	length := avail // oversized lengths are truncated to the data present
+	if lw := new(big.Int).SetBytes(data[32:64]); lw.IsUint64() && lw.Uint64() < uint64(avail) {
+		length = int(lw.Uint64())
 	}
 
 	if length <= 0 {
