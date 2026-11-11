@@ -24,6 +24,23 @@ var RECENT_TAGS = ['latest', 'pending', 'safe', 'finalized'];
 var NODE = 'http://127.0.0.1:9650/ext/bc/C/rpc';
 var NEED_HEAD = 'NEED_HEAD';
 
+// The node decodes requests with Go's encoding/json, which matches keys
+// case-insensitively (and folds Unicode lookalikes such as U+212A for k). A key
+// like "Method" or "FromBlock" is ignored here but read by the node, so it
+// could carry a debug_ method or an unbounded log range past these checks.
+// Accept only the exact field names; nothing else reaches the node.
+var CALL_KEYS = ['jsonrpc', 'id', 'method', 'params'];
+var FILTER_KEYS = ['fromBlock', 'toBlock', 'address', 'topics', 'blockHash'];
+
+// The first key of obj that is not in allowed, or '' when all are.
+function unexpectedKey(obj, allowed) {
+  var keys = Object.keys(obj);
+  for (var i = 0; i < keys.length; i++) {
+    if (allowed.indexOf(keys[i]) === -1) return keys[i];
+  }
+  return '';
+}
+
 function cors(r) {
   r.headersOut['Access-Control-Allow-Origin'] = '*';
 }
@@ -55,7 +72,9 @@ function hasAddress(f) {
 // against the current block, otherwise an error message. head is a number or null.
 function checkLogs(params, head) {
   var f = Array.isArray(params) ? params[0] : null;
-  if (!f || typeof f !== 'object') return 'eth_getLogs needs a filter object';
+  if (!f || typeof f !== 'object' || Array.isArray(f)) return 'eth_getLogs needs a filter object';
+  var extra = unexpectedKey(f, FILTER_KEYS);
+  if (extra) return 'eth_getLogs filter has an unsupported field: ' + extra;
   if (f.blockHash) return '';
   var withAddr = hasAddress(f);
   var max = withAddr ? LOG_RANGE_WITH_ADDRESS : LOG_RANGE_NO_ADDRESS;
@@ -145,7 +164,16 @@ function filter(r) {
   var needHead = false;
   for (var i = 0; i < calls.length; i++) {
     var c = calls[i];
-    var m = c && typeof c.method === 'string' ? c.method : '';
+    if (!c || typeof c !== 'object' || Array.isArray(c)) {
+      send(r, 400, rpcError(null, -32600, 'Invalid request'));
+      return;
+    }
+    var extra = unexpectedKey(c, CALL_KEYS);
+    if (extra) {
+      send(r, 400, rpcError(c.id, -32600, 'Invalid request: unsupported field ' + extra));
+      return;
+    }
+    var m = typeof c.method === 'string' ? c.method : '';
     if (!ALLOW.test(m) || DENY.indexOf(m) !== -1) {
       send(r, 403, rpcError(c && c.id, -32601, 'Method not available on the public endpoint: ' + m));
       return;
