@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -252,7 +253,7 @@ func fetchOwner(client *http.Client, rpcURL, contractAddr string) (string, error
 		} `json:"error"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxRPCResponseBytes)).Decode(&rpcResp); err != nil {
 		return "", err
 	}
 

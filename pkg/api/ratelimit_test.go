@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -201,4 +202,67 @@ func TestRateLimiter_Returns429WithJSON(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ErrRateLimited, resp.Error.Code)
 	assert.Equal(t, 1, resp.Error.RetryAfter)
+}
+
+// A client can put anything in X-Forwarded-For; nginx appends the real peer on
+// the right. The limiter must key on that, not on the client-chosen left end.
+func TestRateLimiter_ClientIP_IgnoresClientSuppliedForwardedFor(t *testing.T) {
+	rl := NewRateLimiter(RateLimitConfig{
+		RequestsPerMinute: 60,
+		BurstSize:         10,
+		CleanupInterval:   time.Hour,
+		TrustedProxies:    []string{"127.0.0.1", "10.0.0.1"},
+	})
+	defer rl.Stop()
+
+	cases := []struct {
+		name   string
+		xff    []string
+		realIP string
+		want   string
+	}{
+		{"spoofed left entry", []string{"1.2.3.4, 203.0.113.195"}, "", "203.0.113.195"},
+		{"skips trusted proxies on the right", []string{"1.2.3.4, 203.0.113.195, 10.0.0.1"}, "", "203.0.113.195"},
+		{"multiple header lines", []string{"1.2.3.4", "203.0.113.195"}, "", "203.0.113.195"},
+		{"all trusted falls to leftmost", []string{"10.0.0.1, 127.0.0.1"}, "", "10.0.0.1"},
+		{"garbage falls back to X-Real-IP", []string{"not-an-ip"}, "198.51.100.9", "198.51.100.9"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/test", nil)
+			req.RemoteAddr = "127.0.0.1:12345"
+			for _, v := range tc.xff {
+				req.Header.Add("X-Forwarded-For", v)
+			}
+			if tc.realIP != "" {
+				req.Header.Set("X-Real-IP", tc.realIP)
+			}
+			assert.Equal(t, tc.want, rl.ClientIP(req))
+		})
+	}
+}
+
+// Rotating the spoofed left entry must not mint fresh token buckets.
+func TestRateLimiter_SpoofedForwardedForSharesOneBucket(t *testing.T) {
+	rl := NewRateLimiter(RateLimitConfig{
+		RequestsPerMinute: 60,
+		BurstSize:         3,
+		CleanupInterval:   time.Hour,
+		TrustedProxies:    []string{"127.0.0.1"},
+	})
+	defer rl.Stop()
+	h := rl.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+
+	limited := false
+	for i := 0; i < 10; i++ {
+		req := httptest.NewRequest("GET", "/test", nil)
+		req.RemoteAddr = "127.0.0.1:12345"
+		req.Header.Set("X-Forwarded-For", fmt.Sprintf("1.2.3.%d, 203.0.113.195", i))
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code == http.StatusTooManyRequests {
+			limited = true
+		}
+	}
+	assert.True(t, limited, "rotating the spoofed X-Forwarded-For entry bypassed the limit")
 }

@@ -377,13 +377,22 @@ func (h *WSHub) broadcastBlock(chainID uint32, block Block) {
 		return
 	}
 
-	h.mu.RLock()
-	clients := h.clients[chainID]
-	h.mu.RUnlock()
+	// block updates only go to block subscribers
+	h.sendToChain(chainID, data, func(feed string) bool { return feed == "" || feed == "blocks" })
+}
 
-	for client := range clients {
-		if client.feed != "" && client.feed != "blocks" {
-			continue // block updates only go to block subscribers
+// sendToChain queues data for every client on chainID whose feed matches.
+// The read lock is held for the whole loop: Run deletes clients from this map
+// and closes their send channels under the write lock, so iterating after
+// unlocking can hit a concurrent map write (a fatal runtime error) or a send
+// on a closed channel. Sends never block, so holding the lock is cheap.
+func (h *WSHub) sendToChain(chainID uint32, data []byte, match func(feed string) bool) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	for client := range h.clients[chainID] {
+		if !match(client.feed) {
+			continue
 		}
 		select {
 		case client.send <- data:

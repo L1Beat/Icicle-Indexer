@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"math/big"
 	"net/http"
@@ -546,6 +547,11 @@ func ethGetStorageAt(client *http.Client, rpcURL, addr, slot string) (string, er
 	return rpcResult(client, rpcURL, "eth_getStorageAt", []interface{}{addr, slot, "latest"})
 }
 
+// maxRPCResponseBytes caps a JSON-RPC response read from an L1's own RPC.
+// The URL comes from the registry and the server is not ours; the largest
+// legitimate result is eth_getCode hex, far below this.
+const maxRPCResponseBytes = 4 << 20
+
 // rpcResult performs a JSON-RPC POST and returns the raw "result" string. A JSON-RPC
 // error (e.g. execution reverted) is returned as a Go error.
 func rpcResult(client *http.Client, rpcURL, method string, params []interface{}) (string, error) {
@@ -572,7 +578,7 @@ func rpcResult(client *http.Client, rpcURL, method string, params []interface{})
 			Message string `json:"message"`
 		} `json:"error"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxRPCResponseBytes)).Decode(&rpcResp); err != nil {
 		return "", err
 	}
 	if rpcResp.Error != nil {

@@ -181,16 +181,5 @@ func (h *WSHub) broadcastAlert(chainID uint32, alert WSLendingAlert) {
 	if err != nil {
 		return
 	}
-	h.mu.RLock()
-	clients := h.clients[chainID]
-	h.mu.RUnlock()
-	for client := range clients {
-		if client.feed != "lending" {
-			continue
-		}
-		select {
-		case client.send <- data:
-		default:
-		}
-	}
+	h.sendToChain(chainID, data, func(feed string) bool { return feed == "lending" })
 }

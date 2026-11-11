@@ -92,3 +92,32 @@ func TestScanBlockWithBurn(t *testing.T) {
 		}
 	})
 }
+
+// Broadcasts run on poller goroutines while Run adds and removes clients and
+// closes their send channels. Iterating the client map outside the lock is a
+// data race (the runtime aborts with "concurrent map iteration and map
+// write") and can send on a closed channel. Run with -race.
+func TestWSHubBroadcastConcurrentWithUnregister(t *testing.T) {
+	hub := NewWSHub(&MockConn{}, WebSocketConfig{MaxConnections: 10000, MaxConnectionsPerIP: 10000, MaxConnectionsPerChain: 10000}, nil)
+	go hub.Run()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 2000; i++ {
+			c := &WSClient{hub: hub, send: make(chan []byte, 1), chainID: 43114, ip: "203.0.113.10", feed: "blocks"}
+			hub.register <- c
+			hub.unregister <- c
+		}
+	}()
+
+	for {
+		select {
+		case <-done:
+			return
+		default:
+			hub.broadcastBlock(43114, Block{})
+			hub.broadcastAlert(43114, WSLendingAlert{})
+		}
+	}
+}

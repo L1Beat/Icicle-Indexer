@@ -172,11 +172,21 @@ func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 func (rl *RateLimiter) ClientIP(r *http.Request) string {
 	remoteIP := remoteAddrIP(r)
 	if rl.isTrustedProxy(remoteIP) {
-		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			if idx := strings.Index(xff, ","); idx != -1 {
-				return strings.TrimSpace(xff[:idx])
+		// Proxies append the address they saw, so only the right end of the
+		// chain is trustworthy: the leftmost entries are whatever the client
+		// sent. Walk from the right past our own proxies and take the first
+		// address they did not add.
+		if xffs := r.Header.Values("X-Forwarded-For"); len(xffs) > 0 {
+			parts := strings.Split(strings.Join(xffs, ","), ",")
+			for i := len(parts) - 1; i >= 0; i-- {
+				ip := strings.TrimSpace(parts[i])
+				if net.ParseIP(ip) == nil {
+					break // garbage in the chain: fall back to X-Real-IP or the peer
+				}
+				if i == 0 || !rl.isTrustedProxy(ip) {
+					return ip
+				}
 			}
-			return strings.TrimSpace(xff)
 		}
 
 		if xri := r.Header.Get("X-Real-IP"); xri != "" {

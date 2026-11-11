@@ -480,6 +480,11 @@ func (s *Server) handleDailyFeeBurn(w http.ResponseWriter, r *http.Request) {
 		}
 		days = int(time.Since(earliest).Hours()/24) + 1
 	}
+	// The per-validator breakdown returns one row per (day, validator), so it
+	// keeps the 365-day cap even when the window defaults to full history.
+	if includeValidators && days > 365 {
+		days = 365
+	}
 
 	// Query: for each day, for each validator, compute active seconds on that day.
 	// A validator is active from start_time until it gets disabled (refund block_time) or until now if still active.
@@ -524,14 +529,14 @@ func (s *Server) handleDailyFeeBurn(w http.ResponseWriter, r *http.Request) {
 		ORDER BY d.day ASC, active_seconds DESC
 	`
 
-	if subnetID == "" {
-		// Network-wide: sum in ClickHouse, one row per day rather than one per
-		// (day, validator) across every L1.
+	if !includeValidators {
+		// No per-validator breakdown (always true network-wide): sum in
+		// ClickHouse, one row per day rather than one per (day, validator).
 		agg := `SELECT day, toUInt32(count()) AS validators, sum(active_seconds) AS secs
 			FROM (` + query + `) GROUP BY day ORDER BY day ASC`
 		rows, err := s.conn.Query(ctx, agg, append([]any{days}, filterArgs...)...)
 		if err != nil {
-			slog.Error("Network daily fee burn query failed", "error", err)
+			slog.Error("Daily fee burn query failed", "subnet_id", subnetID, "error", err)
 			writeInternalError(w, err.Error())
 			return
 		}
