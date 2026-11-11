@@ -240,6 +240,7 @@ func (a *Adapter) BuildProbe(account string, exposure []lending.Exposure) lendin
 				pr := results[idx+1]
 				idx += 2
 				if !rd.Success || !pr.Success {
+					h.KeepLegs = append(h.KeepLegs, asset)
 					continue
 				}
 				p, known := params[asset]
@@ -247,6 +248,7 @@ func (a *Adapter) BuildProbe(account string, exposure []lending.Exposure) lendin
 					// No decimals yet (listed since the last params refresh):
 					// skip the leg rather than value it with decimals=0, which
 					// would inflate base_value by 10^decimals.
+					h.KeepLegs = append(h.KeepLegs, asset)
 					continue
 				}
 				price := lending.Word(pr.ReturnData, 0)

@@ -26,6 +26,11 @@ var (
 		Help: "Accounts recomputed by trigger",
 	}, []string{"trigger"})
 
+	metricLegCarryTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "icicle_lending_leg_carry_total",
+		Help: "Legs whose per-asset read failed: carried forward, or expired after MaxLegCarry of consecutive failures.",
+	}, []string{"protocol", "outcome"})
+
 	metricMulticallTotal = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "icicle_lending_multicall_requests_total",
 		Help: "Multicall3 aggregate3 requests issued",
@@ -39,6 +44,7 @@ func init() {
 		metricRefreshSeconds,
 		metricRecomputeTotal,
 		metricMulticallTotal,
+		metricLegCarryTotal,
 	)
 }
 

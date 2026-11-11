@@ -54,3 +54,23 @@ func TestConfigure_KeepsParamsForReservesMissingFromRefresh(t *testing.T) {
 		t.Fatalf("decimals for a reserve missing from the refresh were dropped: %+v ok=%v", p, ok)
 	}
 }
+
+// A failed per-asset read keeps the account OK but lists the asset so its
+// previous legs are carried forward instead of disappearing.
+func TestBuildProbe_FailedAssetReadIsKept(t *testing.T) {
+	a := New("")
+	asset := "0xb31f66aa3c1e785363f0875a1b74e27b85fd66c7"
+	a.Configure(lending.Addresses{Pool: "0x794a61358d6845594f94dc1db02a252b5b4814ad", Oracle: "0x00000000000000000000000000000000000000aa", DataProvider: "0x00000000000000000000000000000000000000bb"},
+		[]lending.AssetParam{{Asset: asset, Decimals: 18}}, lending.GlobalParams{})
+	acct := "0x2222222222222222222222222222222222222222"
+	p := a.BuildProbe(acct, []lending.Exposure{{Account: acct, Asset: asset, Side: lending.SideDebt}})
+	summary := append(append(append(append(append(word(100), word(50)...), word(0)...), word(0)...), word(0)...), word(2e18)...)
+	h := p.Decode([]lending.CallResult{
+		{Success: true, ReturnData: summary},
+		{Success: true, ReturnData: word(0)}, {Success: false},
+		{Success: true, ReturnData: word(0)},
+	}, 1)
+	if !h.OK || len(h.Assets) != 0 || len(h.KeepLegs) != 1 || h.KeepLegs[0] != asset {
+		t.Fatalf("ok=%v assets=%v keep=%v", h.OK, h.Assets, h.KeepLegs)
+	}
+}

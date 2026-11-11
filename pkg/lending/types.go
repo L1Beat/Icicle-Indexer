@@ -166,4 +166,8 @@ type Health struct {
 	Assets         []AssetPosition
 	BlockNumber    uint64
 	OK             bool // false if the read reverted or failed, so it is skipped not zeroed (rule 5)
+	// KeepLegs lists assets whose per-asset read failed (or could not be built)
+	// while the summary succeeded. Their previous live legs are carried forward
+	// rather than inferred closed, so a failed read is skipped, not zeroed (rule 5).
+	KeepLegs []string
 }

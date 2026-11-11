@@ -250,6 +250,7 @@ func (a *Adapter) BuildProbe(account string, _ []lending.Exposure) lending.Healt
 				priceRes := results[idx+1]
 				idx += 2
 				if !snap.Success || !priceRes.Success {
+					h.KeepLegs = append(h.KeepLegs, lending.NormalizeAddr(m))
 					continue
 				}
 				cTokenBalance := lending.Word(snap.ReturnData, 1)

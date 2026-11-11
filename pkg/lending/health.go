@@ -21,6 +21,11 @@ type HealthConfig struct {
 
 	BatchSize    int // Multicall sub-calls per aggregate3 request
 	SweepWorkers int // concurrency for sweep and burst reads
+
+	// MaxLegCarry bounds how long a leg is carried forward while its per-asset
+	// read keeps failing (a paused reserve, a dead price source). After that the
+	// leg is no longer carried, so a repaid or withdrawn leg cannot linger.
+	MaxLegCarry time.Duration
 }
 
 // DefaultHealthConfig returns sane defaults sized to the read-budget analysis.
@@ -35,6 +40,7 @@ func DefaultHealthConfig() HealthConfig {
 		ColdInterval:  20 * time.Minute,
 		BatchSize:     400,
 		SweepWorkers:  8,
+		MaxLegCarry:   time.Hour,
 	}
 }
 
@@ -66,6 +72,10 @@ type HealthEngine struct {
 	// updated_at handed out. Both are guarded by mu.
 	readSeq   uint64
 	lastStamp time.Time
+	// carrySince records, per account, when each asset's per-asset read began
+	// failing without a success since. Guarded by mu; in memory only, so a
+	// restart allows at most one more MaxLegCarry window.
+	carrySince map[Protocol]map[string]map[string]time.Time
 }
 
 // NewHealthEngine builds the engine over the configured adapters.
@@ -310,6 +320,7 @@ func (e *HealthEngine) apply(proto Protocol, healths []Health, seq uint64, now t
 			alerts = append(alerts, a)
 		}
 		e.state[proto][h.Account.Address] = &cacheState{tier: tier, liquidatable: h.Liquidatable, near: near, hf: h.HealthFactor, readSeq: seq}
+		h.KeepLegs = e.boundCarry(proto, h.Account.Address, h.KeepLegs, now)
 		kept = append(kept, h)
 	}
 	if stale > 0 {
@@ -322,6 +333,42 @@ func (e *HealthEngine) apply(proto Protocol, healths []Health, seq uint64, now t
 	}
 	e.lastStamp = stamp
 	return kept, tiers, alerts, stamp
+}
+
+// boundCarry drops assets from keep once their reads have failed for longer than
+// MaxLegCarry, and forgets assets that read successfully this time. Caller
+// holds e.mu.
+func (e *HealthEngine) boundCarry(proto Protocol, account string, keep []string, now time.Time) []string {
+	if e.carrySince == nil {
+		e.carrySince = map[Protocol]map[string]map[string]time.Time{}
+	}
+	if e.carrySince[proto] == nil {
+		e.carrySince[proto] = map[string]map[string]time.Time{}
+	}
+	prev := e.carrySince[proto][account]
+	if len(keep) == 0 {
+		delete(e.carrySince[proto], account)
+		return keep
+	}
+	next := make(map[string]time.Time, len(keep))
+	out := keep[:0]
+	for _, asset := range keep {
+		since, ok := prev[asset]
+		if !ok {
+			since = now
+		}
+		next[asset] = since
+		if e.cfg.MaxLegCarry > 0 && now.Sub(since) > e.cfg.MaxLegCarry {
+			metricLegCarryTotal.WithLabelValues(string(proto), "expired").Inc()
+			slog.Warn("lending: leg read failing past MaxLegCarry, no longer carried",
+				"protocol", proto, "account", account, "asset", asset, "failing_since", since)
+			continue
+		}
+		metricLegCarryTotal.WithLabelValues(string(proto), "carried").Inc()
+		out = append(out, asset)
+	}
+	e.carrySince[proto][account] = next
+	return out
 }
 
 // crossing compares new state to the cached prior state and returns an alert when

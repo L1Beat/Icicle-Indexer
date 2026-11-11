@@ -67,3 +67,32 @@ func TestApply_StaleFilterIsPerAccount(t *testing.T) {
 		t.Fatalf("want only account b from the sweep, got %+v", kept)
 	}
 }
+
+// A per-asset read that keeps failing is carried only for MaxLegCarry, then the
+// leg is let go; a successful read resets the clock.
+func TestApply_BoundsLegCarry(t *testing.T) {
+	e := testEngine()
+	acc, asset := "0x1111111111111111111111111111111111111111", "0x2222222222222222222222222222222222222222"
+	t0 := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
+	failing := func() Health { h := health(acc, false, 200); h.KeepLegs = []string{asset}; return h }
+
+	kept, _, _, _ := e.apply(ProtocolAaveV3, []Health{failing()}, e.beginRead(), t0)
+	if len(kept[0].KeepLegs) != 1 {
+		t.Fatal("first failure should be carried")
+	}
+	kept, _, _, _ = e.apply(ProtocolAaveV3, []Health{failing()}, e.beginRead(), t0.Add(59*time.Minute))
+	if len(kept[0].KeepLegs) != 1 {
+		t.Fatal("still inside MaxLegCarry, should be carried")
+	}
+	kept, _, _, _ = e.apply(ProtocolAaveV3, []Health{failing()}, e.beginRead(), t0.Add(61*time.Minute))
+	if len(kept[0].KeepLegs) != 0 {
+		t.Fatal("failing past MaxLegCarry, should no longer be carried")
+	}
+
+	// A good read clears the history; the next failure starts a fresh window.
+	e.apply(ProtocolAaveV3, []Health{health(acc, false, 200)}, e.beginRead(), t0.Add(62*time.Minute))
+	kept, _, _, _ = e.apply(ProtocolAaveV3, []Health{failing()}, e.beginRead(), t0.Add(63*time.Minute))
+	if len(kept[0].KeepLegs) != 1 {
+		t.Fatal("after a successful read the carry window should restart")
+	}
+}

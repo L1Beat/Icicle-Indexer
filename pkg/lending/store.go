@@ -330,16 +330,28 @@ func (s *Store) ReadPriorStates(ctx context.Context, protocol Protocol, nearEdge
 
 // WriteHealth persists position snapshots, their per-asset legs, and any crossing
 // alerts in one logical update. Positions and legs share one updated_at, which
-// the caller supplies so versions follow read order (HealthEngine.apply). A leg
-// that drops to zero is not rewritten, so readers keep only legs whose latest
-// updated_at is at or after the position's latest updated_at: a repaid debt or a
-// withdrawn collateral leg is then older than the position and drops out.
+// the caller supplies so versions follow read order (HealthEngine.apply).
+//
+// A leg that drops to zero is not rewritten, so readers keep only legs whose
+// latest updated_at is at or after the position's latest updated_at: a repaid
+// debt or a withdrawn collateral leg is then older than the position and drops
+// out. Write order matters because of that rule:
+//  1. Legs whose per-asset read failed (Health.KeepLegs) are carried forward
+//     from the previous snapshot first, while the old pos_ts still decides
+//     which of them were live. If that fails nothing is written, so the
+//     previous snapshot stays whole instead of losing those legs.
+//  2. Fresh legs.
+//  3. Positions last: if the leg insert failed, the old position row still
+//     covers the old legs rather than hiding them behind a newer pos_ts.
 func (s *Store) WriteHealth(ctx context.Context, healths []Health, tiers map[string]Tier, alerts []Alert, now time.Time) error {
 	if len(healths) > 0 {
-		if err := s.writePositions(ctx, healths, tiers, now); err != nil {
-			return err
+		if err := s.carryLegs(ctx, healths, now); err != nil {
+			return fmt.Errorf("carry legs: %w", err)
 		}
 		if err := s.writePositionAssets(ctx, healths, now); err != nil {
+			return err
+		}
+		if err := s.writePositions(ctx, healths, tiers, now); err != nil {
 			return err
 		}
 	}
@@ -349,6 +361,94 @@ func (s *Store) WriteHealth(ctx context.Context, healths []Health, tiers map[str
 		}
 	}
 	return nil
+}
+
+// carryLegs re-stamps, at now, the previous live legs (same rule as the API
+// readers: latest amount > 0 and leg_ts >= the account's latest pos_ts) for
+// every (account, asset) pair in Health.KeepLegs. Both sides of the asset are
+// carried. Pairs are matched exactly so a leg rewritten fresh in this batch is
+// never duplicated.
+func (s *Store) carryLegs(ctx context.Context, healths []Health, now time.Time) error {
+	type sets struct{ pairs, accounts []string }
+	byProto := map[Protocol]*sets{}
+	for _, h := range healths {
+		if !h.OK || len(h.KeepLegs) == 0 {
+			continue
+		}
+		acc, ok := hex40(h.Account.Address)
+		if !ok {
+			continue
+		}
+		st := byProto[h.Account.Protocol]
+		if st == nil {
+			st = &sets{}
+			byProto[h.Account.Protocol] = st
+		}
+		added := false
+		for _, asset := range h.KeepLegs {
+			if as, ok := hex40(asset); ok {
+				st.pairs = append(st.pairs, "(unhex('"+acc+"'), unhex('"+as+"'))")
+				added = true
+			}
+		}
+		if added {
+			st.accounts = append(st.accounts, "unhex('"+acc+"')")
+		}
+	}
+	for proto, st := range byProto {
+		if len(st.pairs) == 0 {
+			continue
+		}
+		q := carryLegsSQL(strings.Join(st.pairs, ", "), strings.Join(st.accounts, ", "), now)
+		if err := s.conn.Exec(ctx, q, s.chainID, string(proto), s.chainID, string(proto)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// carryLegsSQL builds the carry-forward insert for literal (account, asset)
+// tuples and their accounts, all validated 40-char hex (hex40). The stamp is a
+// millisecond literal: clickhouse-go binds a time.Time at whole seconds, which
+// would put the carried legs before pos_ts and hide them again.
+func carryLegsSQL(pairs, accounts string, now time.Time) string {
+	stamp := now.UTC().Format("2006-01-02 15:04:05.000")
+	return `INSERT INTO lending_position_assets
+		(chain_id, protocol, account, asset, side, amount, base_value, entered, config_key, updated_at)
+	SELECT l.chain_id, l.protocol, l.account, l.asset, l.side, l.amt, l.val, l.ent, l.cfg,
+		toDateTime64('` + stamp + `', 3, 'UTC')
+	FROM (
+		SELECT chain_id, protocol, account, asset, side,
+			argMax(amount, updated_at) AS amt,
+			argMax(base_value, updated_at) AS val,
+			argMax(entered, updated_at) AS ent,
+			argMax(config_key, updated_at) AS cfg,
+			max(updated_at) AS leg_ts
+		FROM lending_position_assets
+		WHERE chain_id = ? AND protocol = ? AND (account, asset) IN (` + pairs + `)
+		GROUP BY chain_id, protocol, account, asset, side
+	) AS l
+	INNER JOIN (
+		SELECT account, max(updated_at) AS pos_ts
+		FROM lending_positions
+		WHERE chain_id = ? AND protocol = ? AND account IN (` + accounts + `)
+		GROUP BY account
+	) AS p ON l.account = p.account
+	WHERE l.amt > 0 AND l.leg_ts >= p.pos_ts`
+}
+
+// hex40 returns addr as 40 lowercase hex characters, or false if it is not one.
+func hex40(addr string) (string, bool) {
+	h := strings.TrimPrefix(strings.ToLower(addr), "0x")
+	if len(h) != 40 {
+		return "", false
+	}
+	for _, c := range h {
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return "", false
+		}
+	}
+	return h, true
 }
 
 func (s *Store) writePositions(ctx context.Context, healths []Health, tiers map[string]Tier, now time.Time) error {

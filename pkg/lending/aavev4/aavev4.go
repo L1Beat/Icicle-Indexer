@@ -195,6 +195,7 @@ func (a *Adapter) BuildProbe(account string, exposure []lending.Exposure) lendin
 	a.mu.RLock()
 	spoke, oracle := a.spoke, a.addrs.Oracle
 	var reserves []reserve
+	var unknown []string // exposed assets with no reserve metadata yet: keep their legs
 	seen := map[string]bool{}
 	for _, e := range exposure {
 		asset := lending.NormalizeAddr(e.Asset)
@@ -204,6 +205,8 @@ func (a *Adapter) BuildProbe(account string, exposure []lending.Exposure) lendin
 		seen[asset] = true
 		if r, ok := a.byAsset[asset]; ok {
 			reserves = append(reserves, r)
+		} else {
+			unknown = append(unknown, asset)
 		}
 	}
 	a.mu.RUnlock()
@@ -226,7 +229,11 @@ func (a *Adapter) BuildProbe(account string, exposure []lending.Exposure) lendin
 		Account: account,
 		Calls:   calls,
 		Decode: func(results []lending.CallResult, block uint64) lending.Health {
-			return decodeHealth(proto, account, reserves, results, block)
+			h := decodeHealth(proto, account, reserves, results, block)
+			if h.OK {
+				h.KeepLegs = append(h.KeepLegs, unknown...)
+			}
+			return h
 		},
 	}
 }
@@ -259,6 +266,7 @@ func decodeHealth(proto lending.Protocol, account string, reserves []reserve, re
 		}
 		supplied, debt, status, pos, price := results[idx], results[idx+1], results[idx+2], results[idx+3], results[idx+4]
 		if !supplied.Success || !debt.Success || !price.Success {
+			h.KeepLegs = append(h.KeepLegs, lending.NormalizeAddr(r.underlying))
 			continue
 		}
 		p := lending.Word(price.ReturnData, 0)
