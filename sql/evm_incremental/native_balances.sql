@@ -64,6 +64,7 @@ FROM (
       AND to IS NOT NULL
       AND value > 0
       AND tx_success = true
+      AND NOT reverted  -- frame or an ancestor failed: the transfer was rolled back
       AND call_type IN ('CALL', 'CREATE', 'CREATE2')
 
     UNION ALL
@@ -83,6 +84,7 @@ FROM (
       AND block_number <= @to_block
       AND value > 0
       AND tx_success = true
+      AND NOT reverted  -- frame or an ancestor failed: the transfer was rolled back
       AND call_type IN ('CALL', 'CREATE', 'CREATE2')
 
     UNION ALL

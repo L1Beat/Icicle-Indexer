@@ -90,6 +90,10 @@ CREATE TABLE IF NOT EXISTS raw_traces (
 ) ENGINE = MergeTree()
 ORDER BY (chain_id, block_number);
 
+-- reverted: this frame or an ancestor frame failed, so its effects were rolled back
+-- even when tx_success is true. Rows ingested before this column existed read false.
+ALTER TABLE raw_traces ADD COLUMN IF NOT EXISTS reverted Bool DEFAULT false;
+
 -- Logs table - event logs emitted by smart contracts
 CREATE TABLE IF NOT EXISTS raw_logs (
     chain_id UInt32,  -- Multiple chains in same tables
