@@ -320,7 +320,37 @@ func main() {
 	addressBackfillCmd.Flags().Uint32("chunk", 250000, "Blocks per INSERT ... SELECT")
 	addressBackfillCmd.Flags().Int("threads", 8, "ClickHouse threads per chunk")
 
+	revertBackfillCmd := &cobra.Command{
+		Use:   "revert-backfill",
+		Short: "Correct native balances for history traced before raw_traces.reverted existed (resumable: re-trace, then --recompute)",
+		Run: func(command *cobra.Command, args []string) {
+			var opts cmd.RevertBackfillOptions
+			opts.ChainID, _ = command.Flags().GetUint32("chain")
+			opts.From, _ = command.Flags().GetUint32("from")
+			opts.To, _ = command.Flags().GetUint32("to")
+			opts.RPC, _ = command.Flags().GetString("rpc")
+			opts.TraceChunk, _ = command.Flags().GetUint32("chunk")
+			opts.Concurrency, _ = command.Flags().GetInt("concurrency")
+			opts.DebugBatch, _ = command.Flags().GetInt("debug-batch")
+			opts.Recompute, _ = command.Flags().GetBool("recompute")
+			opts.RecomputeChunk, _ = command.Flags().GetUint32("recompute-chunk")
+			opts.SQLDir, _ = command.Flags().GetString("sql-dir")
+			cmd.RunRevertBackfill(ctx, opts)
+		},
+	}
+	revertBackfillCmd.Flags().Uint32("chain", 43114, "EVM chain ID")
+	revertBackfillCmd.Flags().Uint32("from", 0, "First block (inclusive)")
+	revertBackfillCmd.Flags().Uint32("to", 0, "End block (exclusive): the block raw_traces.reverted started being written")
+	revertBackfillCmd.Flags().String("rpc", cmd.DefaultChainRPC(43114), "Archive node RPC with debug_trace* (default: from config.yaml)")
+	revertBackfillCmd.Flags().Uint32("chunk", 100, "Blocks re-traced per fetch")
+	revertBackfillCmd.Flags().Int("concurrency", 2, "Parallel RPC requests (keep low, the node also serves the live indexer)")
+	revertBackfillCmd.Flags().Int("debug-batch", 10, "Trace calls per HTTP request")
+	revertBackfillCmd.Flags().Bool("recompute", false, "Phase 2: rebuild native_balance_changes for the range from the recorded reverts")
+	revertBackfillCmd.Flags().Uint32("recompute-chunk", 20000, "Blocks per recompute step")
+	revertBackfillCmd.Flags().String("sql-dir", "sql", "Directory holding evm_incremental/native_balances.sql")
+
 	root.AddCommand(
+		revertBackfillCmd,
 		addressBackfillCmd,
 		enrichBackfillCmd,
 		ingestCmd,

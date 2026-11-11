@@ -1062,3 +1062,51 @@ func InsertLogs(ctx context.Context, conn clickhouse.Conn, chainID uint32, block
 
 	return chwrapper.RetryableBatchSend(batch)
 }
+
+// RevertFrame is a value-moving trace frame that was rolled back.
+type RevertFrame struct {
+	BlockNumber  uint32
+	TxHash       []byte
+	TraceAddress []uint16
+	From         []byte
+	To           any // nil or 20 bytes, as raw_traces stores it
+	Value        *big.Int
+}
+
+// RevertedValueFrames returns the CALL/CREATE frames in a block that moved
+// value but were rolled back, using the same flattening as InsertTraces.
+func RevertedValueFrames(nb *evmrpc.NormalizedBlock) ([]RevertFrame, error) {
+	block := nb.Block
+	blockNumber, err := hexToUint32(block.Number)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse block number: %w", err)
+	}
+	var out []RevertFrame
+	for i, tx := range block.Transactions {
+		if i >= len(nb.Traces) || nb.Traces[i].Result == nil {
+			continue
+		}
+		txHash, err := hexToFixedBytes(tx.Hash, 32)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse tx hash: %w", err)
+		}
+		frames, err := flattenTrace(nb.Traces[i].Result, tx.Hash, blockNumber, time.Time{}, uint16(i), []uint16{}, true, nil, nil, false)
+		if err != nil {
+			return nil, fmt.Errorf("failed to flatten trace for tx %s: %w", tx.Hash, err)
+		}
+		for _, f := range frames {
+			if !f.Reverted || f.Value == nil || f.Value.Sign() <= 0 {
+				continue
+			}
+			if f.CallType != "CALL" && f.CallType != "CREATE" && f.CallType != "CREATE2" {
+				continue
+			}
+			var to any
+			if len(f.To) > 0 {
+				to = f.To
+			}
+			out = append(out, RevertFrame{BlockNumber: blockNumber, TxHash: txHash, TraceAddress: f.TraceAddress, From: f.From, To: to, Value: f.Value})
+		}
+	}
+	return out, nil
+}

@@ -58,3 +58,28 @@ func repeat(s string, n int) string {
 	}
 	return out
 }
+
+func TestRevertedValueFrames_OnlyRolledBackValueMoves(t *testing.T) {
+	a := func(c string) string { return "0x" + repeat(c, 40) }
+	nb := &evmrpc.NormalizedBlock{
+		Block: evmrpc.Block{Number: "0x56c2c4b", Transactions: []evmrpc.Transaction{{Hash: "0x" + repeat("cd", 32)}}},
+		Traces: []evmrpc.TraceResultOptional{{Result: &evmrpc.CallTrace{Type: "CALL", From: a("1"), To: a("2"), Calls: []evmrpc.CallTrace{
+			{Type: "CALL", From: a("2"), To: a("3"), Error: "execution reverted", Value: "0x5", Calls: []evmrpc.CallTrace{
+				{Type: "CALL", From: a("3"), To: a("4"), Value: "0x7"},
+				{Type: "STATICCALL", From: a("3"), To: a("5")},
+				{Type: "CALL", From: a("3"), To: a("6")},
+			}},
+			{Type: "CALL", From: a("2"), To: a("7"), Value: "0x9"},
+		}}}},
+	}
+	frames, err := RevertedValueFrames(nb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(frames) != 2 {
+		t.Fatalf("want the reverted 0x5 and 0x7 transfers, got %d: %+v", len(frames), frames)
+	}
+	if frames[0].Value.Int64() != 5 || frames[1].Value.Int64() != 7 || len(frames[1].TraceAddress) != 2 || frames[0].BlockNumber != 0x56c2c4b {
+		t.Fatalf("unexpected frames: %+v", frames)
+	}
+}

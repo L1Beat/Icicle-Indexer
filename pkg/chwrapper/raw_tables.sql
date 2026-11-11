@@ -94,6 +94,20 @@ ORDER BY (chain_id, block_number);
 -- even when tx_success is true. Rows ingested before this column existed read false.
 ALTER TABLE raw_traces ADD COLUMN IF NOT EXISTS reverted Bool DEFAULT false;
 
+-- Value-moving trace frames that were rolled back, for blocks ingested before
+-- raw_traces.reverted existed. Filled by the revert-backfill command and used to
+-- recompute native_balance_changes for that history.
+CREATE TABLE IF NOT EXISTS raw_trace_reverts (
+    chain_id UInt32,
+    block_number UInt32,
+    tx_hash FixedString(32),
+    trace_address Array(UInt16),
+    from FixedString(20),
+    to Nullable(FixedString(20)),
+    value UInt256
+) ENGINE = ReplacingMergeTree
+ORDER BY (chain_id, block_number, tx_hash, trace_address);
+
 -- Logs table - event logs emitted by smart contracts
 CREATE TABLE IF NOT EXISTS raw_logs (
     chain_id UInt32,  -- Multiple chains in same tables
