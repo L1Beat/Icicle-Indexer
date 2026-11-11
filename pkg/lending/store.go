@@ -329,13 +329,13 @@ func (s *Store) ReadPriorStates(ctx context.Context, protocol Protocol, nearEdge
 }
 
 // WriteHealth persists position snapshots, their per-asset legs, and any crossing
-// alerts in one logical update. Positions and legs share one updated_at. A leg
+// alerts in one logical update. Positions and legs share one updated_at, which
+// the caller supplies so versions follow read order (HealthEngine.apply). A leg
 // that drops to zero is not rewritten, so readers keep only legs whose latest
 // updated_at is at or after the position's latest updated_at: a repaid debt or a
 // withdrawn collateral leg is then older than the position and drops out.
-func (s *Store) WriteHealth(ctx context.Context, healths []Health, tiers map[string]Tier, alerts []Alert) error {
+func (s *Store) WriteHealth(ctx context.Context, healths []Health, tiers map[string]Tier, alerts []Alert, now time.Time) error {
 	if len(healths) > 0 {
-		now := time.Now().UTC()
 		if err := s.writePositions(ctx, healths, tiers, now); err != nil {
 			return err
 		}

@@ -126,10 +126,17 @@ func (a *Adapter) Resolve(ctx context.Context, rpc *lending.Client) (lending.Add
 func (a *Adapter) Configure(addrs lending.Addresses, params []lending.AssetParam, globals lending.GlobalParams) {
 	a.addrs = addrs
 	a.globals = globals
-	a.params = make(map[string]lending.AssetParam, len(params))
-	for _, p := range params {
-		a.params[lending.NormalizeAddr(p.Asset)] = p
+	// RefreshParams skips a reserve whose config read failed, so keep the last
+	// known entry for it rather than forgetting its decimals (as Aave V4 keeps
+	// its previous reserve reading). Build the map before publishing it.
+	m := make(map[string]lending.AssetParam, len(params)+len(a.params))
+	for k, p := range a.params {
+		m[k] = p
 	}
+	for _, p := range params {
+		m[lending.NormalizeAddr(p.Asset)] = p
+	}
+	a.params = m
 }
 
 func (a *Adapter) Discovery() lending.DiscoverySpec {
@@ -235,7 +242,13 @@ func (a *Adapter) BuildProbe(account string, exposure []lending.Exposure) lendin
 				if !rd.Success || !pr.Success {
 					continue
 				}
-				p := params[asset]
+				p, known := params[asset]
+				if !known {
+					// No decimals yet (listed since the last params refresh):
+					// skip the leg rather than value it with decimals=0, which
+					// would inflate base_value by 10^decimals.
+					continue
+				}
 				price := lending.Word(pr.ReturnData, 0)
 				aTokenBal := lending.Word(rd.ReturnData, 0)
 				debt := new(big.Int).Add(lending.Word(rd.ReturnData, 1), lending.Word(rd.ReturnData, 2))

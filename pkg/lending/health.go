@@ -47,6 +47,9 @@ type cacheState struct {
 	liquidatable bool
 	near         bool
 	hf           *big.Int
+	// readSeq is the sequence of the read this state came from. A refresh
+	// whose read started earlier must not overwrite it (see apply).
+	readSeq uint64
 }
 
 // HealthEngine reads position health on a tiered schedule and writes snapshots,
@@ -59,6 +62,10 @@ type HealthEngine struct {
 
 	mu    sync.Mutex
 	state map[Protocol]map[string]*cacheState
+	// readSeq numbers refresh reads in start order; lastStamp is the last
+	// updated_at handed out. Both are guarded by mu.
+	readSeq   uint64
+	lastStamp time.Time
 }
 
 // NewHealthEngine builds the engine over the configured adapters.
@@ -244,16 +251,55 @@ func (e *HealthEngine) refresh(ctx context.Context, adapter Adapter, accounts []
 		probes = append(probes, adapter.BuildProbe(acc, exp))
 	}
 
+	seq := e.beginRead()
 	healths := e.executeProbes(ctx, probes, head)
 	if len(healths) == 0 {
 		return
 	}
 
+	healths, tiers, alerts, stamp := e.apply(proto, healths, seq, time.Now())
+	if len(healths) == 0 {
+		return
+	}
+	if err := e.store.WriteHealth(ctx, healths, tiers, alerts, stamp); err != nil {
+		slog.Warn("lending: write health failed", "protocol", proto, "error", err)
+	}
+	e.updateGauges()
+}
+
+// beginRead returns the sequence for a read that starts now. Sequences grow in
+// start order across the sweep, tier and price-triggered refreshes.
+func (e *HealthEngine) beginRead() uint64 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.readSeq++
+	return e.readSeq
+}
+
+// apply folds one refresh's results into the cache and returns what to persist.
+//
+// The sweep, the tier refreshes and price-triggered recomputes run concurrently,
+// and a cold sweep can take minutes between its reads and its write. A result
+// is dropped when the cached state for that account came from a read that
+// started later, so an old read never replaces a newer one. The returned stamp
+// becomes updated_at, the version readers pick the latest row by. It is taken
+// under the same lock and strictly increases (at the column's millisecond
+// precision), so the newest accepted read always carries the highest version,
+// whichever insert reaches ClickHouse first.
+func (e *HealthEngine) apply(proto Protocol, healths []Health, seq uint64, now time.Time) ([]Health, map[string]Tier, []Alert, time.Time) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	kept := healths[:0]
 	tiers := make(map[string]Tier, len(healths))
 	var alerts []Alert
-	e.mu.Lock()
+	stale := 0
 	for _, h := range healths {
 		if !h.OK {
+			continue
+		}
+		if prev := e.state[proto][h.Account.Address]; prev != nil && prev.readSeq > seq {
+			stale++
 			continue
 		}
 		tier := ClassifyTier(h.HealthFactor, h.Liquidatable, e.cfg.HotEdge, e.cfg.WarmEdge)
@@ -263,14 +309,19 @@ func (e *HealthEngine) refresh(ctx context.Context, adapter Adapter, accounts []
 		if a, ok := e.crossing(proto, h, near); ok {
 			alerts = append(alerts, a)
 		}
-		e.state[proto][h.Account.Address] = &cacheState{tier: tier, liquidatable: h.Liquidatable, near: near, hf: h.HealthFactor}
+		e.state[proto][h.Account.Address] = &cacheState{tier: tier, liquidatable: h.Liquidatable, near: near, hf: h.HealthFactor, readSeq: seq}
+		kept = append(kept, h)
 	}
-	e.mu.Unlock()
+	if stale > 0 {
+		slog.Debug("lending: dropped results superseded by a newer read", "protocol", proto, "stale", stale)
+	}
 
-	if err := e.store.WriteHealth(ctx, healths, tiers, alerts); err != nil {
-		slog.Warn("lending: write health failed", "protocol", proto, "error", err)
+	stamp := now.UTC().Truncate(time.Millisecond)
+	if !stamp.After(e.lastStamp) {
+		stamp = e.lastStamp.Add(time.Millisecond)
 	}
-	e.updateGauges()
+	e.lastStamp = stamp
+	return kept, tiers, alerts, stamp
 }
 
 // crossing compares new state to the cached prior state and returns an alert when
