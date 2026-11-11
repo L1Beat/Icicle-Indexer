@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -66,6 +67,12 @@ var (
 	delegationsCache   = newTTLCache(5 * time.Minute)
 	delegatorCache     = newTTLCache(5 * time.Minute)
 	delegatorPageCache = newTTLCache(5 * time.Minute)
+
+	// delegationScans bounds concurrent uncached delegation queries. They have
+	// no index to use (p_chain_txs is keyed by tx_id), and every new NodeID,
+	// address or page misses the caches, so without a bound a client cycling
+	// keys stacks full scans on ClickHouse.
+	delegationScans = make(chan struct{}, 4)
 )
 
 // handleValidatorDelegations lists the delegations to a Primary Network validator
@@ -83,6 +90,38 @@ var (
 // @Failure 400 {object} ErrorResponse
 // @Failure 500 {object} ErrorResponse
 // @Router /api/v1/data/validators/{id}/delegations [get]
+// errDelegationsBusy means every scan slot stayed taken for delegationScanWait.
+var errDelegationsBusy = errors.New("delegation lookups are busy, retry shortly")
+
+const delegationScanWait = 5 * time.Second
+
+// scanSlot wraps a cache loader so it runs only while holding a scan slot.
+func scanSlot(load func(context.Context) (interface{}, error)) func(context.Context) (interface{}, error) {
+	return func(ctx context.Context) (interface{}, error) {
+		t := time.NewTimer(delegationScanWait)
+		defer t.Stop()
+		select {
+		case delegationScans <- struct{}{}:
+		case <-t.C:
+			return nil, errDelegationsBusy
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+		defer func() { <-delegationScans }()
+		return load(ctx)
+	}
+}
+
+// writeDelegationError reports a busy scan gate as 503 and anything else as 500.
+func writeDelegationError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errDelegationsBusy) {
+		w.Header().Set("Retry-After", "5")
+		writeAPIError(w, http.StatusServiceUnavailable, ErrRateLimited, err.Error())
+		return
+	}
+	writeInternalError(w, err.Error())
+}
+
 func (s *Server) handleValidatorDelegations(w http.ResponseWriter, r *http.Request) {
 	nodeID := r.PathValue("id")
 	if !strings.HasPrefix(nodeID, "NodeID-") {
@@ -102,11 +141,11 @@ func (s *Server) handleValidatorDelegations(w http.ResponseWriter, r *http.Reque
 	if onlyRunning {
 		scope = "active"
 	}
-	v, err := delegationsCache.get(r.Context(), nodeID+"|"+scope, func(ctx context.Context) (interface{}, error) {
+	v, err := delegationsCache.get(r.Context(), nodeID+"|"+scope, scanSlot(func(ctx context.Context) (interface{}, error) {
 		return s.loadDelegations(ctx, "toString(tx_data.validator.nodeID) = ?", nodeID, onlyRunning)
-	})
+	}))
 	if err != nil {
-		writeInternalError(w, err.Error())
+		writeDelegationError(w, err)
 		return
 	}
 
@@ -161,21 +200,21 @@ func (s *Server) handleDelegatorDelegations(w http.ResponseWriter, r *http.Reque
 
 	// Large staking services have millions of delegations, so paging, sorting and
 	// the summary all run in ClickHouse rather than over a cached full list.
-	sumV, err := delegatorCache.get(r.Context(), short, func(ctx context.Context) (interface{}, error) {
+	sumV, err := delegatorCache.get(r.Context(), short, scanSlot(func(ctx context.Context) (interface{}, error) {
 		return s.loadDelegatorSummary(ctx, short)
-	})
+	}))
 	if err != nil {
-		writeInternalError(w, err.Error())
+		writeDelegationError(w, err)
 		return
 	}
 	sum := sumV.(delegatorTotals)
 
 	key := fmt.Sprintf("%s|%v|%s|%s|%d|%d", short, boolKey(active), sortKey, order, limit, offset)
-	pageV, err := delegatorPageCache.get(r.Context(), key, func(ctx context.Context) (interface{}, error) {
+	pageV, err := delegatorPageCache.get(r.Context(), key, scanSlot(func(ctx context.Context) (interface{}, error) {
 		return s.loadDelegatorPage(ctx, short, active, sortKey, order, limit, offset)
-	})
+	}))
 	if err != nil {
-		writeInternalError(w, err.Error())
+		writeDelegationError(w, err)
 		return
 	}
 

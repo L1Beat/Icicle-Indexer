@@ -198,29 +198,22 @@ func (s *Server) handleAddressNativeBalance(w http.ResponseWriter, r *http.Reque
 		lastBlock = 0
 	}
 
-	// Use UNION ALL instead of OR to allow ClickHouse to use bloom filter indexes on each column
+	// address_txs has one row per (address, tx) where the address is the from
+	// or the to, sorted by address, so this reads one key range. Counting on
+	// raw_txs instead scanned most of the table for busy contracts.
 	txStatsQuery := `
 		SELECT
-			sum(cnt) as tx_count,
-			min(first_tx_time) as first_tx_time,
-			max(last_tx_time) as last_tx_time
-		FROM (
-			SELECT count() as cnt,
-				min(block_time) as first_tx_time,
-				max(block_time) as last_tx_time
-			FROM raw_txs WHERE chain_id = ? AND from = unhex(?)
-			UNION ALL
-			SELECT count() as cnt,
-				min(block_time) as first_tx_time,
-				max(block_time) as last_tx_time
-			FROM raw_txs WHERE chain_id = ? AND to = unhex(?) AND from != unhex(?)
-		)
+			count() as tx_count,
+			min(block_time) as first_tx_time,
+			max(block_time) as last_tx_time
+		FROM address_txs
+		WHERE chain_id = ? AND address = unhex(?)
 	`
 
 	var txCount uint64
 	var firstTxTime, lastTxTime time.Time
 
-	err = s.conn.QueryRow(ctx, txStatsQuery, chainID, address, chainID, address, address).Scan(&txCount, &firstTxTime, &lastTxTime)
+	err = s.conn.QueryRow(ctx, txStatsQuery, chainID, address).Scan(&txCount, &firstTxTime, &lastTxTime)
 	if err != nil {
 		txCount = 0
 	}
