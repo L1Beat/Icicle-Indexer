@@ -102,6 +102,7 @@ func traceReverts(ctx context.Context, conn driver.Conn, opts RevertBackfillOpti
 		RetryDelay:     500 * time.Millisecond,
 		BatchSize:      100,
 		DebugBatchSize: opts.DebugBatch,
+		Ctx:            ctx, // a stop interrupts in-flight traces and retry waits
 	})
 	defer fetcher.Close()
 
@@ -131,10 +132,13 @@ func traceReverts(ctx context.Context, conn driver.Conn, opts RevertBackfillOpti
 			}
 			frames = append(frames, f...)
 		}
-		if err := insertReverts(ctx, conn, opts.ChainID, frames); err != nil {
+		// The chunk is fully traced: finish recording it even if a stop
+		// arrives now, so it is not traced again on resume.
+		writeCtx := context.WithoutCancel(ctx)
+		if err := insertReverts(writeCtx, conn, opts.ChainID, frames); err != nil {
 			return fmt.Errorf("insert %d-%d: %w", next, end-1, err)
 		}
-		if err := saveBackfillState(ctx, conn, key, opts.To, end); err != nil {
+		if err := saveBackfillState(writeCtx, conn, key, opts.To, end); err != nil {
 			return err
 		}
 		total += len(frames)

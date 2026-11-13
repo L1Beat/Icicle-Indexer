@@ -2,6 +2,7 @@ package evmrpc
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -27,6 +28,9 @@ type FetcherOptions struct {
 	RetryDelay       time.Duration    // Initial retry delay
 	ProgressCallback ProgressCallback // Optional progress callback
 	Cache            *cache.Cache     // Optional cache for complete blocks
+	// Ctx, when set, aborts in-flight requests and retry waits once cancelled.
+	// Nil means never cancelled (the indexer's existing behaviour).
+	Ctx context.Context
 }
 
 type Fetcher struct {
@@ -39,6 +43,7 @@ type Fetcher struct {
 	retryDelay     time.Duration
 	progressCb     ProgressCallback
 	cache          *cache.Cache
+	ctx            context.Context
 
 	// Concurrency control
 	rpcLimit   chan struct{}
@@ -85,6 +90,9 @@ func NewFetcher(opts FetcherOptions) *Fetcher {
 	if opts.RetryDelay == 0 {
 		opts.RetryDelay = 500 * time.Millisecond
 	}
+	if opts.Ctx == nil {
+		opts.Ctx = context.Background()
+	}
 
 	// Create HTTP client with proper connection pooling
 	// Node.js reuses connections aggressively, so we do the same
@@ -109,6 +117,7 @@ func NewFetcher(opts FetcherOptions) *Fetcher {
 		retryDelay:     opts.RetryDelay,
 		progressCb:     opts.ProgressCallback,
 		cache:          opts.Cache,
+		ctx:            opts.Ctx,
 		rpcLimit:       make(chan struct{}, opts.MaxConcurrency),
 		debugLimit:     make(chan struct{}, opts.MaxConcurrency),
 		cacheWriteCh:   make(chan cacheWrite, 1000), // Buffered channel
@@ -157,6 +166,28 @@ func (f *Fetcher) cacheWriter() {
 	}
 }
 
+// sleep waits for d, returning early with the context's error if it is cancelled.
+func (f *Fetcher) sleep(d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-f.ctx.Done():
+		return f.ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
+// acquireDebug takes a debug concurrency slot, or gives up if the context is cancelled.
+func (f *Fetcher) acquireDebug() error {
+	select {
+	case f.debugLimit <- struct{}{}:
+		return nil
+	case <-f.ctx.Done():
+		return f.ctx.Err()
+	}
+}
+
 // batchRpcCall sends a batch of JSON-RPC requests with retry logic
 func (f *Fetcher) batchRpcCall(requests []jsonRpcRequest) ([]jsonRpcResponse, error) {
 	if len(requests) == 0 {
@@ -183,10 +214,12 @@ func (f *Fetcher) batchRpcCall(requests []jsonRpcRequest) ([]jsonRpcResponse, er
 				delay = 10 * time.Second
 			}
 			slog.Warn("Batch request failed, retrying", "chain_id", f.chainID, "chain_name", f.chainName, "error", lastErr, "attempt", attempt, "max_retries", f.maxRetries, "delay", delay)
-			time.Sleep(delay)
+			if err := f.sleep(delay); err != nil {
+				return nil, err
+			}
 		}
 
-		req, err := http.NewRequest("POST", f.rpcURL, bytes.NewBuffer(jsonData))
+		req, err := http.NewRequestWithContext(f.ctx, "POST", f.rpcURL, bytes.NewBuffer(jsonData))
 		if err != nil {
 			return nil, fmt.Errorf("failed to create request: %w", err)
 		}
@@ -195,6 +228,9 @@ func (f *Fetcher) batchRpcCall(requests []jsonRpcRequest) ([]jsonRpcResponse, er
 
 		resp, err := f.httpClient.Do(req)
 		if err != nil {
+			if ctxErr := f.ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
 			lastErr = fmt.Errorf("failed to make batch request: %w", err)
 			continue
 		}
@@ -273,10 +309,12 @@ func (f *Fetcher) batchRpcCallDebug(requests []jsonRpcRequest) ([]jsonRpcRespons
 				delay = 10 * time.Second
 			}
 			slog.Warn("Debug batch request failed, retrying", "chain_id", f.chainID, "chain_name", f.chainName, "error", lastErr, "attempt", attempt, "max_retries", f.maxRetries, "delay", delay)
-			time.Sleep(delay)
+			if err := f.sleep(delay); err != nil {
+				return nil, err
+			}
 		}
 
-		req, err := http.NewRequest("POST", f.rpcURL, bytes.NewBuffer(jsonData))
+		req, err := http.NewRequestWithContext(f.ctx, "POST", f.rpcURL, bytes.NewBuffer(jsonData))
 		if err != nil {
 			return nil, fmt.Errorf("failed to create debug request: %w", err)
 		}
@@ -285,6 +323,9 @@ func (f *Fetcher) batchRpcCallDebug(requests []jsonRpcRequest) ([]jsonRpcRespons
 
 		resp, err := f.httpClient.Do(req)
 		if err != nil {
+			if ctxErr := f.ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
 			lastErr = fmt.Errorf("failed to make debug batch request: %w", err)
 			continue
 		}
@@ -808,7 +849,15 @@ func (f *Fetcher) fetchTracesBatch(from, to int64, txInfos []txInfo) (map[string
 		go func(idx int, requests []jsonRpcRequest) {
 			defer wg.Done()
 
-			f.debugLimit <- struct{}{}
+			if err := f.acquireDebug(); err != nil {
+				mu.Lock()
+				blockTraceSuccess = false
+				if blockErr == nil {
+					blockErr = err
+				}
+				mu.Unlock()
+				return
+			}
 			responses, err := f.batchRpcCallDebug(requests)
 			<-f.debugLimit
 
@@ -861,6 +910,10 @@ func (f *Fetcher) fetchTracesBatch(from, to int64, txInfos []txInfo) (map[string
 		return tracesMap, nil
 	}
 
+	if err := f.ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	// Fall back to per-transaction tracing
 
 	var txRequests []jsonRpcRequest
@@ -897,14 +950,21 @@ func (f *Fetcher) fetchTracesBatch(from, to int64, txInfos []txInfo) (map[string
 						delay = 10 * time.Second
 					}
 					slog.Warn("Retrying trace batch", "chain_id", f.chainID, "chain_name", f.chainName, "batch", idx, "attempt", attempt, "max_retries", f.maxRetries, "delay", delay)
-					time.Sleep(delay)
+					if err = f.sleep(delay); err != nil {
+						break
+					}
 				}
 
-				f.debugLimit <- struct{}{}
+				if err = f.acquireDebug(); err != nil {
+					break
+				}
 				responses, err = f.batchRpcCallDebug(requests)
 				<-f.debugLimit
 
 				if err != nil {
+					if f.ctx.Err() != nil {
+						break // cancelled: stop retrying
+					}
 					continue // Network/batch error, retry
 				}
 
