@@ -309,7 +309,7 @@
             "uid": "loki"
           },
           "editorMode": "code",
-          "expr": "quantile_over_time(0.5, {job=\"nginx\", vhost=\"rpc.l1beat.io\"} | json | unwrap request_time [5m])",
+          "expr": "quantile_over_time(0.5, {job=\"nginx\", vhost=\"rpc.l1beat.io\"} | json | __error__=\"\" | unwrap request_time [5m]) by (vhost)",
           "legendFormat": "p50",
           "queryType": "range",
           "refId": "A"
@@ -320,7 +320,7 @@
             "uid": "loki"
           },
           "editorMode": "code",
-          "expr": "quantile_over_time(0.95, {job=\"nginx\", vhost=\"rpc.l1beat.io\"} | json | unwrap request_time [5m])",
+          "expr": "quantile_over_time(0.95, {job=\"nginx\", vhost=\"rpc.l1beat.io\"} | json | __error__=\"\" | unwrap request_time [5m]) by (vhost)",
           "legendFormat": "p95",
           "queryType": "range",
           "refId": "B"
@@ -331,7 +331,7 @@
             "uid": "loki"
           },
           "editorMode": "code",
-          "expr": "quantile_over_time(0.99, {job=\"nginx\", vhost=\"rpc.l1beat.io\"} | json | unwrap request_time [5m])",
+          "expr": "quantile_over_time(0.99, {job=\"nginx\", vhost=\"rpc.l1beat.io\"} | json | __error__=\"\" | unwrap request_time [5m]) by (vhost)",
           "legendFormat": "p99",
           "queryType": "range",
           "refId": "C"
