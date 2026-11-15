@@ -2,6 +2,7 @@ package api
 
 import (
 	"log/slog"
+	"math"
 	"net/http"
 	"strconv"
 	"time"
@@ -218,6 +219,12 @@ func (s *Server) handleChainMetrics(w http.ResponseWriter, r *http.Request) {
 		writeNotFoundError(w, "Chain")
 		return
 	}
+	// Aggregates over no rows still return one row of zeros, so an unindexed
+	// chain id lands here rather than in the error branch above.
+	if m.TotalBlocks == 0 {
+		writeAPIError(w, http.StatusNotFound, ErrNotFound, "Chain not indexed")
+		return
+	}
 
 	// Get transaction count
 	s.conn.QueryRow(ctx, `
@@ -228,7 +235,7 @@ func (s *Server) handleChainMetrics(w http.ResponseWriter, r *http.Request) {
 	var avgBlockTimeSec float64
 	s.conn.QueryRow(ctx, `
 		SELECT
-			toFloat64(dateDiff('millisecond', min(block_time), max(block_time))) / 1000.0 / count() as avg_block_time
+			ifNotFinite(toFloat64(dateDiff('millisecond', min(block_time), max(block_time))) / 1000.0 / count(), 0) as avg_block_time
 		FROM (
 			SELECT block_time
 			FROM raw_blocks
@@ -237,7 +244,10 @@ func (s *Server) handleChainMetrics(w http.ResponseWriter, r *http.Request) {
 			LIMIT 1000
 		)
 	`, chainID).Scan(&avgBlockTimeSec)
-	m.AvgBlockTime = avgBlockTimeSec
+	// encoding/json rejects NaN and Inf, which would turn the response into a 500.
+	if !math.IsNaN(avgBlockTimeSec) && !math.IsInf(avgBlockTimeSec, 0) {
+		m.AvgBlockTime = avgBlockTimeSec
+	}
 
 	writeJSON(w, http.StatusOK, Response{Data: m})
 }

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"math"
 	"net/http"
 	"testing"
 	"time"
@@ -138,6 +139,49 @@ func TestHandleChainMetrics_NotFound(t *testing.T) {
 	w := MakeRequest(t, server, "GET", "/api/v1/metrics/evm/99999/stats")
 
 	AssertErrorResponse(t, w, http.StatusNotFound, ErrNotFound)
+}
+
+// An unindexed chain gets zero-valued aggregates rather than an error, and used
+// to 500 because the 0/0 average block time encoded as NaN.
+func TestHandleChainMetrics_UnindexedChain(t *testing.T) {
+	queries := 0
+	mock := &MockConn{
+		QueryRowFunc: func(ctx context.Context, query string, args ...interface{}) driver.Row {
+			queries++
+			return &MockRow{scanFunc: func(dest ...interface{}) error { return nil }}
+		},
+	}
+
+	server := NewTestServer(mock)
+	w := MakeRequest(t, server, "GET", "/api/v1/metrics/evm/36463/stats")
+
+	AssertErrorResponse(t, w, http.StatusNotFound, ErrNotFound)
+	require.Contains(t, w.Body.String(), "Chain not indexed")
+	require.Equal(t, 2, queries, "should stop after the block stats query")
+}
+
+func TestHandleChainMetrics_NaNBlockTime(t *testing.T) {
+	queryCount := 0
+	mock := &MockConn{
+		QueryRowFunc: func(ctx context.Context, query string, args ...interface{}) driver.Row {
+			queryCount++
+			return &MockRow{scanFunc: func(dest ...interface{}) error {
+				switch queryCount {
+				case 2:
+					*dest[1].(*uint64) = 1
+				case 4:
+					*dest[0].(*float64) = math.NaN()
+				}
+				return nil
+			}}
+		},
+	}
+
+	server := NewTestServer(mock)
+	w := MakeRequest(t, server, "GET", "/api/v1/metrics/evm/43114/stats")
+
+	AssertJSONResponse(t, w, http.StatusOK)
+	require.Contains(t, w.Body.String(), `"avg_block_time_seconds":0`)
 }
 
 func TestHandleListMetrics_Success(t *testing.T) {
