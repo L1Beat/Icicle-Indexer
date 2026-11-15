@@ -45,12 +45,14 @@ type RestakingL1 struct {
 	IsActive         bool   `json:"is_active"`
 	ActiveValidators uint32 `json:"active_validators"`
 	// RestakedWeight is the P-Chain weight of active validators registered by
-	// the middleware, TotalWeight that of all active validators.
-	RestakedWeight      uint64           `json:"restaked_weight"`
+	// the middleware, TotalWeight that of all active validators. Weights are
+	// encoded as strings: some L1s use weights near the uint64 range, past what
+	// JavaScript numbers hold exactly.
+	RestakedWeight      uint64           `json:"restaked_weight,string"`
 	RestakedValidators  uint32           `json:"restaked_validators"`
-	TotalWeight         uint64           `json:"total_pchain_weight"`
+	TotalWeight         uint64           `json:"total_pchain_weight,string"`
 	ShareOfWeightPct    *float64         `json:"share_of_weight_percent"` // null when no active weight
-	ModuleWeight        uint64           `json:"module_weight"`           // middleware's weight in the balancer
+	ModuleWeight        uint64           `json:"module_weight,string"`    // middleware's weight in the balancer
 	OperatorCount       uint32           `json:"operator_count"`
 	Vaults              []RestakingVault `json:"vaults"`
 	SampledAt           time.Time        `json:"sampled_at"`

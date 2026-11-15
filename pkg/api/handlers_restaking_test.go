@@ -1,6 +1,8 @@
 package api
 
 import (
+	"encoding/json"
+	"math"
 	"testing"
 	"time"
 
@@ -48,4 +50,15 @@ func TestFilterRestaking(t *testing.T) {
 	require.Equal(t, "s1", got.L1s[0].SubnetID)
 	require.Equal(t, []RestakingL1{}, filterRestaking(o, "nope", "").L1s)
 	require.Equal(t, restakingProtocols, filterRestaking(o, "nope", "").Protocols)
+}
+
+// Weights near the uint64 range must survive a JavaScript client, so they go
+// out as strings.
+func TestRestakingWeightsEncodeAsStrings(t *testing.T) {
+	b, err := json.Marshal(RestakingL1{RestakedWeight: math.MaxUint64, TotalWeight: math.MaxUint64, ModuleWeight: 5})
+	require.NoError(t, err)
+	s := string(b)
+	require.Contains(t, s, `"restaked_weight":"18446744073709551615"`)
+	require.Contains(t, s, `"total_pchain_weight":"18446744073709551615"`)
+	require.Contains(t, s, `"module_weight":"5"`)
 }

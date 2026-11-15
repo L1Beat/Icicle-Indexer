@@ -1817,11 +1817,11 @@ L1s whose validators are secured by restaking vaults on the C-Chain. Only Suzaku
         "middleware": "0x9411307279456450abf9b5181aa7a02271f0dc34",
         "is_active": true,
         "active_validators": 10,
-        "restaked_weight": 5000000,
+        "restaked_weight": "5000000",
         "restaked_validators": 10,
-        "total_pchain_weight": 5000000,
+        "total_pchain_weight": "5000000",
         "share_of_weight_percent": 100,
-        "module_weight": 5000000,
+        "module_weight": "5000000",
         "operator_count": 1,
         "vaults": [
           {
@@ -1851,6 +1851,7 @@ L1s whose validators are secured by restaking vaults on the C-Chain. Only Suzaku
 - `is_active` and `active_validators` use the `/data/chains` definition (L1 validators with a P-Chain balance).
 - `restaked_weight` is the P-Chain weight of active validators the protocol's middleware registered; `total_pchain_weight` is that of all active validators. `share_of_weight_percent` is their ratio, null when the L1 has no active weight.
 - `module_weight` is the middleware's current weight in the L1's BalancerValidatorManager, straight from the contract.
+- The three weight fields are decimal strings in the L1's own weight units (not AVAX), because some L1s use weights beyond the range JavaScript numbers hold exactly.
 - `operator_count` counts operators with allocated stake in at least one vault.
 - No USD values.
 
