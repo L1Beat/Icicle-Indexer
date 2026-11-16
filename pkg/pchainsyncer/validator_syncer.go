@@ -144,7 +144,11 @@ func (vs *ValidatorSyncer) syncOnce(ctx context.Context) error {
 	}
 
 	// Step 2b: Backfill any missing chains from RPC (catches chains without CreateChainTx in our DB)
-	backfilled, err := BackfillSubnetChainsFromRPC(ctx, vs.conn, vs.fetcher, vs.config.PChainID)
+	known := make(map[string]bool, len(chains))
+	for _, c := range chains {
+		known[c.ChainID.String()] = true
+	}
+	backfilled, err := BackfillSubnetChainsFromRPC(ctx, vs.conn, vs.fetcher, vs.config.PChainID, known)
 	if err != nil {
 		slog.Warn("Failed to backfill subnet chains from RPC", "error", err)
 	} else if backfilled > 0 {

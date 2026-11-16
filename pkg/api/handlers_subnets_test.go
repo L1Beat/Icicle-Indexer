@@ -457,3 +457,23 @@ func uint8Ptr(v uint8) *uint8 {
 func uint16Ptr(v uint16) *uint16 {
 	return &v
 }
+
+func TestChainCreated(t *testing.T) {
+	// Known only from getBlockchains: block 0 at the zero time is unknown, not 1970.
+	b, ts := chainCreated(0, time.Unix(0, 0))
+	require.Nil(t, b)
+	require.Nil(t, ts)
+	b, ts = chainCreated(0, time.Time{})
+	require.Nil(t, b)
+	require.Nil(t, ts)
+
+	// The C-Chain really is block 0, at the genesis time.
+	genesis := time.Unix(1600714800, 0)
+	b, ts = chainCreated(0, genesis)
+	require.Equal(t, uint64(0), *b)
+	require.True(t, genesis.Equal(*ts))
+
+	b, ts = chainCreated(12345, time.Date(2025, 11, 14, 15, 1, 17, 0, time.UTC))
+	require.Equal(t, uint64(12345), *b)
+	require.Equal(t, "2025-11-14T15:01:17Z", ts.Format(time.RFC3339))
+}

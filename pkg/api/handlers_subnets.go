@@ -29,8 +29,10 @@ type SubnetChain struct {
 	SubnetID     string    `json:"subnet_id" example:"2XDnKyAEr..."`
 	ChainName    string    `json:"chain_name" example:"My Chain"`
 	VMID         string    `json:"vm_id" example:"subnetevm"`
-	CreatedBlock uint64    `json:"created_block" example:"12345678"`
-	CreatedTime  time.Time `json:"created_time"`
+	// Null when the chain's CreateChainTx is not indexed (only known from
+	// platform.getBlockchains, which has no creation block or time).
+	CreatedBlock *uint64    `json:"created_block" example:"12345678"`
+	CreatedTime  *time.Time `json:"created_time"`
 }
 
 // L1Registry represents metadata for an L1
@@ -69,8 +71,11 @@ type ChainInfo struct {
 	ChainID      string    `json:"chain_id"`
 	ChainName    string    `json:"chain_name"`
 	VMID         string    `json:"vm_id"`
-	CreatedBlock uint64    `json:"created_block"`
-	CreatedTime  time.Time `json:"created_time"`
+	// Null when the chain's CreateChainTx is not indexed.
+	CreatedBlock *uint64    `json:"created_block"`
+	CreatedTime  *time.Time `json:"created_time"`
+	// createdBlock is the raw sort key (0 when unknown), kept for the cursor.
+	createdBlock uint64
 
 	// Parent subnet
 	SubnetID                string     `json:"subnet_id"`
@@ -368,13 +373,16 @@ func (s *Server) handleGetSubnet(w http.ResponseWriter, r *http.Request) {
 	chains := []SubnetChain{}
 	for rows.Next() {
 		var chain SubnetChain
+		var createdBlock uint64
+		var createdTime time.Time
 		if err := rows.Scan(
 			&chain.ChainID, &chain.SubnetID, &chain.ChainName,
-			&chain.VMID, &chain.CreatedBlock, &chain.CreatedTime,
+			&chain.VMID, &createdBlock, &createdTime,
 		); err != nil {
 			writeInternalError(w, err.Error())
 			return
 		}
+		chain.CreatedBlock, chain.CreatedTime = chainCreated(createdBlock, createdTime)
 		chains = append(chains, chain)
 	}
 	if err := rows.Err(); err != nil {
@@ -505,7 +513,7 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 	chains := []ChainInfo{}
 	for rows.Next() {
 		var ci ChainInfo
-		var convertedTime time.Time
+		var convertedTime, createdTime time.Time
 		var name, description, logoURL, websiteURL *string
 		var evmChainID *uint64
 		var categories []string
@@ -521,7 +529,7 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 		var stakingToken, managerType *string
 
 		if err := rows.Scan(
-			&ci.ChainID, &ci.ChainName, &ci.VMID, &ci.CreatedBlock, &ci.CreatedTime,
+			&ci.ChainID, &ci.ChainName, &ci.VMID, &ci.createdBlock, &createdTime,
 			&ci.SubnetID, &ci.ChainType, &ci.ConvertedBlock, &convertedTime, &ci.ValidatorManagerAddress, &ci.ValidatorManagerOwner,
 			&name, &description, &logoURL, &websiteURL,
 			&evmChainID, &categories, &socialsJSON,
@@ -536,6 +544,7 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		ci.CreatedBlock, ci.CreatedTime = chainCreated(ci.createdBlock, createdTime)
 		if !convertedTime.IsZero() && convertedTime.Unix() > 0 {
 			ci.ConvertedTime = &convertedTime
 		}
@@ -659,7 +668,7 @@ func (s *Server) handleListChains(w http.ResponseWriter, r *http.Request) {
 	meta := &Meta{Limit: limit, Offset: offset, HasMore: hasMore}
 	if hasMore && len(chains) > 0 {
 		last := chains[len(chains)-1]
-		meta.NextCursor = cursorBlockTxID(last.CreatedBlock, last.ChainID)
+		meta.NextCursor = cursorBlockTxID(last.createdBlock, last.ChainID)
 	}
 
 	if wantCount {
@@ -861,4 +870,16 @@ func (s *Server) handleChainRisk(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, Response{Data: resp})
+}
+
+// chainCreated returns a chain's creation block and time, or nils when they are
+// unknown. Chains known only from platform.getBlockchains are stored with block
+// 0 and a zero time; the C-Chain is block 0 at the network's genesis time, so
+// the time, not the block, tells the two apart.
+func chainCreated(block uint64, t time.Time) (*uint64, *time.Time) {
+	if t.Unix() <= 0 {
+		return nil, nil
+	}
+	t = t.UTC()
+	return &block, &t
 }

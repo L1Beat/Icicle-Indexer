@@ -957,9 +957,15 @@ func InsertSubnetChains(ctx context.Context, conn clickhouse.Conn, chains []Subn
 }
 
 // BackfillSubnetChainsFromRPC fetches all blockchains from platform.getBlockchains
-// and upserts them into subnet_chains. This is the source of truth for chain data —
-// it corrects any bad chain IDs from DiscoverSubnetChains and fills in missing chains.
-func BackfillSubnetChainsFromRPC(ctx context.Context, conn clickhouse.Conn, fetcher *pchainrpc.Fetcher, pchainID uint32) (int, error) {
+// and inserts the ones that DiscoverSubnetChains did not find, so chains whose
+// CreateChainTx is missing from p_chain_txs still get a row. getBlockchains has
+// no creation block or time, so those rows carry block 0 and a zero time.
+//
+// Chains in known (found from their CreateChainTx) and Primary Network chains
+// (seeded with the genesis time by InsertPrimaryNetworkChains) are skipped:
+// re-inserting them here, with a newer last_updated, used to replace their real
+// created_block/created_time with zeros on every validator cycle.
+func BackfillSubnetChainsFromRPC(ctx context.Context, conn clickhouse.Conn, fetcher *pchainrpc.Fetcher, pchainID uint32, known map[string]bool) (int, error) {
 	resp, err := fetcher.GetBlockchains(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get blockchains from RPC: %w", err)
@@ -984,16 +990,12 @@ func BackfillSubnetChainsFromRPC(ctx context.Context, conn clickhouse.Conn, fetc
 	defer func() { _ = batch.Abort() }()
 
 	now := time.Now()
-	// Known non-application chains to skip
-	skipChains := map[string]bool{
-		"11111111111111111111111111111111LpoYY":               true, // P-Chain
-		"2oYMBNV4eNHyqk2fjjV5nVQLDbtmNJzq5s3qs3Lo6ftnC6FByM": true, // X-Chain
+	missing := missingRPCChains(resp.Blockchains, known)
+	if len(missing) == 0 {
+		return 0, nil
 	}
 
-	for _, bc := range resp.Blockchains {
-		if skipChains[bc.ID] {
-			continue
-		}
+	for _, bc := range missing {
 		err = batch.Append(
 			bc.ID,
 			bc.SubnetID,
@@ -1013,7 +1015,23 @@ func BackfillSubnetChainsFromRPC(ctx context.Context, conn clickhouse.Conn, fetc
 		return 0, fmt.Errorf("failed to send batch: %w", err)
 	}
 
-	return len(resp.Blockchains), nil
+	return len(missing), nil
+}
+
+const primaryNetworkSubnetID = "11111111111111111111111111111111LpoYY"
+
+// missingRPCChains returns the getBlockchains entries that need a row from the
+// RPC backfill: not on the Primary Network and not already found from a
+// CreateChainTx.
+func missingRPCChains(all []pchainrpc.BlockchainInfo, known map[string]bool) []pchainrpc.BlockchainInfo {
+	var out []pchainrpc.BlockchainInfo
+	for _, bc := range all {
+		if bc.SubnetID == primaryNetworkSubnetID || known[bc.ID] {
+			continue
+		}
+		out = append(out, bc)
+	}
+	return out
 }
 
 // L1FeeStats represents fee statistics for an L1 subnet
