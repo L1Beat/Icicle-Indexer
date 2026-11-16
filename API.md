@@ -801,6 +801,29 @@ Daily liquidation counts per protocol, with size buckets (`over_25`, `over_100`,
 
 ---
 
+## Data API - Genesis
+
+The Avalanche mainnet genesis, served from the config every avalanchego node boots from (`genesis.MainnetConfig`), not from the indexed tables. The indexers start at block 1. Amounts are nAVAX strings.
+
+### GET /api/v1/data/genesis
+
+The genesis message ("From Snowflake to Avalanche. Per consensum ad astra."), `start_time` (2020-09-10), `p_chain_genesis_block_id`, `x_chain_id`, `c_chain_id`, `avax_asset_id`, and the initial supply split into `x_chain_unlocked` (spendable on the X-Chain at genesis), `p_chain_locked` (locked on the P-Chain until each tranche's unlock time) and `initially_staked` (staked by the genesis validators). Also `unlock_schedule` (locked supply per unlock time), the 75 `initial_validators` with their staking periods, `initially_staked_addresses`, and the raw `c_chain_genesis`.
+
+### GET /api/v1/data/genesis/allocations
+
+The 5,390 genesis allocations in genesis order: `address` (bech32, no chain prefix), `eth_address`, `x_chain_amount`, `unlock_schedule` (`amount`, `unlock_time`), `total`, `initially_staked`.
+
+| Param | Default | Notes |
+|---|---|---|
+| `address` | | `avax1...`, `X-avax1...`, `P-avax1...` or a `0x` ETH address |
+| `limit` | 100 | 1-1000 |
+| `offset` | 0 | |
+
+### Block 0
+
+- `GET /api/v1/data/evm/43114/blocks/0` returns the C-Chain genesis block: its hash (block 1's parent hash), gas limit 100,000,000, no transactions, and `block_time: null` because the header timestamp is 0. Block 0 of any other EVM chain returns 404.
+- `GET /api/v1/data/pchain/blocks/0` returns the P-Chain genesis block (`block_type: "Genesis"`, `block_time` = the genesis start time).
+
 ## Data API - P-Chain
 
 ### GET /api/v1/data/pchain/txs

@@ -162,6 +162,16 @@ func (s *Server) handleGetBlock(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid block number")
 		return
 	}
+	// The EVM syncer starts at block 1. C-Chain genesis is served from the
+	// genesis config; other chains' genesis is not available.
+	if blockNumber == 0 {
+		if chainID == cChainID {
+			s.writeCChainGenesisBlock(w, r)
+			return
+		}
+		writeAPIError(w, http.StatusNotFound, ErrNotFound, "Block 0 (genesis) is not indexed; indexing starts at block 1")
+		return
+	}
 
 	var b Block
 	var hashBytes, parentHashBytes [32]byte

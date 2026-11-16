@@ -322,6 +322,16 @@ func (s *Server) handleGetPChainBlock(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid block number")
 		return
 	}
+	// The P-Chain syncer starts at block 1; genesis comes from the config.
+	if blockNumber == 0 {
+		b, err := pChainGenesisBlock()
+		if err != nil {
+			writeInternalError(w, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, Response{Data: b})
+		return
+	}
 
 	var b PChainBlock
 	var txCount uint64

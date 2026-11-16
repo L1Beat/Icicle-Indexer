@@ -198,6 +198,8 @@ func (s *Server) registerRoutes(cfg Config) {
 	s.router.HandleFunc("GET /api/v1/data/pchain/validators/timeseries", s.handleValidatorTimeseries)
 	s.router.HandleFunc("GET /api/v1/data/pchain/blocks", s.handleListPChainBlocks)
 	s.router.HandleFunc("GET /api/v1/data/pchain/blocks/{number}", s.handleGetPChainBlock)
+	s.router.HandleFunc("GET /api/v1/data/genesis", s.handleGenesis)
+	s.router.HandleFunc("GET /api/v1/data/genesis/allocations", s.handleGenesisAllocations)
 
 	// Subnets
 	s.router.HandleFunc("GET /api/v1/data/subnets/{subnetId}", s.handleGetSubnet)
