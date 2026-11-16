@@ -8,10 +8,10 @@ import (
 
 // NativeBalance represents the native token balance for a wallet
 type NativeBalance struct {
-	TotalIn          string     `json:"total_in" example:"1000000000000000000"`
-	TotalOut         string     `json:"total_out" example:"500000000000000000"`
-	TotalGas         string     `json:"total_gas" example:"21000000000000"`
-	Balance          string     `json:"balance" example:"499979000000000000"`
+	TotalIn          string     `json:"total_in" example:"1000000000000000000"` // wei
+	TotalOut         string     `json:"total_out" example:"500000000000000000"` // wei
+	TotalGas         string     `json:"total_gas" example:"21000000000000"`     // wei spent on gas
+	Balance          string     `json:"balance" example:"499979000000000000"`   // wei
 	LastUpdatedBlock uint64     `json:"last_updated_block" example:"77048918"`
 	TxCount          uint64     `json:"tx_count" example:"788432"`
 	FirstTxTime      *time.Time `json:"first_tx_time,omitempty"`
@@ -24,9 +24,9 @@ type TokenBalance struct {
 	Name             *string `json:"name,omitempty" example:"USD Coin"`
 	Symbol           *string `json:"symbol,omitempty" example:"USDC"`
 	Decimals         *uint8  `json:"decimals,omitempty" example:"6"`
-	Balance          string  `json:"balance" example:"1000000"`
-	TotalIn          string  `json:"total_in" example:"2000000"`
-	TotalOut         string  `json:"total_out" example:"1000000"`
+	Balance          string  `json:"balance" example:"1000000"`   // token base units
+	TotalIn          string  `json:"total_in" example:"2000000"`  // token base units
+	TotalOut         string  `json:"total_out" example:"1000000"` // token base units
 	LastUpdatedBlock uint64  `json:"last_updated_block" example:"77048918"`
 }
 

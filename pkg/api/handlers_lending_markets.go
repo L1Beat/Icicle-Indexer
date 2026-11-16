@@ -31,8 +31,8 @@ type LendingMarket struct {
 	Asset                   string    `json:"asset"`  // underlying token, 0x00..00 for native AVAX
 	Symbol                  string    `json:"symbol"`
 	Decimals                uint8     `json:"decimals"`
-	TotalSupplied           string    `json:"total_supplied"`
-	TotalBorrowed           string    `json:"total_borrowed"`
+	TotalSupplied           string    `json:"total_supplied"`      // token base units
+	TotalBorrowed           string    `json:"total_borrowed"`      // token base units
 	UtilizationPct          *float64  `json:"utilization_percent"` // null when nothing is supplied
 	SupplyAPYPct            float64   `json:"supply_apy_percent"`
 	BorrowAPYPct            float64   `json:"borrow_apy_percent"`
@@ -42,8 +42,8 @@ type LendingMarket struct {
 	PriceUSD                *float64  `json:"price_usd"`
 	SuppliedUSD             *float64  `json:"supplied_usd"`
 	BorrowedUSD             *float64  `json:"borrowed_usd"`
-	SupplyCap               *string   `json:"supply_cap"`
-	BorrowCap               *string   `json:"borrow_cap"`
+	SupplyCap               *string   `json:"supply_cap"` // token base units, null when uncapped
+	BorrowCap               *string   `json:"borrow_cap"` // token base units, null when uncapped
 	SampledAt               time.Time `json:"sampled_at"`
 	// LTVChangedAt is when ltv_percent took its current value, and LTVChangedTx
 	// the config transaction. Null when unchanged since listing, when not dated
@@ -61,14 +61,14 @@ type LendingMarket struct {
 // LendingAssetFlow is supply and borrow of one asset, in its base units.
 type LendingAssetFlow struct {
 	ProtocolID string `json:"protocol_id,omitempty"`
-	Supplied   string `json:"supplied"`
-	Borrowed   string `json:"borrowed"`
+	Supplied   string `json:"supplied"` // wei (18 decimals)
+	Borrowed   string `json:"borrowed"` // wei (18 decimals)
 }
 
 // LendingAssetSummary sums one asset across protocols.
 type LendingAssetSummary struct {
-	Supplied              string             `json:"supplied"`
-	Borrowed              string             `json:"borrowed"`
+	Supplied              string             `json:"supplied"` // wei (18 decimals)
+	Borrowed              string             `json:"borrowed"` // wei (18 decimals)
 	ShareOfTokenSupplyPct *float64           `json:"share_of_savax_supply_percent,omitempty"`
 	ByProtocol            []LendingAssetFlow `json:"by_protocol"`
 }

@@ -88,7 +88,7 @@ type GenesisOverview struct {
 	InitialStakeDuration  int64                 `json:"initial_stake_duration_seconds"`
 	InitialValidators     []GenesisValidator    `json:"initial_validators"`
 	InitiallyStakedFunds  []string              `json:"initially_staked_addresses"`
-	CChainGenesis         json.RawMessage       `json:"c_chain_genesis"`
+	CChainGenesis         json.RawMessage       `json:"c_chain_genesis" swaggertype:"object"`
 	CChainGenesisGasLimit uint64                `json:"-"`
 }
 

@@ -22,8 +22,8 @@ type Transaction struct {
 	BlockTime        time.Time `json:"block_time"`
 	TransactionIndex uint16    `json:"transaction_index" example:"0"`
 	From             string    `json:"from" example:"0x742d35Cc6634C0532925a3b844Bc9e7595f..."`
-	To               *string   `json:"to" example:"0x123..."` // null for contract creation
-	Value            string    `json:"value" example:"1000000000000000000"`
+	To               *string   `json:"to" example:"0x123..."`               // null for contract creation
+	Value            string    `json:"value" example:"1000000000000000000"` // wei
 	GasLimit         uint32    `json:"gas_limit" example:"21000"`
 	GasPrice         uint64    `json:"gas_price" example:"25000000000"`
 	GasUsed          uint32    `json:"gas_used" example:"21000"`
@@ -44,8 +44,8 @@ type InternalTransaction struct {
 	BlockTime   time.Time `json:"block_time,omitempty"`
 	TraceIndex  string    `json:"trace_index" example:"0,1,2"` // Path in call tree
 	From        string    `json:"from" example:"0x742d35Cc..."`
-	To          *string   `json:"to" example:"0x123..."` // null for CREATE
-	Value       string    `json:"value" example:"1000000000000000000"`
+	To          *string   `json:"to" example:"0x123..."`               // null for CREATE
+	Value       string    `json:"value" example:"1000000000000000000"` // wei
 	GasUsed     uint32    `json:"gas_used" example:"21000"`
 	CallType    string    `json:"call_type" example:"CALL"`
 	Success     bool      `json:"success" example:"true"`
@@ -60,7 +60,7 @@ type TokenTransfer struct {
 	TokenLabel *AddressLabel `json:"token_label"` // label of the token contract, if known
 	From       string        `json:"from" example:"0x742d35Cc..."`
 	To         string        `json:"to" example:"0x123..."`
-	Value      string        `json:"value" example:"1000000"`
+	Value      string        `json:"value" example:"1000000"` // token base units
 	LogIndex   uint32        `json:"log_index" example:"5"`
 }
 
@@ -73,7 +73,7 @@ type TokenApproval struct {
 	TokenLabel  *AddressLabel `json:"token_label"` // label of the token contract, if known
 	Owner       string        `json:"owner" example:"0x742d35Cc..."`
 	Spender     string        `json:"spender" example:"0x123..."`
-	Amount      string        `json:"amount" example:"1000000"`
+	Amount      string        `json:"amount" example:"1000000"` // token base units
 	IsUnlimited bool          `json:"is_unlimited" example:"false"`
 	LogIndex    uint32        `json:"log_index" example:"5"`
 }

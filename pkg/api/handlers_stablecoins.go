@@ -28,9 +28,9 @@ type Stablecoin struct {
 	// stablecoins (e.g. avUSD, UTY, reUSD, FRXUSD). Sum all rows for the GROSS total;
 	// exclude doublecounted rows for the NET total (the DeFiLlama-style headline).
 	Doublecounted bool   `json:"doublecounted" example:"false"`
-	Supply        string `json:"supply" example:"459300000000000"`
+	Supply        string `json:"supply" example:"459300000000000"` // token base units, circulating
 	Holders       uint64 `json:"holders" example:"128453"`
-	Volume24h     string `json:"volume_24h" example:"32100000000000"`
+	Volume24h     string `json:"volume_24h" example:"32100000000000"` // token base units
 	Transfers24h  uint64 `json:"transfers_24h" example:"58210"`
 }
 
@@ -208,7 +208,7 @@ func (s *Server) loadStablecoins(ctx context.Context, chainID uint32) ([]Stablec
 
 type StablecoinMetricDataPoint struct {
 	Period time.Time `json:"period"`
-	Value  string    `json:"value"`
+	Value  string    `json:"value"` // token base units for supply and volume, a count for transfers and holders
 }
 
 type StablecoinMetricSeries struct {

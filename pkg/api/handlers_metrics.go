@@ -519,7 +519,7 @@ func (s *Server) handleDailyFeeBurn(w http.ResponseWriter, r *http.Request) {
 					now(),
 					coalesce(r.disable_time, v.start_time)
 				) AS end_time
-			FROM (SELECT * FROM l1_validator_state FINAL `+subnetFilter+`) v
+			FROM (SELECT * FROM l1_validator_state FINAL ` + subnetFilter + `) v
 			LEFT JOIN refunds r ON r.validation_id = v.validation_id AND r.subnet_id = v.subnet_id
 		)
 		SELECT
@@ -638,16 +638,16 @@ func (s *Server) handleDailyFeeBurn(w http.ResponseWriter, r *http.Request) {
 // All amounts are nAVAX (1 nAVAX = 1e9 wei), returned as strings.
 type FeeBurnPoint struct {
 	Period            time.Time `json:"period"`
-	TotalBurned       string    `json:"total_burned" example:"123456789"`
-	BaseFeeBurned     string    `json:"base_fee_burned" example:"100000000"`
-	PriorityFeeBurned string    `json:"priority_fee_burned" example:"23456789"`
+	TotalBurned       string    `json:"total_burned" example:"123456789"`       // nAVAX
+	BaseFeeBurned     string    `json:"base_fee_burned" example:"100000000"`    // nAVAX
+	PriorityFeeBurned string    `json:"priority_fee_burned" example:"23456789"` // nAVAX
 }
 
 // FeeBurnTotals is the all-time cumulative burn, nAVAX as strings.
 type FeeBurnTotals struct {
-	TotalBurned       string `json:"total_burned"`
-	BaseFeeBurned     string `json:"base_fee_burned"`
-	PriorityFeeBurned string `json:"priority_fee_burned"`
+	TotalBurned       string `json:"total_burned"`        // nAVAX
+	BaseFeeBurned     string `json:"base_fee_burned"`     // nAVAX
+	PriorityFeeBurned string `json:"priority_fee_burned"` // nAVAX
 }
 
 // FeeBurnResponse is the payload for the fee-burn endpoint.
@@ -814,7 +814,7 @@ type BurnedByChain struct {
 // NetworkBurnedTotal is the network-wide all-time AVAX burned with a P/X/C split.
 type NetworkBurnedTotal struct {
 	Unit        string        `json:"unit" example:"nAVAX"`
-	TotalBurned string        `json:"total_burned" example:"5013452000000000"`
+	TotalBurned string        `json:"total_burned" example:"5013452000000000"` // nAVAX
 	ByChain     BurnedByChain `json:"by_chain"`
 	UpdatedAt   time.Time     `json:"updated_at"`
 }

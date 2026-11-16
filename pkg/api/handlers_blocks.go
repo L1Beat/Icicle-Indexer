@@ -13,9 +13,9 @@ import (
 // burn for the block (base fee + priority tip). Only populated on the block
 // websocket feed; omitted on the REST block endpoints.
 type BlockBurn struct {
-	Total       string `json:"total" example:"123456789"`        // sum(gas_used * gas_price)
-	BaseFee     string `json:"base_fee" example:"100000000"`     // sum(gas_used * base_fee_per_gas)
-	PriorityFee string `json:"priority_fee" example:"23456789"`  // total - base
+	Total       string `json:"total" example:"123456789"`       // sum(gas_used * gas_price)
+	BaseFee     string `json:"base_fee" example:"100000000"`    // sum(gas_used * base_fee_per_gas)
+	PriorityFee string `json:"priority_fee" example:"23456789"` // total - base
 }
 
 // Block represents an EVM block

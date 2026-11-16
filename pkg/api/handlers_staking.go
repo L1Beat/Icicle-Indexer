@@ -19,10 +19,10 @@ import (
 type StakingSummary struct {
 	AsOf                time.Time          `json:"as_of"` // last validator sync
 	ValidatorCount      uint32             `json:"validator_count"`
-	DelegationCount     uint64             `json:"delegation_count"` // active delegations, not unique delegators
-	OwnStake            string             `json:"own_stake"`
-	DelegatedStake      string             `json:"delegated_stake"`
-	TotalStake          string             `json:"total_stake"`
+	DelegationCount     uint64             `json:"delegation_count"`      // active delegations, not unique delegators
+	OwnStake            string             `json:"own_stake"`             // nAVAX
+	DelegatedStake      string             `json:"delegated_stake"`       // nAVAX
+	TotalStake          string             `json:"total_stake"`           // nAVAX
 	TotalSupply         *string            `json:"total_supply"`          // AVAX total supply (not circulating), null if not yet sampled
 	StakedSupplyPercent *float64           `json:"staked_supply_percent"` // total_stake / total_supply * 100
 	DelegationFee       DelegationFees     `json:"delegation_fee"`
@@ -43,7 +43,7 @@ type FeeBucket struct {
 	MinPercent     float64  `json:"min_percent"`
 	MaxPercent     *float64 `json:"max_percent"`
 	ValidatorCount uint32   `json:"validator_count"`
-	TotalStake     string   `json:"total_stake"`
+	TotalStake     string   `json:"total_stake"` // nAVAX, own + delegated
 }
 
 // StakeConcentration measures how concentrated total stake (own + delegated)
@@ -58,9 +58,9 @@ type StakeConcentration struct {
 
 // StakingUnlockWeek is the stake whose lock ends during one week.
 type StakingUnlockWeek struct {
-	WeekStart       time.Time `json:"week_start"` // Monday 00:00 UTC
-	ValidatorStake  string    `json:"validator_stake"`
-	DelegatedStake  string    `json:"delegated_stake"`
+	WeekStart       time.Time `json:"week_start"`      // Monday 00:00 UTC
+	ValidatorStake  string    `json:"validator_stake"` // nAVAX
+	DelegatedStake  string    `json:"delegated_stake"` // nAVAX
 	ValidatorCount  uint32    `json:"validator_count"`
 	DelegationCount uint32    `json:"delegation_count"`
 }

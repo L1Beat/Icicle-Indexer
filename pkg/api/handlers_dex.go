@@ -117,7 +117,7 @@ func (s *Server) dexWindow(ctx context.Context, days int) (DexWindow, time.Time,
 
 // handleDexOverview returns C-Chain DEX volume per DEX
 // @Summary C-Chain DEX volume
-// @Description Swap volume, swaps and unique addresses per DEX (Pharaoh V3, Pharaoh DLMM, Uniswap V3, Blackhole CLMM, LFJ V2.1+V2.2, Pangolin V3) over the last N complete UTC days ending as_of. days=1 is the last complete UTC day (matches DefiLlama's daily numbers), not a rolling 24h. Only pools created by the known factories count. Swaps are priced at a USD stablecoin side ($1) or a WAVAX side (hourly AVAX price from WAVAX/stablecoin swaps), one side each; others are counted but unpriced (see priced_share). unique_addresses counts tx.from, bots included; totals deduplicate across DEXes. Cached for 10 minutes.
+// @Description Swap volume, swaps and unique addresses per DEX (Pharaoh V3, Pharaoh DLMM, Uniswap V3, Blackhole CLMM, LFJ Liquidity Book V2.0/V2.1/V2.2, LFJ V1, Pangolin V3, Pangolin V2, SushiSwap V2) over the last N complete UTC days ending as_of. days=1 is the last complete UTC day (matches DefiLlama's daily numbers), not a rolling 24h. Only pools created by the known factories count. Swaps are priced at a USD stablecoin side ($1) or a WAVAX side (hourly AVAX price from WAVAX/stablecoin swaps), one side each; others are counted but unpriced (see priced_share). unique_addresses counts tx.from, bots included; totals deduplicate across DEXes. Cached for 10 minutes.
 // @Tags Metrics - DEX
 // @Produce json
 // @Param days query int false "Complete UTC days, 1-3650" default(1)
@@ -191,7 +191,7 @@ func (s *Server) loadDexOverview(ctx context.Context, days int) (DexOverview, er
 
 // handleDexTimeseries returns daily C-Chain DEX volume
 // @Summary C-Chain DEX volume history
-// @Description Daily volume and swaps, total and per DEX, for the last N complete UTC days ending at the newest rolled-up day. Oldest first. Cached for 10 minutes.
+// @Description Daily volume and swaps, total and per DEX, for the last N complete UTC days ending at the newest rolled-up day. Oldest first; days without swaps are left out. Cached for 10 minutes.
 // @Tags Metrics - DEX
 // @Produce json
 // @Param days query int false "Complete UTC days, 1-3650" default(90)

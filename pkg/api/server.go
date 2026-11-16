@@ -151,6 +151,7 @@ func (s *Server) registerRoutes(cfg Config) {
 
 	// Swagger documentation
 	s.router.HandleFunc("GET /api/docs/", httpSwagger.WrapHandler)
+	s.router.HandleFunc("GET /openapi.json", s.handleOpenAPI)
 
 	// ==========================================
 	// Data API - /api/v1/data/*

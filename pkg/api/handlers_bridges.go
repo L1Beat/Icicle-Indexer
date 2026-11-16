@@ -64,8 +64,8 @@ type BridgeToken struct {
 	Symbol        string  `json:"symbol"`
 	Decimals      *uint8  `json:"decimals"` // null when unknown
 	Priced        bool    `json:"priced"`
-	InflowAmount  string  `json:"inflow_amount"`
-	OutflowAmount string  `json:"outflow_amount"`
+	InflowAmount  string  `json:"inflow_amount"`  // token base units
+	OutflowAmount string  `json:"outflow_amount"` // token base units
 	InflowUSD     float64 `json:"inflow_usd"`
 	OutflowUSD    float64 `json:"outflow_usd"`
 	NetUSD        float64 `json:"net_usd"`
@@ -171,7 +171,7 @@ func (f *BridgeFlow) finish(priced uint64) {
 
 // handleBridges returns C-Chain bridge flows
 // @Summary C-Chain bridge inflows and outflows
-// @Description USD bridged into and out of the C-Chain over the last N complete UTC days ending as_of, in total and by bridge, counterparty chain and token. Tracked: Circle CCTP V1+V2, LayerZero OFTs V1+V2, Stargate V2 pools, the Avalanche Bridge (.e tokens to Ethereum, BTC.b to Bitcoin) and Chainlink CCIP token pools. Each transfer counts once: CCIP or other legs moving native USDC through CCTP count as CCTP. Transactions that bridge in and out again are left out (passthrough_count). Stablecoins are priced at $1, wrapped ETH, BTC, AVAX and LINK at the hourly Chainlink price, other tokens are counted but unpriced (priced_share). Cached for 5 minutes.
+// @Description USD bridged into and out of the C-Chain over the last N complete UTC days ending as_of, in total and by bridge, counterparty chain and token. Tracked: Circle CCTP V1+V2, LayerZero OFTs V1+V2, Stargate V2 pools, the Avalanche Bridge (.e tokens to Ethereum, BTC.b to Bitcoin), Chainlink CCIP token pools and the 2021 AEB (ChainBridge, Ethereum). Counterparty chain keys are not a closed set: unmapped chains appear as raw keys such as lz:30999 or cctp:12. Each transfer counts once: CCIP or other legs moving native USDC through CCTP count as CCTP. Transactions that bridge in and out again are left out (passthrough_count). Stablecoins are priced at $1, wrapped ETH, BTC, AVAX and LINK at the hourly Chainlink price, other tokens are counted but unpriced (priced_share). Cached for 5 minutes.
 // @Tags Metrics - Bridges
 // @Produce json
 // @Param days query int false "Complete UTC days, 1-3650" default(30)

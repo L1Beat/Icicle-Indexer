@@ -25,10 +25,10 @@ type Subnet struct {
 
 // SubnetChain represents a blockchain within a subnet
 type SubnetChain struct {
-	ChainID      string    `json:"chain_id" example:"2q9e4r6Mu..."`
-	SubnetID     string    `json:"subnet_id" example:"2XDnKyAEr..."`
-	ChainName    string    `json:"chain_name" example:"My Chain"`
-	VMID         string    `json:"vm_id" example:"subnetevm"`
+	ChainID   string `json:"chain_id" example:"2q9e4r6Mu..."`
+	SubnetID  string `json:"subnet_id" example:"2XDnKyAEr..."`
+	ChainName string `json:"chain_name" example:"My Chain"`
+	VMID      string `json:"vm_id" example:"subnetevm"`
 	// Null when the chain's CreateChainTx is not indexed (only known from
 	// platform.getBlockchains, which has no creation block or time).
 	CreatedBlock *uint64    `json:"created_block" example:"12345678"`
@@ -68,9 +68,9 @@ type NetworkToken struct {
 // ChainInfo is the enriched response type for the unified /chains endpoint
 type ChainInfo struct {
 	// Chain identity
-	ChainID      string    `json:"chain_id"`
-	ChainName    string    `json:"chain_name"`
-	VMID         string    `json:"vm_id"`
+	ChainID   string `json:"chain_id"`
+	ChainName string `json:"chain_name"`
+	VMID      string `json:"vm_id"`
 	// Null when the chain's CreateChainTx is not indexed.
 	CreatedBlock *uint64    `json:"created_block"`
 	CreatedTime  *time.Time `json:"created_time"`
@@ -261,7 +261,7 @@ type ChurnInfo struct {
 // EconomicSecurity describes the cost to attack the validator set (Tier 3).
 type EconomicSecurity struct {
 	StakingToken    *NetworkToken `json:"staking_token"`
-	TotalStakeRaw   string        `json:"total_stake_raw"`
+	TotalStakeRaw   string        `json:"total_stake_raw"` // not populated yet (always empty)
 	TotalStakeUSD   *float64      `json:"total_stake_usd"`
 	CostToControl33 *float64      `json:"cost_to_control_33_usd"`
 }

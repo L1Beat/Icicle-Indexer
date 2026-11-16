@@ -17,7 +17,7 @@ const docTemplate = `{
     "paths": {
         "/api/v1/data/chains": {
             "get": {
-                "description": "Get a paginated list of blockchains across all subnets",
+                "description": "Get a paginated list of chains with subnet info, L1 registry metadata, and validator stats",
                 "produces": [
                     "application/json"
                 ],
@@ -28,9 +28,235 @@ const docTemplate = `{
                 "parameters": [
                     {
                         "type": "string",
+                        "description": "Filter by chain type (l1, legacy)",
+                        "name": "chain_type",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
                         "description": "Filter by subnet ID",
                         "name": "subnet_id",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by category (e.g. DeFi, Gaming)",
+                        "name": "category",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by active validators (true)",
+                        "name": "active",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 20,
+                        "description": "Number of results (max 100)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 0,
+                        "description": "Pagination offset",
+                        "name": "offset",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Cursor for keyset pagination",
+                        "name": "cursor",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Include total count (true/false)",
+                        "name": "count",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/api.ChainInfo"
+                                            }
+                                        },
+                                        "meta": {
+                                            "$ref": "#/definitions/api.Meta"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/data/chains/{chainId}/risk": {
+            "get": {
+                "description": "Validator-set decentralization (Nakamoto coefficient) plus, in later tiers, ValidatorManager control and economic security. Keyed by the same chain_id as /api/v1/data/chains.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Data - Chains"
+                ],
+                "summary": "Get chain risk profile",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Chain ID",
+                        "name": "chainId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.RiskResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/data/delegators/{address}/delegations": {
+            "get": {
+                "description": "Primary Network AddDelegator / AddPermissionlessDelegator transactions whose reward owner includes this address, across all validators. meta.summary covers all of the address's delegations regardless of the active filter. Sorting and paging run in ClickHouse, so large staking services with millions of rows work. Stake is a nAVAX string. Cached for 5 minutes.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Data - Validators"
+                ],
+                "summary": "List delegations by reward address",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "P-Chain address (P-avax1... or avax1...)",
+                        "name": "address",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Filter by running (true) or ended (false)",
+                        "name": "active",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "default": "stake",
+                        "description": "stake, end_time or start_time",
+                        "name": "sort",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "default": "desc",
+                        "description": "desc or asc",
+                        "name": "order",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 20,
+                        "description": "Page size, max 500",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 0,
+                        "description": "Offset",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.DelegatorResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/data/evm/{chainId}/address/{address}/balances": {
+            "get": {
+                "description": "Get all ERC-20 token balances for an address",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Data - EVM"
+                ],
+                "summary": "Get ERC-20 token balances",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Chain ID",
+                        "name": "chainId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Wallet address (with or without 0x prefix)",
+                        "name": "address",
+                        "in": "path",
+                        "required": true
                     },
                     {
                         "type": "integer",
@@ -61,7 +287,7 @@ const docTemplate = `{
                                         "data": {
                                             "type": "array",
                                             "items": {
-                                                "$ref": "#/definitions/api.SubnetChain"
+                                                "$ref": "#/definitions/api.TokenBalance"
                                             }
                                         },
                                         "meta": {
@@ -70,6 +296,158 @@ const docTemplate = `{
                                     }
                                 }
                             ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/data/evm/{chainId}/address/{address}/internal-txs": {
+            "get": {
+                "description": "Get internal transactions (traces) involving a specific address",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Data - EVM"
+                ],
+                "summary": "Get internal transactions by address",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Chain ID",
+                        "name": "chainId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Wallet address (0x-prefixed)",
+                        "name": "address",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "default": 20,
+                        "description": "Number of results (max 100)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 0,
+                        "description": "Pagination offset",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/api.InternalTransaction"
+                                            }
+                                        },
+                                        "meta": {
+                                            "$ref": "#/definitions/api.Meta"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/data/evm/{chainId}/address/{address}/native": {
+            "get": {
+                "description": "Get native token balance (AVAX, ETH, etc.) for an address",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Data - EVM"
+                ],
+                "summary": "Get native token balance",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Chain ID",
+                        "name": "chainId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Wallet address (with or without 0x prefix)",
+                        "name": "address",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.NativeBalance"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
                         }
                     },
                     "500": {
@@ -109,7 +487,7 @@ const docTemplate = `{
                     {
                         "type": "integer",
                         "default": 20,
-                        "description": "Number of results (max 100)",
+                        "description": "Number of results (max 100; 50 with include=transfers)",
                         "name": "limit",
                         "in": "query"
                     },
@@ -118,6 +496,12 @@ const docTemplate = `{
                         "default": 0,
                         "description": "Pagination offset",
                         "name": "offset",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Set to transfers to embed token_transfers, internal_txs and approvals on every row",
+                        "name": "include",
                         "in": "query"
                     }
                 ],
@@ -294,6 +678,214 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/data/evm/{chainId}/labels": {
+            "get": {
+                "description": "Resolve up to 100 addresses to curated / verified-source / token labels. Unknown addresses are omitted from the map.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Data - EVM"
+                ],
+                "summary": "Get address labels",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Chain ID",
+                        "name": "chainId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Comma-separated 0x addresses (max 100)",
+                        "name": "addresses",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "object",
+                                            "additionalProperties": {
+                                                "$ref": "#/definitions/api.AddressLabel"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/data/evm/{chainId}/stablecoins": {
+            "get": {
+                "description": "Returns curated stablecoins with circulating supply (excludes addresses listed in stablecoin_excluded_holders, e.g. issuer treasuries), holder count, and 24h transfer stats.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Data - EVM"
+                ],
+                "summary": "List stablecoins for a chain",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Chain ID (e.g. 43114 for Avalanche C-Chain)",
+                        "name": "chainId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/api.Stablecoin"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/data/evm/{chainId}/stablecoins/timeseries": {
+            "get": {
+                "description": "Returns time-series data for a stablecoin metric (supply, volume, transfers, holders)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Data - EVM"
+                ],
+                "summary": "Get stablecoin metric time series",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Chain ID (e.g. 43114 for Avalanche C-Chain)",
+                        "name": "chainId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Metric name (supply, volume, transfers, holders)",
+                        "name": "metric",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "default": "day",
+                        "description": "Time granularity (hour, day, week, month)",
+                        "name": "granularity",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Token address (0x-prefixed hex). Omit for all stablecoins.",
+                        "name": "token",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Start time (date, RFC3339, or unix timestamp)",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "End time (date, RFC3339, or unix timestamp)",
+                        "name": "to",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 365,
+                        "description": "Number of data points per token (max 5000)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/api.StablecoinMetricSeries"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/data/evm/{chainId}/txs": {
             "get": {
                 "description": "Get a paginated list of transactions for a specific chain",
@@ -315,7 +907,7 @@ const docTemplate = `{
                     {
                         "type": "integer",
                         "default": 20,
-                        "description": "Number of results (max 100)",
+                        "description": "Number of results (max 100; 50 with include=transfers)",
                         "name": "limit",
                         "in": "query"
                     },
@@ -324,6 +916,12 @@ const docTemplate = `{
                         "default": 0,
                         "description": "Pagination offset",
                         "name": "offset",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Set to transfers to embed token_transfers, internal_txs and approvals on every row",
+                        "name": "include",
                         "in": "query"
                     }
                 ],
@@ -405,7 +1003,7 @@ const docTemplate = `{
                                     "type": "object",
                                     "properties": {
                                         "data": {
-                                            "$ref": "#/definitions/api.Transaction"
+                                            "$ref": "#/definitions/api.TransactionDetail"
                                         }
                                     }
                                 }
@@ -427,17 +1025,134 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/v1/data/l1s": {
+        "/api/v1/data/genesis": {
             "get": {
-                "description": "Get a paginated list of L1 subnets with registry metadata",
+                "description": "The Avalanche mainnet genesis, from the config every node boots from: the genesis message, start time, the P-Chain genesis block ID, the X-Chain and C-Chain IDs, the AVAX asset ID, the initial supply split by where it was created, when the locked supply unlocked, the 75 initial validators and the C-Chain genesis. Amounts are nAVAX strings. Individual allocations are at /api/v1/data/genesis/allocations.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "Data - Subnets"
+                    "Data - Genesis"
                 ],
-                "summary": "List L1s",
+                "summary": "Network genesis",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.GenesisOverview"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/data/genesis/allocations": {
+            "get": {
+                "description": "The 5,390 mainnet genesis allocations in genesis order. x_chain_amount was spendable on the X-Chain at genesis; unlock_schedule tranches were locked on the P-Chain until unlock_time, or staked by the genesis validators when initially_staked is true. Amounts are nAVAX strings.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Data - Genesis"
+                ],
+                "summary": "Genesis allocations",
                 "parameters": [
+                    {
+                        "type": "string",
+                        "description": "AVAX address (avax1..., X-avax1... or P-avax1...) or 0x ETH address",
+                        "name": "address",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 100,
+                        "description": "Number of results (max 1000)",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 0,
+                        "description": "Pagination offset",
+                        "name": "offset",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/api.GenesisAllocation"
+                                            }
+                                        },
+                                        "meta": {
+                                            "$ref": "#/definitions/api.Meta"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/data/pchain/blocks": {
+            "get": {
+                "description": "Recent P-Chain blocks (grouped from transactions), newest first. Bounded to the last N days (default 7).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Data - P-Chain"
+                ],
+                "summary": "List P-Chain blocks",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 7,
+                        "description": "Look-back window in days",
+                        "name": "days",
+                        "in": "query"
+                    },
                     {
                         "type": "integer",
                         "default": 20,
@@ -467,7 +1182,7 @@ const docTemplate = `{
                                         "data": {
                                             "type": "array",
                                             "items": {
-                                                "type": "object"
+                                                "$ref": "#/definitions/api.PChainBlock"
                                             }
                                         },
                                         "meta": {
@@ -487,9 +1202,141 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/data/pchain/blocks/{number}": {
+            "get": {
+                "description": "A single P-Chain block (summarized from its transactions) including proposer and parent info.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Data - P-Chain"
+                ],
+                "summary": "Get P-Chain block by number",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Block number",
+                        "name": "number",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.PChainBlock"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/data/pchain/stats": {
+            "get": {
+                "description": "Headline counters for the P-Chain: active L1/legacy subnets, active chains and validators, 7-day tx volume, and total L1 fees paid (nAVAX).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Data - P-Chain"
+                ],
+                "summary": "Get P-Chain overview stats",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.PChainStats"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/data/pchain/subnet-timeline": {
+            "get": {
+                "description": "Monthly count of subnets converted to L1, oldest first.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Data - P-Chain"
+                ],
+                "summary": "Get L1 subnet creation timeline",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/api.SubnetTimelinePoint"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/data/pchain/tx-types": {
             "get": {
-                "description": "Get a list of P-Chain transaction types with counts",
+                "description": "Get a list of P-Chain transaction types with counts. Pass ?days=N to restrict to the last N days.",
                 "produces": [
                     "application/json"
                 ],
@@ -497,6 +1344,14 @@ const docTemplate = `{
                     "Data - P-Chain"
                 ],
                 "summary": "List P-Chain transaction types",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Restrict to the last N days (default: all time)",
+                        "name": "days",
+                        "in": "query"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -647,35 +1502,33 @@ const docTemplate = `{
                 }
             }
         },
-        "/api/v1/data/subnets": {
+        "/api/v1/data/pchain/validators/timeseries": {
             "get": {
-                "description": "Get a paginated list of subnets with optional type filtering",
+                "description": "Exact active validator counts over time (Primary Network and L1s), sampled from on-chain validator sets. Monthly from 2020-10, daily from mid-2026. Oldest first.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "Data - Subnets"
+                    "Data - P-Chain"
                 ],
-                "summary": "List subnets",
+                "summary": "Get historical validator counts",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Filter by subnet type (regular, elastic, l1)",
-                        "name": "type",
+                        "description": "Aggregation interval: month (default) or day. Month returns the last sample of each month.",
+                        "name": "interval",
                         "in": "query"
                     },
                     {
-                        "type": "integer",
-                        "default": 20,
-                        "description": "Number of results (max 100)",
-                        "name": "limit",
+                        "type": "string",
+                        "description": "Start date (YYYY-MM-DD)",
+                        "name": "from",
                         "in": "query"
                     },
                     {
-                        "type": "integer",
-                        "default": 0,
-                        "description": "Pagination offset",
-                        "name": "offset",
+                        "type": "string",
+                        "description": "End date (YYYY-MM-DD)",
+                        "name": "to",
                         "in": "query"
                     }
                 ],
@@ -693,15 +1546,18 @@ const docTemplate = `{
                                         "data": {
                                             "type": "array",
                                             "items": {
-                                                "$ref": "#/definitions/api.Subnet"
+                                                "$ref": "#/definitions/api.ValidatorCountPoint"
                                             }
-                                        },
-                                        "meta": {
-                                            "$ref": "#/definitions/api.Meta"
                                         }
                                     }
                                 }
                             ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
                         }
                     },
                     "500": {
@@ -762,7 +1618,7 @@ const docTemplate = `{
         },
         "/api/v1/data/validators": {
             "get": {
-                "description": "Get a paginated list of L1 validators with optional filtering",
+                "description": "Get a paginated list of validators with optional filtering. Legacy subnet validators are enriched with Primary Network stake and uptime.",
                 "produces": [
                     "application/json"
                 ],
@@ -781,6 +1637,26 @@ const docTemplate = `{
                         "type": "boolean",
                         "description": "Filter by active status (true/false)",
                         "name": "active",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by node ID (all of the node's validations)",
+                        "name": "node_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "default": "weight",
+                        "description": "Sort key: weight, total_stake, total_delegated, delegator_count, delegation_fee_percent, end_time",
+                        "name": "sort",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "default": "desc",
+                        "description": "Sort order: desc or asc",
+                        "name": "order",
                         "in": "query"
                     },
                     {
@@ -834,7 +1710,7 @@ const docTemplate = `{
         },
         "/api/v1/data/validators/{id}": {
             "get": {
-                "description": "Get details for a specific validator by validation ID or node ID",
+                "description": "Get details for a specific validator by validation ID or node ID. A node ID resolves to the node's active validation, else its most recent one. Legacy subnet validators include Primary Network stake and uptime.",
                 "produces": [
                     "application/json"
                 ],
@@ -849,6 +1725,12 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Subnet ID (to get subnet-specific entry for a node)",
+                        "name": "subnet_id",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -935,6 +1817,523 @@ const docTemplate = `{
                                     }
                                 }
                             ]
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/metrics/bridges": {
+            "get": {
+                "description": "USD bridged into and out of the C-Chain over the last N complete UTC days ending as_of, in total and by bridge, counterparty chain and token. Tracked: Circle CCTP V1+V2, LayerZero OFTs V1+V2, Stargate V2 pools, the Avalanche Bridge (.e tokens to Ethereum, BTC.b to Bitcoin), Chainlink CCIP token pools and the 2021 AEB (ChainBridge, Ethereum). Counterparty chain keys are not a closed set: unmapped chains appear as raw keys such as lz:30999 or cctp:12. Each transfer counts once: CCIP or other legs moving native USDC through CCTP count as CCTP. Transactions that bridge in and out again are left out (passthrough_count). Stablecoins are priced at $1, wrapped ETH, BTC, AVAX and LINK at the hourly Chainlink price, other tokens are counted but unpriced (priced_share). Cached for 5 minutes.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metrics - Bridges"
+                ],
+                "summary": "C-Chain bridge inflows and outflows",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 30,
+                        "description": "Complete UTC days, 1-3650",
+                        "name": "days",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.BridgeOverview"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/metrics/bridges/timeseries": {
+            "get": {
+                "description": "Daily USD in and out of the C-Chain, total and per bridge, for the last N complete UTC days ending as_of. Oldest first, days without transfers left out. Same counting as /metrics/bridges. Cached for 5 minutes.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metrics - Bridges"
+                ],
+                "summary": "C-Chain bridge flows history",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 90,
+                        "description": "Complete UTC days, 1-3650",
+                        "name": "days",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/api.BridgeDay"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/metrics/bridges/transfers/recent": {
+            "get": {
+                "description": "The newest bridge transfers, priced or not, passthrough legs included and marked. Follows the chain within the bridge sync interval (5 minutes). Cached for 1 minute.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metrics - Bridges"
+                ],
+                "summary": "Recent C-Chain bridge transfers",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 25,
+                        "description": "Transfers, 1-100",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/api.BridgeTransfer"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/metrics/bridges/transfers/top": {
+            "get": {
+                "description": "Priced bridge transfers with the highest USD value over the last N complete UTC days ending as_of. Passthrough legs are left out. Cached for 5 minutes.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metrics - Bridges"
+                ],
+                "summary": "Largest C-Chain bridge transfers",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 30,
+                        "description": "Complete UTC days, 1-3650",
+                        "name": "days",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 25,
+                        "description": "Transfers, 1-100",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/api.BridgeTransfer"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/metrics/burned/total": {
+            "get": {
+                "description": "All-time AVAX burned across Avalanche, split P/X/C. Amounts are nAVAX (1 nAVAX = 1e9 wei). Unindexed chains are null.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metrics - Fees"
+                ],
+                "summary": "Get network total AVAX burned",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.NetworkBurnedTotal"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/metrics/dex": {
+            "get": {
+                "description": "Swap volume, swaps and unique addresses per DEX (Pharaoh V3, Pharaoh DLMM, Uniswap V3, Blackhole CLMM, LFJ Liquidity Book V2.0/V2.1/V2.2, LFJ V1, Pangolin V3, Pangolin V2, SushiSwap V2) over the last N complete UTC days ending as_of. days=1 is the last complete UTC day (matches DefiLlama's daily numbers), not a rolling 24h. Only pools created by the known factories count. Swaps are priced at a USD stablecoin side ($1) or a WAVAX side (hourly AVAX price from WAVAX/stablecoin swaps), one side each; others are counted but unpriced (see priced_share). unique_addresses counts tx.from, bots included; totals deduplicate across DEXes. Cached for 10 minutes.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metrics - DEX"
+                ],
+                "summary": "C-Chain DEX volume",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Complete UTC days, 1-3650",
+                        "name": "days",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.DexOverview"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/metrics/dex/pools": {
+            "get": {
+                "description": "Pools with the most priced volume over the last N complete UTC days ending at the newest rolled-up day, with their tokens. Token symbols come from token_metadata and are empty when unknown. Cached for 10 minutes.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metrics - DEX"
+                ],
+                "summary": "Top C-Chain DEX pools",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Complete UTC days, 1-30",
+                        "name": "days",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 20,
+                        "description": "Pools, 1-100",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/api.DexPool"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/metrics/dex/timeseries": {
+            "get": {
+                "description": "Daily volume and swaps, total and per DEX, for the last N complete UTC days ending at the newest rolled-up day. Oldest first; days without swaps are left out. Cached for 10 minutes.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metrics - DEX"
+                ],
+                "summary": "C-Chain DEX volume history",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 90,
+                        "description": "Complete UTC days, 1-3650",
+                        "name": "days",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/api.DexDay"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/metrics/evm/{chainId}/fees/burned": {
+            "get": {
+                "description": "Per-period (and cumulative) tx-fee burn. On the C-Chain 100% of the fee is burned. Amounts are nAVAX (1 nAVAX = 1e9 wei).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metrics - Fees"
+                ],
+                "summary": "Get transaction fee burn",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Chain ID (e.g. 43114 for C-Chain)",
+                        "name": "chainId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "default": "day",
+                        "description": "hour, day, week, or month",
+                        "name": "granularity",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Start time (date, RFC3339, or unix timestamp)",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "End time (date, RFC3339, or unix timestamp)",
+                        "name": "to",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 100,
+                        "description": "Number of periods (max 1000)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.FeeBurnResponse"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
                         }
                     },
                     "500": {
@@ -1207,6 +2606,504 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/metrics/fees/daily": {
+            "get": {
+                "description": "Get daily L1 validation fee burn computed from validator active periods (512 nAVAX/sec per validator). Omit subnet_id for network-wide totals.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metrics - Fees"
+                ],
+                "summary": "Get daily fee burn",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Subnet ID (omit for all L1s)",
+                        "name": "subnet_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 90,
+                        "description": "Number of days (max 365)",
+                        "name": "days",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Include per-validator breakdown (true/false, requires subnet_id)",
+                        "name": "validators",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/api.DailyFeeBurn"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/metrics/icm": {
+            "get": {
+                "description": "ICM messages sent from and received on the C-Chain over the last N complete UTC days ending as_of, total and per other chain (destination for sends, source for receives). Counted from the official TeleporterMessenger's SendCrossChainMessage and ReceiveCrossChainMessage events, one per messageID in each direction, from 2024-03-05. Messages between two L1s that never touch the C-Chain are not included. Cached for 5 minutes.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metrics - ICM"
+                ],
+                "summary": "C-Chain ICM (Teleporter) messages",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 30,
+                        "description": "Complete UTC days, 1-3650",
+                        "name": "days",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.ICMOverview"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/metrics/icm/apps": {
+            "get": {
+                "description": "C-Chain contracts sending or receiving ICM messages over the last N complete UTC days ending as_of: sends from them (originSenderAddress), receives to them (destinationAddress), their busiest other chains, and first and last message all time. ICTT token bridges are marked ictt-home or ictt-remote after an on-chain check, with their token. Names come from address labels, else the ICTT token. Busiest first. Cached for 5 minutes.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metrics - ICM"
+                ],
+                "summary": "C-Chain ICM apps",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 30,
+                        "description": "Complete UTC days, 1-3650",
+                        "name": "days",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 50,
+                        "description": "Apps, 1-200",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.ICMApps"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/metrics/icm/messages": {
+            "get": {
+                "description": "ICM messages sent from or received on the C-Chain, newest first, with the C-Chain contract and L1 address, relayer fee (sends), deliverer and reward redeemer (receives), and the ICTT payload for ICTT apps. Page with before=meta.next_cursor. Cached for 1 minute.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metrics - ICM"
+                ],
+                "summary": "Recent C-Chain ICM messages",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 50,
+                        "description": "Messages, 1-200",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Cursor from meta.next_cursor",
+                        "name": "before",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Other chain's blockchain ID (CB58)",
+                        "name": "chain",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "sent or received",
+                        "name": "direction",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "C-Chain contract address",
+                        "name": "app",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/api.ICMMessage"
+                                            }
+                                        },
+                                        "meta": {
+                                            "$ref": "#/definitions/api.Meta"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/metrics/icm/timeseries": {
+            "get": {
+                "description": "Messages sent from and received on the C-Chain per UTC day, total and per other chain, for the last N complete days ending as_of. With by_app=true, also per C-Chain contract (see /metrics/icm/apps). Oldest first, every day included (zero when quiet), from 2024-03-05. Cached for 5 minutes.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metrics - ICM"
+                ],
+                "summary": "C-Chain ICM (Teleporter) messages per day",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 90,
+                        "description": "Complete UTC days, 1-3650",
+                        "name": "days",
+                        "in": "query"
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "Add the per-app split",
+                        "name": "by_app",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/api.ICMDay"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/metrics/icm/transfers/top": {
+            "get": {
+                "description": "The largest priced ICTT transfers on the C-Chain by USD over the last N complete UTC days ending as_of. Cached for 5 minutes.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metrics - ICM"
+                ],
+                "summary": "Largest C-Chain ICTT transfers",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 30,
+                        "description": "Complete UTC days, 1-3650",
+                        "name": "days",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 50,
+                        "description": "Transfers, 1-200",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/api.ICMTransfer"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/metrics/icm/value": {
+            "get": {
+                "description": "Token value moved by ICTT token bridges (TokenHome / TokenRemote) on the C-Chain over the last N complete UTC days ending as_of: sent (left the C-Chain) and received (arrived on it, once executed), total, per token and per other chain. Amounts are C-Chain token base units: a TokenHome's messages are scaled back from the remote's denomination with the remote's registered multiplier. Priced by token address like /metrics/bridges (USD stablecoins and legacy AEB USD tokens at $1; WAVAX, the ETH tokens WETH.e and AEB ETH, the BTC tokens BTC.b, WBTC.e, the WBTC OFT, LBTC and AEB WBTC, and LINK.e and AEB LINK at their hourly Chainlink price); other tokens have no USD. A multi-hop transfer through a C-Chain home counts once. Cached for 5 minutes.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metrics - ICM"
+                ],
+                "summary": "C-Chain ICTT value",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 30,
+                        "description": "Complete UTC days, 1-3650",
+                        "name": "days",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.ICMValue"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/metrics/icm/value/timeseries": {
+            "get": {
+                "description": "Daily USD sent and received by ICTT token bridges on the C-Chain, with transfers and a per-token split, for the last N complete UTC days ending as_of. Oldest first, every day included. Same scaling and pricing as /metrics/icm/value. Cached for 5 minutes.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metrics - ICM"
+                ],
+                "summary": "C-Chain ICTT value per day",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 90,
+                        "description": "Complete UTC days, 1-3650",
+                        "name": "days",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/api.ICMValueDay"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/metrics/indexer/status": {
             "get": {
                 "description": "Get sync status for all indexed chains",
@@ -1222,6 +3119,926 @@ const docTemplate = `{
                         "description": "OK",
                         "schema": {
                             "$ref": "#/definitions/api.IndexerStatus"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/metrics/lending": {
+            "get": {
+                "description": "Supply, borrow, rates and risk parameters of every market on Aave V3, Aave V4 (Core Hub) and BENQI Lending, read from the contracts by the indexer every C-Chain snapshot cycle (5 minutes by default, ` + "`" + `cchainSnapshotInterval` + "`" + `) and cached for 2 minutes. Amounts are token base units. APYs compound the per-second rate. USD values use each protocol's own oracle and are null when its read failed. The summary sums AVAX (WAVAX on Aave, native AVAX on BENQI) and sAVAX across protocols.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metrics - Staking"
+                ],
+                "summary": "C-Chain lending markets",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.LendingOverview"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/metrics/lending/liquidations": {
+            "get": {
+                "description": "Executed liquidations on Aave V3, Aave V4 and BENQI per UTC day: count, repaid and seized USD (oracle value at the event block), split by protocol and by collateral asset. USD sums cover priced liquidations only; unpriced counts those missing a price. Today's partial day is included. Oldest first. Cached for 5 minutes.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metrics - Staking"
+                ],
+                "summary": "Lending liquidations per day",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 30,
+                        "description": "Days back, 1-3650",
+                        "name": "days",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/api.LiqDay"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/metrics/lending/liquidations/recent": {
+            "get": {
+                "description": "The latest executed liquidations on Aave V3, Aave V4 and BENQI, newest first. min_usd keeps those whose repaid or seized value is at least that much. Cached for 5 minutes.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metrics - Staking"
+                ],
+                "summary": "Recent lending liquidations",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 50,
+                        "description": "Rows, 1-500",
+                        "name": "limit",
+                        "in": "query"
+                    },
+                    {
+                        "type": "number",
+                        "description": "Minimum repaid or seized USD",
+                        "name": "min_usd",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/api.LiqEvent"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/metrics/lending/liquidations/top": {
+            "get": {
+                "description": "The largest executed liquidations by seized USD over the last N days (today included), on Aave V3, Aave V4 and BENQI. Cached for 5 minutes.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metrics - Staking"
+                ],
+                "summary": "Largest lending liquidations",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 30,
+                        "description": "Days back, 1-3650",
+                        "name": "days",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 20,
+                        "description": "Rows, 1-100",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/api.LiqEvent"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/metrics/lending/timeseries": {
+            "get": {
+                "description": "Daily supplied, borrowed and rates of AVAX (WAVAX on Aave, native AVAX on BENQI) or sAVAX across Aave V3, Aave V4 and BENQI, from the last sample of each UTC day. Amounts are wei strings (18 decimals). With market=\u003cprotocol_id\u003e:\u003casset\u003e, returns that one market's daily history instead. Past days are read at the day's last block on the archive node, about a year back. Oldest first.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metrics - Staking"
+                ],
+                "summary": "Lending history for AVAX or sAVAX",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "avax or savax (when market is not set)",
+                        "name": "asset",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "One market as \u003cprotocol_id\u003e:\u003casset address\u003e, e.g. aave-v3:0xb31f66aa3c1e785363f0875a1b74e27b85fd66c7. Returns []LendingMarketPoint instead",
+                        "name": "market",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 365,
+                        "description": "Days back, 1-3650",
+                        "name": "days",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/api.LendingPoint"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/metrics/lending/timeseries/totals": {
+            "get": {
+                "description": "Daily supplied and borrowed USD per protocol (Aave V3, Aave V4, BENQI) and overall, from each market's daily sample and its oracle price that day. Markets without a price are left out. Oldest first. Cached for 10 minutes.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metrics - Staking"
+                ],
+                "summary": "Lending USD totals history",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 365,
+                        "description": "Days back, 1-3650",
+                        "name": "days",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/api.LendingTotalsPoint"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/metrics/perps": {
+            "get": {
+                "description": "Volume, long/short split, trades, traders, fees and liquidations per venue (GMX V2, GMX V1) over the last N complete UTC days ending as_of. Volume is the USD size change of every increase, decrease and liquidation, as GMX reports it. Fees are position, borrowing and liquidation fees (funding is not a fee). traders counts distinct accounts that changed a position size. Cached for 5 minutes.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metrics - Perps"
+                ],
+                "summary": "C-Chain perpetuals",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 30,
+                        "description": "Complete UTC days, 1-3650",
+                        "name": "days",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.PerpOverview"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/metrics/perps/liquidations/top": {
+            "get": {
+                "description": "Liquidations with the largest position size over the last N complete UTC days ending as_of. collateral_usd is the collateral the position held. Cached for 5 minutes.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metrics - Perps"
+                ],
+                "summary": "Largest C-Chain perpetuals liquidations",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 30,
+                        "description": "Complete UTC days, 1-3650",
+                        "name": "days",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 25,
+                        "description": "Liquidations, 1-100",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/api.PerpLiquidation"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/metrics/perps/open-interest": {
+            "get": {
+                "description": "Long and short open interest in USD at the end of each complete UTC day, total and per market, for the last N days ending as_of. GMX V2 from its OpenInterestUpdated events, GMX V1 from the sum of its position size changes. Markets with no open interest are left out. Cached for 5 minutes.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metrics - Perps"
+                ],
+                "summary": "C-Chain perpetuals open interest",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 90,
+                        "description": "Complete UTC days, 1-3650",
+                        "name": "days",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/api.PerpOIDay"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/metrics/perps/timeseries": {
+            "get": {
+                "description": "Daily volume, trades, fees and liquidated size, total and per venue, for the last N complete UTC days ending as_of. Oldest first, days without trades left out. Cached for 5 minutes.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metrics - Perps"
+                ],
+                "summary": "C-Chain perpetuals history",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 90,
+                        "description": "Complete UTC days, 1-3650",
+                        "name": "days",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/api.PerpDay"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/metrics/restaking": {
+            "get": {
+                "description": "L1s whose validators are secured by restaking vaults on the C-Chain (Suzaku). Each L1 lists its vaults with deposited, allocated (delegated to the L1's operators) and idle collateral in token base units, and the share of the L1's active P-Chain validator weight held by validators the protocol registered. Every L1 in the Suzaku L1Registry with at least one vault is included, active or not. Sampled by the indexer every C-Chain snapshot cycle (5 minutes by default, ` + "`" + `cchainSnapshotInterval` + "`" + `) and cached for 5 minutes.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metrics - Staking"
+                ],
+                "summary": "Restaked collateral per L1",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Only this L1 subnet ID",
+                        "name": "subnet_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Only the L1 with this blockchain ID",
+                        "name": "chain_id",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.RestakingOverview"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/metrics/staking": {
+            "get": {
+                "description": "Own and delegated stake, validator/delegation counts, delegation fee distribution, stake concentration (top N share, Nakamoto) and share of AVAX total supply staked. Amounts are nAVAX strings. Cached for 1 minute, source refreshes every 5.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metrics - Staking"
+                ],
+                "summary": "Primary Network staking summary",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.StakingSummary"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/metrics/staking/liquid": {
+            "get": {
+                "description": "AVAX liquid staking tokens with pooled AVAX, token supply and exchange rate from the C-Chain contract, and running delegations whose rewards go to the protocol's P-Chain addresses. Sampled by the indexer every validator sync cycle (hourly on api.l1beat.io). attribution says whether the P-Chain addresses are confirmed by the protocol. Amounts are nAVAX strings. Cached for 5 minutes.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metrics - Staking"
+                ],
+                "summary": "Liquid staking protocols",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "$ref": "#/definitions/api.LiquidStakingOverview"
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/metrics/staking/liquid/timeseries": {
+            "get": {
+                "description": "Daily pooled AVAX, exchange rate and running delegations per liquid staking protocol (last sample of each UTC day). History starts 2026-10-31. Amounts are nAVAX strings. Oldest first.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metrics - Staking"
+                ],
+                "summary": "Liquid staking history",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Protocol id, e.g. benqi-savax (default: all)",
+                        "name": "protocol",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 365,
+                        "description": "Days back, 1-3650",
+                        "name": "days",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/api.LiquidStakingPoint"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/metrics/staking/timeseries": {
+            "get": {
+                "description": "Daily active stake per subnet, sampled by the validator syncer (last sample of each UTC day). Primary Network rows include delegation and AVAX total supply. History starts 2026-10-30. Amounts are raw weight strings (nAVAX for the Primary Network), with staked_tokens for PoS chains. Oldest first.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metrics - Staking"
+                ],
+                "summary": "Daily staking snapshots",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Subnet ID (default: Primary Network)",
+                        "name": "subnet_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 365,
+                        "description": "Days of history, 1-3650",
+                        "name": "days",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/api.StakingPoint"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/metrics/staking/unlocks": {
+            "get": {
+                "description": "Stake whose lock ends in each of the next N weeks (Monday-start, UTC), split into validator own stake and delegated stake. Delegations come from active AddDelegator/AddPermissionlessDelegator transactions. Amounts are nAVAX strings. Cached for 5 minutes.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metrics - Staking"
+                ],
+                "summary": "Primary Network stake unlock schedule",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "default": 12,
+                        "description": "Weeks ahead, 1-53 (the maximum staking period is one year)",
+                        "name": "weeks",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/api.StakingUnlockWeek"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/metrics/storage": {
+            "get": {
+                "description": "Per-table on-disk size (bytes) and row counts, largest first.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Metrics - Indexer"
+                ],
+                "summary": "Get storage stats",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/api.StorageTable"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
                         }
                     },
                     "500": {
@@ -1284,6 +4101,35 @@ const docTemplate = `{
                 }
             }
         },
+        "api.AddressLabel": {
+            "type": "object",
+            "properties": {
+                "implementation": {
+                    "type": "string",
+                    "example": "0x..."
+                },
+                "is_contract": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "kind": {
+                    "type": "string",
+                    "example": "router"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "LFJ Router (v1)"
+                },
+                "protocol": {
+                    "type": "string",
+                    "example": "LFJ"
+                },
+                "verified": {
+                    "type": "boolean",
+                    "example": true
+                }
+            }
+        },
         "api.AvailableMetric": {
             "type": "object",
             "properties": {
@@ -1325,6 +4171,9 @@ const docTemplate = `{
                 "block_time": {
                     "type": "string"
                 },
+                "burned": {
+                    "$ref": "#/definitions/api.BlockBurn"
+                },
                 "chain_id": {
                     "type": "integer",
                     "example": 43114
@@ -1356,6 +4205,438 @@ const docTemplate = `{
                 "tx_count": {
                     "type": "integer",
                     "example": 150
+                }
+            }
+        },
+        "api.BlockBurn": {
+            "type": "object",
+            "properties": {
+                "base_fee": {
+                    "description": "sum(gas_used * base_fee_per_gas)",
+                    "type": "string",
+                    "example": "100000000"
+                },
+                "priority_fee": {
+                    "description": "total - base",
+                    "type": "string",
+                    "example": "23456789"
+                },
+                "total": {
+                    "description": "sum(gas_used * gas_price)",
+                    "type": "string",
+                    "example": "123456789"
+                }
+            }
+        },
+        "api.BridgeChain": {
+            "type": "object",
+            "properties": {
+                "avalanche_l1": {
+                    "type": "boolean"
+                },
+                "bridges": {
+                    "description": "Bridges splits the chain's flow by bridge, only bridges that moved\nsomething. Their USD adds up to the chain's.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.BridgeDayBridge"
+                    }
+                },
+                "chain": {
+                    "description": "key, e.g. ethereum, base, bitcoin",
+                    "type": "string"
+                },
+                "flagged_transfers": {
+                    "type": "integer"
+                },
+                "inflow_usd": {
+                    "type": "number"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "net_usd": {
+                    "description": "inflow - outflow",
+                    "type": "number"
+                },
+                "outflow_usd": {
+                    "type": "number"
+                },
+                "priced_share": {
+                    "description": "priced transfers / transfers, 0-1",
+                    "type": "number"
+                },
+                "transfers": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.BridgeDay": {
+            "type": "object",
+            "properties": {
+                "bridges": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.BridgeDayBridge"
+                    }
+                },
+                "date": {
+                    "type": "string"
+                },
+                "inflow_usd": {
+                    "type": "number"
+                },
+                "net_usd": {
+                    "type": "number"
+                },
+                "outflow_usd": {
+                    "type": "number"
+                },
+                "transfers": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.BridgeDayBridge": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "inflow_usd": {
+                    "type": "number"
+                },
+                "outflow_usd": {
+                    "type": "number"
+                },
+                "transfers": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.BridgeOverview": {
+            "type": "object",
+            "properties": {
+                "as_of": {
+                    "description": "last complete UTC day, null before the first one",
+                    "type": "string"
+                },
+                "by_bridge": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.BridgeStats"
+                    }
+                },
+                "by_chain": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.BridgeChain"
+                    }
+                },
+                "by_token": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.BridgeToken"
+                    }
+                },
+                "days": {
+                    "type": "integer"
+                },
+                "flag_threshold_usd": {
+                    "type": "number"
+                },
+                "from": {
+                    "type": "string"
+                },
+                "totals": {
+                    "$ref": "#/definitions/api.BridgeTotals"
+                }
+            }
+        },
+        "api.BridgeStats": {
+            "type": "object",
+            "properties": {
+                "flagged_transfers": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "inflow_usd": {
+                    "type": "number"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "net_usd": {
+                    "description": "inflow - outflow",
+                    "type": "number"
+                },
+                "outflow_usd": {
+                    "type": "number"
+                },
+                "priced_share": {
+                    "description": "priced transfers / transfers, 0-1",
+                    "type": "number"
+                },
+                "transfers": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.BridgeToken": {
+            "type": "object",
+            "properties": {
+                "decimals": {
+                    "description": "null when unknown",
+                    "type": "integer"
+                },
+                "inflow_amount": {
+                    "description": "token base units",
+                    "type": "string"
+                },
+                "inflow_usd": {
+                    "type": "number"
+                },
+                "net_usd": {
+                    "type": "number"
+                },
+                "outflow_amount": {
+                    "description": "token base units",
+                    "type": "string"
+                },
+                "outflow_usd": {
+                    "type": "number"
+                },
+                "priced": {
+                    "type": "boolean"
+                },
+                "symbol": {
+                    "type": "string"
+                },
+                "token": {
+                    "type": "string"
+                },
+                "transfers": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.BridgeTotals": {
+            "type": "object",
+            "properties": {
+                "flagged_transfers": {
+                    "type": "integer"
+                },
+                "inflow_usd": {
+                    "type": "number"
+                },
+                "net_usd": {
+                    "description": "inflow - outflow",
+                    "type": "number"
+                },
+                "outflow_usd": {
+                    "type": "number"
+                },
+                "passthrough_count": {
+                    "description": "PassthroughCount is the transactions that bridged in and out again in\none go (e.g. a CCTP mint forwarded straight to another chain). Their legs\nare left out of every figure.",
+                    "type": "integer"
+                },
+                "priced_share": {
+                    "description": "priced transfers / transfers, 0-1",
+                    "type": "number"
+                },
+                "transfers": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.BridgeTransfer": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "string"
+                },
+                "bridge": {
+                    "type": "string"
+                },
+                "chain": {
+                    "type": "string"
+                },
+                "chain_name": {
+                    "type": "string"
+                },
+                "decimals": {
+                    "type": "integer"
+                },
+                "direction": {
+                    "description": "in, out",
+                    "type": "string"
+                },
+                "from": {
+                    "description": "C-Chain sender (out), null when unknown",
+                    "type": "string"
+                },
+                "passthrough": {
+                    "type": "boolean"
+                },
+                "symbol": {
+                    "type": "string"
+                },
+                "time": {
+                    "type": "string"
+                },
+                "to": {
+                    "description": "C-Chain recipient (in), null when unknown",
+                    "type": "string"
+                },
+                "token": {
+                    "type": "string"
+                },
+                "tx_hash": {
+                    "type": "string"
+                },
+                "usd": {
+                    "type": "number"
+                },
+                "via": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.BurnedByChain": {
+            "type": "object",
+            "properties": {
+                "c_chain": {
+                    "type": "string"
+                },
+                "p_chain": {
+                    "type": "string"
+                },
+                "x_chain": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.ChainInfo": {
+            "type": "object",
+            "properties": {
+                "active_validators": {
+                    "type": "integer"
+                },
+                "categories": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "chain_id": {
+                    "description": "Chain identity",
+                    "type": "string"
+                },
+                "chain_name": {
+                    "type": "string"
+                },
+                "chain_type": {
+                    "type": "string"
+                },
+                "converted_block": {
+                    "type": "integer"
+                },
+                "converted_time": {
+                    "type": "string"
+                },
+                "created_block": {
+                    "description": "Null when the chain's CreateChainTx is not indexed.",
+                    "type": "integer"
+                },
+                "created_time": {
+                    "type": "string"
+                },
+                "decentralization": {
+                    "description": "Decentralization summary (compact; only for chains with active L1 validators)",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/api.Decentralization"
+                        }
+                    ]
+                },
+                "description": {
+                    "type": "string"
+                },
+                "evm_chain_id": {
+                    "description": "Extended registry fields",
+                    "type": "integer"
+                },
+                "explorer_url": {
+                    "type": "string"
+                },
+                "is_active": {
+                    "description": "Status",
+                    "type": "boolean"
+                },
+                "logo_url": {
+                    "type": "string"
+                },
+                "name": {
+                    "description": "Registry metadata",
+                    "type": "string"
+                },
+                "network": {
+                    "type": "string"
+                },
+                "network_token": {
+                    "$ref": "#/definitions/api.NetworkToken"
+                },
+                "rpc_url": {
+                    "type": "string"
+                },
+                "socials": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.SocialLink"
+                    }
+                },
+                "staked_token": {
+                    "description": "StakedToken is the symbol of the staked token (PoS only).",
+                    "type": "string"
+                },
+                "staking_model": {
+                    "description": "StakingModel is \"pos\", \"poa\" or \"unknown\": from the on-chain\nValidatorManager type, else the registry's sybil_resistance_type, else\n\"pos\" when the registry has a staking factor. The Primary Network is pos.",
+                    "type": "string"
+                },
+                "subnet_id": {
+                    "description": "Parent subnet",
+                    "type": "string"
+                },
+                "sybil_resistance_type": {
+                    "type": "string"
+                },
+                "total_fees_paid": {
+                    "type": "integer"
+                },
+                "total_staked": {
+                    "description": "raw weight of ACTIVE validators",
+                    "type": "integer"
+                },
+                "total_staked_tokens": {
+                    "description": "TotalStakedTokens is total_staked converted to WHOLE tokens (PoS only;\nomitted for PoA / unresolved chains). Decimal string, full precision.",
+                    "type": "string"
+                },
+                "validator_count": {
+                    "description": "L1 stats (only for L1s)",
+                    "type": "integer"
+                },
+                "validator_manager_address": {
+                    "type": "string"
+                },
+                "validator_manager_owner": {
+                    "type": "string"
+                },
+                "vm_id": {
+                    "type": "string"
+                },
+                "website_url": {
+                    "type": "string"
                 }
             }
         },
@@ -1399,6 +4680,289 @@ const docTemplate = `{
                 }
             }
         },
+        "api.ChurnInfo": {
+            "type": "object",
+            "properties": {
+                "max_churn_percentage": {
+                    "type": "integer"
+                },
+                "period_seconds": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.DailyFeeBurn": {
+            "type": "object",
+            "properties": {
+                "active_validators": {
+                    "type": "integer",
+                    "example": 5
+                },
+                "date": {
+                    "type": "string",
+                    "example": "2025-01-15"
+                },
+                "total_fees_burned": {
+                    "type": "integer",
+                    "example": 44236800
+                },
+                "validators": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.ValidatorDailyFeeBurn"
+                    }
+                }
+            }
+        },
+        "api.Decentralization": {
+            "type": "object",
+            "properties": {
+                "active_validator_count": {
+                    "type": "integer"
+                },
+                "nakamoto_33": {
+                    "description": "min validators controlling more than 1/3 of active weight; null if unknown",
+                    "type": "integer"
+                },
+                "nakamoto_50": {
+                    "description": "min validators controlling more than 1/2 of active weight; null if unknown",
+                    "type": "integer"
+                },
+                "total_weight": {
+                    "description": "sum of active validator weights, raw",
+                    "type": "string"
+                },
+                "weights": {
+                    "description": "active validator weights sorted desc, raw (full detail only)",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                }
+            }
+        },
+        "api.DelegationFees": {
+            "type": "object",
+            "properties": {
+                "histogram": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.FeeBucket"
+                    }
+                },
+                "median_percent": {
+                    "type": "number"
+                }
+            }
+        },
+        "api.DelegatorDelegation": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "boolean"
+                },
+                "end_time": {
+                    "type": "string"
+                },
+                "node_id": {
+                    "type": "string"
+                },
+                "stake": {
+                    "description": "nAVAX",
+                    "type": "string"
+                },
+                "start_time": {
+                    "type": "string"
+                },
+                "tx_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.DelegatorMeta": {
+            "type": "object",
+            "properties": {
+                "has_more": {
+                    "type": "boolean"
+                },
+                "limit": {
+                    "type": "integer"
+                },
+                "next_cursor": {
+                    "type": "string"
+                },
+                "offset": {
+                    "type": "integer"
+                },
+                "summary": {
+                    "$ref": "#/definitions/api.DelegatorSummary"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.DelegatorResponse": {
+            "type": "object",
+            "properties": {
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.DelegatorDelegation"
+                    }
+                },
+                "meta": {
+                    "$ref": "#/definitions/api.DelegatorMeta"
+                }
+            }
+        },
+        "api.DelegatorSummary": {
+            "type": "object",
+            "properties": {
+                "active_count": {
+                    "type": "integer"
+                },
+                "active_stake": {
+                    "description": "nAVAX",
+                    "type": "string"
+                },
+                "first_delegation_time": {
+                    "type": "string"
+                },
+                "validator_count": {
+                    "description": "distinct nodes among active delegations",
+                    "type": "integer"
+                }
+            }
+        },
+        "api.DexDay": {
+            "type": "object",
+            "properties": {
+                "date": {
+                    "type": "string"
+                },
+                "dexes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.DexDayDex"
+                    }
+                },
+                "swaps": {
+                    "type": "integer"
+                },
+                "volume_usd": {
+                    "type": "number"
+                }
+            }
+        },
+        "api.DexDayDex": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "swaps": {
+                    "type": "integer"
+                },
+                "volume_usd": {
+                    "type": "number"
+                }
+            }
+        },
+        "api.DexOverview": {
+            "type": "object",
+            "properties": {
+                "as_of": {
+                    "description": "last complete UTC day, null before the first rollup",
+                    "type": "string"
+                },
+                "days": {
+                    "type": "integer"
+                },
+                "dexes": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.DexStats"
+                    }
+                },
+                "flag_threshold_usd": {
+                    "type": "number"
+                },
+                "from": {
+                    "type": "string"
+                },
+                "totals": {
+                    "$ref": "#/definitions/api.DexStats"
+                }
+            }
+        },
+        "api.DexPool": {
+            "type": "object",
+            "properties": {
+                "dex": {
+                    "type": "string"
+                },
+                "pool": {
+                    "type": "string"
+                },
+                "protocol": {
+                    "type": "string"
+                },
+                "swaps": {
+                    "type": "integer"
+                },
+                "token0": {
+                    "$ref": "#/definitions/api.DexToken"
+                },
+                "token1": {
+                    "$ref": "#/definitions/api.DexToken"
+                },
+                "volume_usd": {
+                    "type": "number"
+                }
+            }
+        },
+        "api.DexStats": {
+            "type": "object",
+            "properties": {
+                "flagged_swaps": {
+                    "type": "integer"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "priced_share": {
+                    "description": "priced swaps / swaps, 0-1",
+                    "type": "number"
+                },
+                "protocol": {
+                    "type": "string"
+                },
+                "swaps": {
+                    "type": "integer"
+                },
+                "unique_addresses": {
+                    "type": "integer"
+                },
+                "volume_usd": {
+                    "type": "number"
+                }
+            }
+        },
+        "api.DexToken": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string"
+                },
+                "symbol": {
+                    "type": "string"
+                }
+            }
+        },
         "api.EVMChainStatus": {
             "type": "object",
             "properties": {
@@ -1431,6 +4995,24 @@ const docTemplate = `{
                 }
             }
         },
+        "api.EconomicSecurity": {
+            "type": "object",
+            "properties": {
+                "cost_to_control_33_usd": {
+                    "type": "number"
+                },
+                "staking_token": {
+                    "$ref": "#/definitions/api.NetworkToken"
+                },
+                "total_stake_raw": {
+                    "description": "not populated yet (always empty)",
+                    "type": "string"
+                },
+                "total_stake_usd": {
+                    "type": "number"
+                }
+            }
+        },
         "api.ErrorCode": {
             "type": "string",
             "enum": [
@@ -1455,6 +5037,93 @@ const docTemplate = `{
             "properties": {
                 "error": {
                     "$ref": "#/definitions/api.APIError"
+                }
+            }
+        },
+        "api.FeeBucket": {
+            "type": "object",
+            "properties": {
+                "label": {
+                    "type": "string"
+                },
+                "max_percent": {
+                    "type": "number"
+                },
+                "min_percent": {
+                    "type": "number"
+                },
+                "total_stake": {
+                    "description": "nAVAX, own + delegated",
+                    "type": "string"
+                },
+                "validator_count": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.FeeBurnPoint": {
+            "type": "object",
+            "properties": {
+                "base_fee_burned": {
+                    "description": "nAVAX",
+                    "type": "string",
+                    "example": "100000000"
+                },
+                "period": {
+                    "type": "string"
+                },
+                "priority_fee_burned": {
+                    "description": "nAVAX",
+                    "type": "string",
+                    "example": "23456789"
+                },
+                "total_burned": {
+                    "description": "nAVAX",
+                    "type": "string",
+                    "example": "123456789"
+                }
+            }
+        },
+        "api.FeeBurnResponse": {
+            "type": "object",
+            "properties": {
+                "chain_id": {
+                    "type": "integer",
+                    "example": 43114
+                },
+                "cumulative": {
+                    "$ref": "#/definitions/api.FeeBurnTotals"
+                },
+                "granularity": {
+                    "type": "string",
+                    "example": "day"
+                },
+                "series": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.FeeBurnPoint"
+                    }
+                },
+                "unit": {
+                    "type": "string",
+                    "example": "nAVAX"
+                }
+            }
+        },
+        "api.FeeBurnTotals": {
+            "type": "object",
+            "properties": {
+                "base_fee_burned": {
+                    "description": "nAVAX",
+                    "type": "string"
+                },
+                "priority_fee_burned": {
+                    "description": "nAVAX",
+                    "type": "string"
+                },
+                "total_burned": {
+                    "description": "nAVAX",
+                    "type": "string"
                 }
             }
         },
@@ -1510,6 +5179,165 @@ const docTemplate = `{
                 }
             }
         },
+        "api.GenesisAllocation": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "description": "Address is the bech32 AVAX address without a chain prefix: the unlocked\namount was created on the X-Chain and the locked tranches on the P-Chain.",
+                    "type": "string"
+                },
+                "eth_address": {
+                    "type": "string"
+                },
+                "index": {
+                    "description": "position in the genesis config",
+                    "type": "integer"
+                },
+                "initially_staked": {
+                    "type": "boolean"
+                },
+                "total": {
+                    "description": "nAVAX",
+                    "type": "string"
+                },
+                "unlock_schedule": {
+                    "description": "UnlockSchedule was locked on the P-Chain until each unlock time. For an\ninitially staked address these tranches were staked by the genesis\nvalidators instead.",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.GenesisUnlock"
+                    }
+                },
+                "x_chain_amount": {
+                    "description": "XChainAmount was spendable on the X-Chain at genesis.",
+                    "type": "string"
+                }
+            }
+        },
+        "api.GenesisOverview": {
+            "type": "object",
+            "properties": {
+                "avax_asset_id": {
+                    "type": "string"
+                },
+                "c_chain_genesis": {
+                    "type": "object"
+                },
+                "c_chain_id": {
+                    "type": "string"
+                },
+                "initial_stake_duration_seconds": {
+                    "type": "integer"
+                },
+                "initial_validators": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.GenesisValidator"
+                    }
+                },
+                "initially_staked_addresses": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "message": {
+                    "type": "string"
+                },
+                "network_id": {
+                    "type": "integer"
+                },
+                "p_chain_genesis_block_id": {
+                    "type": "string"
+                },
+                "start_time": {
+                    "type": "string"
+                },
+                "supply": {
+                    "$ref": "#/definitions/api.GenesisSupply"
+                },
+                "unlock_schedule": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.GenesisUnlockBucket"
+                    }
+                },
+                "x_chain_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.GenesisSupply": {
+            "type": "object",
+            "properties": {
+                "allocation_count": {
+                    "type": "integer"
+                },
+                "initially_staked": {
+                    "description": "staked by the genesis validators",
+                    "type": "string"
+                },
+                "initially_staked_address_count": {
+                    "type": "integer"
+                },
+                "p_chain_locked": {
+                    "description": "locked on the P-Chain until each tranche's unlock time",
+                    "type": "string"
+                },
+                "total": {
+                    "description": "nAVAX",
+                    "type": "string"
+                },
+                "x_chain_unlocked": {
+                    "description": "spendable on the X-Chain at genesis",
+                    "type": "string"
+                }
+            }
+        },
+        "api.GenesisUnlock": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "description": "nAVAX",
+                    "type": "string"
+                },
+                "unlock_time": {
+                    "description": "locked on the P-Chain until this time",
+                    "type": "string"
+                }
+            }
+        },
+        "api.GenesisUnlockBucket": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "description": "nAVAX",
+                    "type": "string"
+                },
+                "unlock_time": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.GenesisValidator": {
+            "type": "object",
+            "properties": {
+                "delegation_fee_percent": {
+                    "type": "number"
+                },
+                "end_time": {
+                    "type": "string"
+                },
+                "node_id": {
+                    "type": "string"
+                },
+                "reward_address": {
+                    "type": "string"
+                },
+                "start_time": {
+                    "type": "string"
+                }
+            }
+        },
         "api.HealthStatus": {
             "type": "object",
             "properties": {
@@ -1520,6 +5348,510 @@ const docTemplate = `{
                 "status": {
                     "type": "string",
                     "example": "healthy"
+                }
+            }
+        },
+        "api.ICMApp": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string"
+                },
+                "first_seen": {
+                    "description": "all time, not just the window",
+                    "type": "string"
+                },
+                "kind": {
+                    "description": "ictt-home, ictt-remote or other",
+                    "type": "string"
+                },
+                "label": {
+                    "$ref": "#/definitions/api.AddressLabel"
+                },
+                "last_seen": {
+                    "type": "string"
+                },
+                "name": {
+                    "description": "label name, else e.g. \"XOM ICTT remote\", else empty",
+                    "type": "string"
+                },
+                "received": {
+                    "description": "received on the C-Chain",
+                    "type": "integer"
+                },
+                "sent": {
+                    "description": "sent from the C-Chain",
+                    "type": "integer"
+                },
+                "token": {
+                    "description": "ICTT apps only",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/api.ICMToken"
+                        }
+                    ]
+                },
+                "top_chains": {
+                    "description": "busiest other chains in the window, up to 5",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.ICMChain"
+                    }
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.ICMAppDay": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "received": {
+                    "description": "received on the C-Chain",
+                    "type": "integer"
+                },
+                "sent": {
+                    "description": "sent from the C-Chain",
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.ICMAppRef": {
+            "type": "object",
+            "properties": {
+                "kind": {
+                    "type": "string"
+                },
+                "label": {
+                    "$ref": "#/definitions/api.AddressLabel"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.ICMApps": {
+            "type": "object",
+            "properties": {
+                "apps": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.ICMApp"
+                    }
+                },
+                "as_of": {
+                    "description": "last complete UTC day, null before the first one",
+                    "type": "string"
+                },
+                "days": {
+                    "type": "integer"
+                },
+                "from": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.ICMChain": {
+            "type": "object",
+            "properties": {
+                "blockchain_id": {
+                    "description": "CB58",
+                    "type": "string"
+                },
+                "name": {
+                    "description": "from the L1 registry, empty when unlisted",
+                    "type": "string"
+                },
+                "received": {
+                    "description": "received on the C-Chain",
+                    "type": "integer"
+                },
+                "sent": {
+                    "description": "sent from the C-Chain",
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.ICMChainRef": {
+            "type": "object",
+            "properties": {
+                "blockchain_id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.ICMChainValue": {
+            "type": "object",
+            "properties": {
+                "blockchain_id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "received_usd": {
+                    "type": "number"
+                },
+                "sent_usd": {
+                    "type": "number"
+                },
+                "total_usd": {
+                    "type": "number"
+                },
+                "transfers": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.ICMCounts": {
+            "type": "object",
+            "properties": {
+                "received": {
+                    "description": "received on the C-Chain",
+                    "type": "integer"
+                },
+                "sent": {
+                    "description": "sent from the C-Chain",
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.ICMDay": {
+            "type": "object",
+            "properties": {
+                "by_app": {
+                    "description": "with by_app=true, left out on quiet days",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.ICMAppDay"
+                    }
+                },
+                "by_chain": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.ICMChain"
+                    }
+                },
+                "date": {
+                    "type": "string"
+                },
+                "received": {
+                    "description": "received on the C-Chain",
+                    "type": "integer"
+                },
+                "sent": {
+                    "description": "sent from the C-Chain",
+                    "type": "integer"
+                },
+                "total": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.ICMICTTValue": {
+            "type": "object",
+            "properties": {
+                "amount_raw": {
+                    "description": "as encoded in the message, before any decimals scaling between home and remote",
+                    "type": "string"
+                },
+                "recipient": {
+                    "type": "string"
+                },
+                "token": {
+                    "$ref": "#/definitions/api.ICMToken"
+                },
+                "type": {
+                    "description": "single_hop_send, single_hop_call, multi_hop_send, multi_hop_call, register_remote",
+                    "type": "string"
+                }
+            }
+        },
+        "api.ICMMessage": {
+            "type": "object",
+            "properties": {
+                "app": {
+                    "$ref": "#/definitions/api.ICMAppRef"
+                },
+                "block_number": {
+                    "type": "integer"
+                },
+                "block_time": {
+                    "type": "string"
+                },
+                "counterparty": {
+                    "$ref": "#/definitions/api.ICMChainRef"
+                },
+                "deliverer": {
+                    "description": "receives only: the relayer",
+                    "type": "string"
+                },
+                "direction": {
+                    "description": "sent (from the C-Chain) or received (on it)",
+                    "type": "string"
+                },
+                "executed": {
+                    "description": "receives only: MessageExecuted seen, on receipt or a retry",
+                    "type": "boolean"
+                },
+                "fee_amount": {
+                    "description": "sends only, in fee token units",
+                    "type": "string"
+                },
+                "fee_token": {
+                    "description": "sends only",
+                    "type": "string"
+                },
+                "ictt": {
+                    "description": "ICTT apps only",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/api.ICMICTTValue"
+                        }
+                    ]
+                },
+                "local_address": {
+                    "description": "C-Chain contract: originSenderAddress for sends, destinationAddress for receives",
+                    "type": "string"
+                },
+                "message_id": {
+                    "type": "string"
+                },
+                "remote_address": {
+                    "description": "L1 address: destinationAddress for sends, originSenderAddress for receives",
+                    "type": "string"
+                },
+                "required_gas_limit": {
+                    "type": "integer"
+                },
+                "reward_redeemer": {
+                    "type": "string"
+                },
+                "tx_hash": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.ICMOverview": {
+            "type": "object",
+            "properties": {
+                "as_of": {
+                    "description": "last complete UTC day, null before the first one",
+                    "type": "string"
+                },
+                "by_chain": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.ICMChain"
+                    }
+                },
+                "days": {
+                    "type": "integer"
+                },
+                "from": {
+                    "type": "string"
+                },
+                "totals": {
+                    "$ref": "#/definitions/api.ICMCounts"
+                }
+            }
+        },
+        "api.ICMToken": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string"
+                },
+                "decimals": {
+                    "type": "integer"
+                },
+                "symbol": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.ICMTokenValue": {
+            "type": "object",
+            "properties": {
+                "priced": {
+                    "description": "a stablecoin or a price-feed token, matched by address",
+                    "type": "boolean"
+                },
+                "received_amount": {
+                    "description": "C-Chain token base units",
+                    "type": "string"
+                },
+                "received_usd": {
+                    "type": "number"
+                },
+                "sent_amount": {
+                    "description": "C-Chain token base units",
+                    "type": "string"
+                },
+                "sent_usd": {
+                    "type": "number"
+                },
+                "token": {
+                    "$ref": "#/definitions/api.ICMToken"
+                },
+                "transfers": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.ICMTransfer": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "description": "C-Chain base units, null when the home's scaling is unknown",
+                    "type": "string"
+                },
+                "app": {
+                    "type": "string"
+                },
+                "app_name": {
+                    "type": "string"
+                },
+                "block_time": {
+                    "type": "string"
+                },
+                "counterparty": {
+                    "$ref": "#/definitions/api.ICMChainRef"
+                },
+                "direction": {
+                    "type": "string"
+                },
+                "message_id": {
+                    "type": "string"
+                },
+                "recipient": {
+                    "type": "string"
+                },
+                "token": {
+                    "$ref": "#/definitions/api.ICMToken"
+                },
+                "tx_hash": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                },
+                "usd": {
+                    "type": "number"
+                }
+            }
+        },
+        "api.ICMValue": {
+            "type": "object",
+            "properties": {
+                "as_of": {
+                    "description": "last complete UTC day, null before the first one",
+                    "type": "string"
+                },
+                "by_chain": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.ICMChainValue"
+                    }
+                },
+                "by_token": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.ICMTokenValue"
+                    }
+                },
+                "days": {
+                    "type": "integer"
+                },
+                "from": {
+                    "type": "string"
+                },
+                "totals": {
+                    "$ref": "#/definitions/api.ICMValueStats"
+                }
+            }
+        },
+        "api.ICMValueDay": {
+            "type": "object",
+            "properties": {
+                "by_token": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.ICMValueDayToken"
+                    }
+                },
+                "date": {
+                    "type": "string"
+                },
+                "received_usd": {
+                    "type": "number"
+                },
+                "sent_usd": {
+                    "type": "number"
+                },
+                "total_usd": {
+                    "type": "number"
+                },
+                "transfers": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.ICMValueDayToken": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string"
+                },
+                "received_usd": {
+                    "type": "number"
+                },
+                "sent_usd": {
+                    "type": "number"
+                },
+                "symbol": {
+                    "type": "string"
+                },
+                "transfers": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.ICMValueStats": {
+            "type": "object",
+            "properties": {
+                "priced_transfers": {
+                    "type": "integer"
+                },
+                "received_usd": {
+                    "type": "number"
+                },
+                "sent_usd": {
+                    "type": "number"
+                },
+                "total_usd": {
+                    "type": "number"
+                },
+                "transfers": {
+                    "type": "integer"
                 }
             }
         },
@@ -1541,6 +5873,53 @@ const docTemplate = `{
                 },
                 "pchain": {
                     "$ref": "#/definitions/api.PChainStatus"
+                }
+            }
+        },
+        "api.InternalTransaction": {
+            "type": "object",
+            "properties": {
+                "block_number": {
+                    "type": "integer",
+                    "example": 12345678
+                },
+                "block_time": {
+                    "type": "string"
+                },
+                "call_type": {
+                    "type": "string",
+                    "example": "CALL"
+                },
+                "from": {
+                    "type": "string",
+                    "example": "0x742d35Cc..."
+                },
+                "gas_used": {
+                    "type": "integer",
+                    "example": 21000
+                },
+                "success": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "to": {
+                    "description": "null for CREATE",
+                    "type": "string",
+                    "example": "0x123..."
+                },
+                "trace_index": {
+                    "description": "Path in call tree",
+                    "type": "string",
+                    "example": "0,1,2"
+                },
+                "tx_hash": {
+                    "type": "string",
+                    "example": "0x1234..."
+                },
+                "value": {
+                    "description": "wei",
+                    "type": "string",
+                    "example": "1000000000000000000"
                 }
             }
         },
@@ -1569,11 +5948,643 @@ const docTemplate = `{
                 }
             }
         },
+        "api.LendingAssetFlow": {
+            "type": "object",
+            "properties": {
+                "borrowed": {
+                    "description": "wei (18 decimals)",
+                    "type": "string"
+                },
+                "protocol_id": {
+                    "type": "string"
+                },
+                "supplied": {
+                    "description": "wei (18 decimals)",
+                    "type": "string"
+                }
+            }
+        },
+        "api.LendingAssetSummary": {
+            "type": "object",
+            "properties": {
+                "borrowed": {
+                    "description": "wei (18 decimals)",
+                    "type": "string"
+                },
+                "by_protocol": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.LendingAssetFlow"
+                    }
+                },
+                "share_of_savax_supply_percent": {
+                    "type": "number"
+                },
+                "supplied": {
+                    "description": "wei (18 decimals)",
+                    "type": "string"
+                }
+            }
+        },
+        "api.LendingEModeCategory": {
+            "type": "object",
+            "properties": {
+                "borrowable_assets": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "collateral_assets": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "id": {
+                    "type": "string"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "liquidation_bonus_percent": {
+                    "type": "number"
+                },
+                "liquidation_threshold_percent": {
+                    "type": "number"
+                },
+                "ltv_percent": {
+                    "type": "number"
+                },
+                "ltv_zero_assets": {
+                    "description": "collateral assets with effective LTV 0 in the group",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "protocol_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.LendingMarket": {
+            "type": "object",
+            "properties": {
+                "asset": {
+                    "description": "underlying token, 0x00..00 for native AVAX",
+                    "type": "string"
+                },
+                "borrow_apy_percent": {
+                    "type": "number"
+                },
+                "borrow_cap": {
+                    "description": "token base units, null when uncapped",
+                    "type": "string"
+                },
+                "borrowed_usd": {
+                    "type": "number"
+                },
+                "collateral_enabled": {
+                    "type": "boolean"
+                },
+                "decimals": {
+                    "type": "integer"
+                },
+                "emode": {
+                    "description": "EMode lists the Aave V3 E-Mode categories, or Aave V4 spokes, that\ninclude the asset. Empty when none (always for BENQI).",
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.LendingMarketEMode"
+                    }
+                },
+                "liquidation_threshold_percent": {
+                    "type": "number"
+                },
+                "ltv_changed_at": {
+                    "description": "LTVChangedAt is when ltv_percent took its current value, and LTVChangedTx\nthe config transaction. Null when unchanged since listing, when not dated\nyet, and where the market has no LTV (Aave V4).",
+                    "type": "string"
+                },
+                "ltv_changed_tx": {
+                    "type": "string"
+                },
+                "ltv_percent": {
+                    "type": "number"
+                },
+                "market": {
+                    "description": "Aave V3 Pool, BENQI qiToken, Aave V4 Hub",
+                    "type": "string"
+                },
+                "price_usd": {
+                    "type": "number"
+                },
+                "protocol_id": {
+                    "type": "string"
+                },
+                "sampled_at": {
+                    "type": "string"
+                },
+                "supplied_usd": {
+                    "type": "number"
+                },
+                "supply_apy_percent": {
+                    "type": "number"
+                },
+                "supply_cap": {
+                    "description": "token base units, null when uncapped",
+                    "type": "string"
+                },
+                "symbol": {
+                    "type": "string"
+                },
+                "total_borrowed": {
+                    "description": "token base units",
+                    "type": "string"
+                },
+                "total_supplied": {
+                    "description": "token base units",
+                    "type": "string"
+                },
+                "utilization_percent": {
+                    "description": "null when nothing is supplied",
+                    "type": "number"
+                }
+            }
+        },
+        "api.LendingMarketEMode": {
+            "type": "object",
+            "properties": {
+                "as_collateral": {
+                    "type": "boolean"
+                },
+                "borrowable": {
+                    "type": "boolean"
+                },
+                "configured_ltv_percent": {
+                    "description": "the group's LTV before any LTV-zero",
+                    "type": "number"
+                },
+                "id": {
+                    "description": "V3 category id, V4 spoke address",
+                    "type": "string"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "liquidation_bonus_percent": {
+                    "description": "above 100%, 1 = 1%",
+                    "type": "number"
+                },
+                "liquidation_threshold_percent": {
+                    "type": "number"
+                },
+                "ltv_changed_at": {
+                    "description": "LTVChangedAt is when a V4 spoke entry's LTV took its current value (the\ndynamic config that set it), LTVChangedTx its transaction. Null for V3\ncategories, when unchanged since listing, and when not dated yet.",
+                    "type": "string"
+                },
+                "ltv_changed_tx": {
+                    "type": "string"
+                },
+                "ltv_percent": {
+                    "description": "effective, 0 when LTV-zeroed",
+                    "type": "number"
+                },
+                "previous_ltv_percent": {
+                    "description": "V4: config before the current one, kept by older positions",
+                    "type": "number"
+                }
+            }
+        },
+        "api.LendingOverview": {
+            "type": "object",
+            "properties": {
+                "emode_categories": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.LendingEModeCategory"
+                    }
+                },
+                "markets": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.LendingMarket"
+                    }
+                },
+                "protocols": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.LendingProtocol"
+                    }
+                },
+                "sampled_at": {
+                    "type": "string"
+                },
+                "summary": {
+                    "$ref": "#/definitions/api.LendingSummary"
+                }
+            }
+        },
+        "api.LendingPoint": {
+            "type": "object",
+            "properties": {
+                "borrowed": {
+                    "type": "string"
+                },
+                "by_protocol": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.LendingProtocolPoint"
+                    }
+                },
+                "date": {
+                    "type": "string"
+                },
+                "supplied": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.LendingProtocol": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.LendingProtocolPoint": {
+            "type": "object",
+            "properties": {
+                "borrow_apy_percent": {
+                    "type": "number"
+                },
+                "borrowed": {
+                    "type": "string"
+                },
+                "protocol_id": {
+                    "type": "string"
+                },
+                "supplied": {
+                    "type": "string"
+                },
+                "supply_apy_percent": {
+                    "type": "number"
+                }
+            }
+        },
+        "api.LendingSummary": {
+            "type": "object",
+            "properties": {
+                "avax": {
+                    "$ref": "#/definitions/api.LendingAssetSummary"
+                },
+                "savax": {
+                    "$ref": "#/definitions/api.LendingAssetSummary"
+                },
+                "totals": {
+                    "$ref": "#/definitions/api.LendingTotals"
+                }
+            }
+        },
+        "api.LendingTotals": {
+            "type": "object",
+            "properties": {
+                "borrowed_usd": {
+                    "type": "number"
+                },
+                "by_protocol": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.LendingUSDTotal"
+                    }
+                },
+                "supplied_usd": {
+                    "type": "number"
+                }
+            }
+        },
+        "api.LendingTotalsPoint": {
+            "type": "object",
+            "properties": {
+                "borrowed_usd": {
+                    "type": "number"
+                },
+                "by_protocol": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.LendingUSDTotal"
+                    }
+                },
+                "date": {
+                    "type": "string"
+                },
+                "supplied_usd": {
+                    "type": "number"
+                },
+                "unpriced_markets": {
+                    "description": "across protocols, see LendingUSDTotal",
+                    "type": "integer"
+                }
+            }
+        },
+        "api.LendingUSDTotal": {
+            "type": "object",
+            "properties": {
+                "borrowed_usd": {
+                    "type": "number"
+                },
+                "protocol_id": {
+                    "type": "string"
+                },
+                "supplied_usd": {
+                    "type": "number"
+                },
+                "unpriced_markets": {
+                    "description": "UnpricedMarkets counts markets with a supply but no oracle price, which\nare left out of the USD sums.",
+                    "type": "integer"
+                }
+            }
+        },
+        "api.LiqAsset": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "description": "underlying token, 0x00..00 for native AVAX",
+                    "type": "string"
+                },
+                "amount": {
+                    "description": "null when not yet known (BENQI seized before conversion)",
+                    "type": "string"
+                },
+                "decimals": {
+                    "type": "integer"
+                },
+                "symbol": {
+                    "type": "string"
+                },
+                "usd": {
+                    "description": "oracle value at the block, null when a non-zero amount is unpriced (0 for a zero amount)",
+                    "type": "number"
+                }
+            }
+        },
+        "api.LiqDay": {
+            "type": "object",
+            "properties": {
+                "asset": {
+                    "type": "string"
+                },
+                "by_collateral": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.LiqTotals"
+                    }
+                },
+                "by_protocol": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.LiqTotals"
+                    }
+                },
+                "count": {
+                    "type": "integer"
+                },
+                "date": {
+                    "type": "string"
+                },
+                "protocol_id": {
+                    "type": "string"
+                },
+                "repaid_usd": {
+                    "type": "number"
+                },
+                "seized_usd": {
+                    "type": "number"
+                },
+                "symbol": {
+                    "type": "string"
+                },
+                "unpriced": {
+                    "description": "liquidations with a non-zero repaid or seized amount but no USD value",
+                    "type": "integer"
+                }
+            }
+        },
+        "api.LiqEvent": {
+            "type": "object",
+            "properties": {
+                "block_number": {
+                    "type": "integer"
+                },
+                "block_time": {
+                    "type": "string"
+                },
+                "borrower": {
+                    "type": "string"
+                },
+                "collateral": {
+                    "description": "seized",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/api.LiqAsset"
+                        }
+                    ]
+                },
+                "debt": {
+                    "description": "repaid",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/api.LiqAsset"
+                        }
+                    ]
+                },
+                "liquidator": {
+                    "type": "string"
+                },
+                "market": {
+                    "description": "Aave V4 spoke that emitted the liquidation",
+                    "type": "string"
+                },
+                "protocol_id": {
+                    "type": "string"
+                },
+                "tx_hash": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.LiqTotals": {
+            "type": "object",
+            "properties": {
+                "asset": {
+                    "type": "string"
+                },
+                "count": {
+                    "type": "integer"
+                },
+                "protocol_id": {
+                    "type": "string"
+                },
+                "repaid_usd": {
+                    "type": "number"
+                },
+                "seized_usd": {
+                    "type": "number"
+                },
+                "symbol": {
+                    "type": "string"
+                },
+                "unpriced": {
+                    "description": "liquidations with a non-zero repaid or seized amount but no USD value",
+                    "type": "integer"
+                }
+            }
+        },
+        "api.LiquidStakingOverview": {
+            "type": "object",
+            "properties": {
+                "network_delegated_stake": {
+                    "description": "nAVAX, all Primary Network delegations",
+                    "type": "string"
+                },
+                "protocols": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.LiquidStakingProtocol"
+                    }
+                },
+                "totals": {
+                    "$ref": "#/definitions/api.LiquidStakingTotals"
+                }
+            }
+        },
+        "api.LiquidStakingPoint": {
+            "type": "object",
+            "properties": {
+                "active_delegated": {
+                    "description": "nAVAX",
+                    "type": "string"
+                },
+                "active_delegations": {
+                    "type": "integer"
+                },
+                "date": {
+                    "type": "string"
+                },
+                "exchange_rate": {
+                    "type": "string"
+                },
+                "pooled_avax": {
+                    "description": "nAVAX",
+                    "type": "string"
+                },
+                "protocol_id": {
+                    "type": "string"
+                },
+                "validator_count": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.LiquidStakingProtocol": {
+            "type": "object",
+            "properties": {
+                "active_delegated": {
+                    "description": "nAVAX",
+                    "type": "string"
+                },
+                "active_delegations": {
+                    "type": "integer"
+                },
+                "as_of": {
+                    "type": "string"
+                },
+                "attribution": {
+                    "description": "confirmed | unconfirmed",
+                    "type": "string"
+                },
+                "exchange_rate": {
+                    "description": "AVAX per token",
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "p_chain_addresses": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "pooled_avax": {
+                    "description": "nAVAX",
+                    "type": "string"
+                },
+                "share_of_delegated_percent": {
+                    "type": "number"
+                },
+                "status": {
+                    "description": "live | ended",
+                    "type": "string"
+                },
+                "token_contract": {
+                    "description": "C-Chain",
+                    "type": "string"
+                },
+                "token_decimals": {
+                    "type": "integer"
+                },
+                "token_supply": {
+                    "description": "token base units",
+                    "type": "string"
+                },
+                "token_symbol": {
+                    "type": "string"
+                },
+                "validator_count": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.LiquidStakingTotals": {
+            "type": "object",
+            "properties": {
+                "active_delegated": {
+                    "description": "nAVAX",
+                    "type": "string"
+                },
+                "active_delegations": {
+                    "type": "integer"
+                },
+                "pooled_avax": {
+                    "description": "nAVAX",
+                    "type": "string"
+                },
+                "share_of_delegated_percent": {
+                    "type": "number"
+                }
+            }
+        },
         "api.Meta": {
             "type": "object",
             "properties": {
+                "has_more": {
+                    "type": "boolean"
+                },
                 "limit": {
                     "type": "integer"
+                },
+                "next_cursor": {
+                    "type": "string"
                 },
                 "offset": {
                     "type": "integer"
@@ -1615,6 +6626,170 @@ const docTemplate = `{
                 "metric_name": {
                     "type": "string",
                     "example": "tx_count"
+                }
+            }
+        },
+        "api.MultisigInfo": {
+            "type": "object",
+            "properties": {
+                "owners": {
+                    "type": "integer"
+                },
+                "threshold": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.NativeBalance": {
+            "type": "object",
+            "properties": {
+                "balance": {
+                    "description": "wei",
+                    "type": "string",
+                    "example": "499979000000000000"
+                },
+                "first_tx_time": {
+                    "type": "string"
+                },
+                "last_tx_time": {
+                    "type": "string"
+                },
+                "last_updated_block": {
+                    "type": "integer",
+                    "example": 77048918
+                },
+                "total_gas": {
+                    "description": "wei spent on gas",
+                    "type": "string",
+                    "example": "21000000000000"
+                },
+                "total_in": {
+                    "description": "wei",
+                    "type": "string",
+                    "example": "1000000000000000000"
+                },
+                "total_out": {
+                    "description": "wei",
+                    "type": "string",
+                    "example": "500000000000000000"
+                },
+                "tx_count": {
+                    "type": "integer",
+                    "example": 788432
+                }
+            }
+        },
+        "api.NetworkBurnedTotal": {
+            "type": "object",
+            "properties": {
+                "by_chain": {
+                    "$ref": "#/definitions/api.BurnedByChain"
+                },
+                "total_burned": {
+                    "description": "nAVAX",
+                    "type": "string",
+                    "example": "5013452000000000"
+                },
+                "unit": {
+                    "type": "string",
+                    "example": "nAVAX"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.NetworkToken": {
+            "type": "object",
+            "properties": {
+                "decimals": {
+                    "type": "integer"
+                },
+                "logo_uri": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "symbol": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.OwnerInfo": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string"
+                },
+                "kind": {
+                    "description": "\"eoa\" | \"multisig\" | \"timelock\" | \"dao\" | \"contract\" | \"unknown\"",
+                    "type": "string"
+                },
+                "multisig": {
+                    "$ref": "#/definitions/api.MultisigInfo"
+                }
+            }
+        },
+        "api.PChainBlock": {
+            "type": "object",
+            "properties": {
+                "block_hash": {
+                    "type": "string",
+                    "example": "2ZW6HUePB..."
+                },
+                "block_number": {
+                    "type": "integer",
+                    "example": 24160141
+                },
+                "block_time": {
+                    "type": "string"
+                },
+                "block_type": {
+                    "type": "string"
+                },
+                "parent_id": {
+                    "description": "Proposer / parent info (only populated on the single-block endpoint).",
+                    "type": "string"
+                },
+                "proposer_id": {
+                    "type": "string"
+                },
+                "proposer_node_id": {
+                    "type": "string"
+                },
+                "tx_count": {
+                    "type": "integer",
+                    "example": 3
+                }
+            }
+        },
+        "api.PChainStats": {
+            "type": "object",
+            "properties": {
+                "active_chains": {
+                    "type": "integer",
+                    "example": 58
+                },
+                "active_l1_subnets": {
+                    "type": "integer",
+                    "example": 42
+                },
+                "active_legacy_subnets": {
+                    "type": "integer",
+                    "example": 15
+                },
+                "active_validators": {
+                    "type": "integer",
+                    "example": 1200
+                },
+                "recent_transactions": {
+                    "type": "integer",
+                    "example": 34000
+                },
+                "total_l1_fees_paid": {
+                    "type": "integer",
+                    "example": 5000000000
                 }
             }
         },
@@ -1662,7 +6837,205 @@ const docTemplate = `{
                 },
                 "tx_type": {
                     "type": "string",
-                    "example": "ConvertSubnetToL1Tx"
+                    "example": "ConvertSubnetToL1"
+                }
+            }
+        },
+        "api.PerpDay": {
+            "type": "object",
+            "properties": {
+                "date": {
+                    "type": "string"
+                },
+                "fees_usd": {
+                    "type": "number"
+                },
+                "liquidated_usd": {
+                    "type": "number"
+                },
+                "trades": {
+                    "type": "integer"
+                },
+                "venues": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.PerpDayVenue"
+                    }
+                },
+                "volume_usd": {
+                    "type": "number"
+                }
+            }
+        },
+        "api.PerpDayVenue": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "trades": {
+                    "type": "integer"
+                },
+                "volume_usd": {
+                    "type": "number"
+                }
+            }
+        },
+        "api.PerpLiquidation": {
+            "type": "object",
+            "properties": {
+                "account": {
+                    "type": "string"
+                },
+                "collateral_usd": {
+                    "type": "number"
+                },
+                "is_long": {
+                    "type": "boolean"
+                },
+                "market": {
+                    "type": "string"
+                },
+                "market_name": {
+                    "type": "string"
+                },
+                "pool": {
+                    "type": "string"
+                },
+                "size_usd": {
+                    "type": "number"
+                },
+                "time": {
+                    "type": "string"
+                },
+                "tx_hash": {
+                    "type": "string"
+                },
+                "venue": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.PerpMarketOI": {
+            "type": "object",
+            "properties": {
+                "long_usd": {
+                    "type": "number"
+                },
+                "market": {
+                    "type": "string"
+                },
+                "name": {
+                    "description": "e.g. AVAX/USD",
+                    "type": "string"
+                },
+                "pool": {
+                    "type": "string"
+                },
+                "short_usd": {
+                    "type": "number"
+                },
+                "venue": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.PerpOIDay": {
+            "type": "object",
+            "properties": {
+                "by_market": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.PerpMarketOI"
+                    }
+                },
+                "date": {
+                    "type": "string"
+                },
+                "long_usd": {
+                    "type": "number"
+                },
+                "short_usd": {
+                    "type": "number"
+                }
+            }
+        },
+        "api.PerpOverview": {
+            "type": "object",
+            "properties": {
+                "as_of": {
+                    "description": "last complete UTC day, null before the first one",
+                    "type": "string"
+                },
+                "by_venue": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.PerpStats"
+                    }
+                },
+                "days": {
+                    "type": "integer"
+                },
+                "from": {
+                    "type": "string"
+                },
+                "totals": {
+                    "$ref": "#/definitions/api.PerpStats"
+                }
+            }
+        },
+        "api.PerpStats": {
+            "type": "object",
+            "properties": {
+                "fees_usd": {
+                    "type": "number"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "liquidated_usd": {
+                    "type": "number"
+                },
+                "liquidations": {
+                    "type": "integer"
+                },
+                "long_volume_usd": {
+                    "type": "number"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "short_volume_usd": {
+                    "type": "number"
+                },
+                "traders": {
+                    "type": "integer"
+                },
+                "trades": {
+                    "type": "integer"
+                },
+                "volume_usd": {
+                    "type": "number"
+                }
+            }
+        },
+        "api.ProxyInfo": {
+            "type": "object",
+            "properties": {
+                "implementation": {
+                    "type": "string"
+                },
+                "is_proxy": {
+                    "type": "boolean"
+                },
+                "proxy_admin": {
+                    "type": "string"
+                },
+                "proxy_admin_owner": {
+                    "type": "string"
+                },
+                "upgrade_delay_seconds": {
+                    "type": "integer"
                 }
             }
         },
@@ -1672,6 +7045,425 @@ const docTemplate = `{
                 "data": {},
                 "meta": {
                     "$ref": "#/definitions/api.Meta"
+                }
+            }
+        },
+        "api.RestakingCollateral": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "description": "underlying token, C-Chain",
+                    "type": "string"
+                },
+                "decimals": {
+                    "type": "integer"
+                },
+                "symbol": {
+                    "type": "string"
+                },
+                "wrapper": {
+                    "description": "vault collateral() token, equal to address when unwrapped",
+                    "type": "string"
+                }
+            }
+        },
+        "api.RestakingL1": {
+            "type": "object",
+            "properties": {
+                "active_validators": {
+                    "type": "integer"
+                },
+                "balancer": {
+                    "type": "string"
+                },
+                "blockchain_id": {
+                    "type": "string"
+                },
+                "is_active": {
+                    "description": "IsActive and ActiveValidators use the /data/chains definition: L1\nvalidators with a P-Chain balance.",
+                    "type": "boolean"
+                },
+                "middleware": {
+                    "type": "string"
+                },
+                "module_weight": {
+                    "description": "middleware's weight in the balancer",
+                    "type": "string",
+                    "example": "0"
+                },
+                "operator_count": {
+                    "type": "integer"
+                },
+                "protocol_id": {
+                    "type": "string"
+                },
+                "restaked_validators": {
+                    "type": "integer"
+                },
+                "restaked_weight": {
+                    "description": "RestakedWeight is the P-Chain weight of active validators registered by\nthe middleware, TotalWeight that of all active validators. Weights are\nencoded as strings: some L1s use weights near the uint64 range, past what\nJavaScript numbers hold exactly.",
+                    "type": "string",
+                    "example": "0"
+                },
+                "sampled_at": {
+                    "type": "string"
+                },
+                "share_of_weight_percent": {
+                    "description": "null when no active weight",
+                    "type": "number"
+                },
+                "subnet_id": {
+                    "type": "string"
+                },
+                "total_pchain_weight": {
+                    "description": "decimal string, the L1's own weight units (not AVAX)",
+                    "type": "string",
+                    "example": "0"
+                },
+                "vaults": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.RestakingVault"
+                    }
+                }
+            }
+        },
+        "api.RestakingOverview": {
+            "type": "object",
+            "properties": {
+                "l1s": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.RestakingL1"
+                    }
+                },
+                "protocols": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.RestakingProtocol"
+                    }
+                }
+            }
+        },
+        "api.RestakingProtocol": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.RestakingVault": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string"
+                },
+                "allocated": {
+                    "description": "delegated to the L1's operators",
+                    "type": "string"
+                },
+                "collateral": {
+                    "$ref": "#/definitions/api.RestakingCollateral"
+                },
+                "deposited": {
+                    "description": "activeStake()",
+                    "type": "string"
+                },
+                "idle": {
+                    "description": "deposited - allocated",
+                    "type": "string"
+                },
+                "limit": {
+                    "description": "l1Limit, cap on allocation to this L1",
+                    "type": "string"
+                }
+            }
+        },
+        "api.RiskResponse": {
+            "type": "object",
+            "properties": {
+                "chain_id": {
+                    "type": "string"
+                },
+                "decentralization": {
+                    "$ref": "#/definitions/api.Decentralization"
+                },
+                "economic": {
+                    "$ref": "#/definitions/api.EconomicSecurity"
+                },
+                "updated_at": {
+                    "type": "string"
+                },
+                "validator_manager": {
+                    "$ref": "#/definitions/api.ValidatorManagerRisk"
+                }
+            }
+        },
+        "api.SecurityModule": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string"
+                },
+                "kind": {
+                    "description": "\"poa\" | \"suzaku_middleware\" | \"unknown\"",
+                    "type": "string"
+                },
+                "max_weight": {
+                    "type": "integer"
+                },
+                "owner": {
+                    "$ref": "#/definitions/api.OwnerInfo"
+                },
+                "weight": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.SocialLink": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.Stablecoin": {
+            "type": "object",
+            "properties": {
+                "bridged": {
+                    "type": "boolean",
+                    "example": false
+                },
+                "decimals": {
+                    "type": "integer",
+                    "example": 6
+                },
+                "doublecounted": {
+                    "description": "Doublecounted marks stablecoins whose reserves are themselves other counted\nstablecoins (e.g. avUSD, UTY, reUSD, FRXUSD). Sum all rows for the GROSS total;\nexclude doublecounted rows for the NET total (the DeFiLlama-style headline).",
+                    "type": "boolean",
+                    "example": false
+                },
+                "holders": {
+                    "type": "integer",
+                    "example": 128453
+                },
+                "issuer": {
+                    "type": "string",
+                    "example": "Circle"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "USD Coin"
+                },
+                "peg": {
+                    "type": "string",
+                    "example": "USD"
+                },
+                "supply": {
+                    "description": "token base units, circulating",
+                    "type": "string",
+                    "example": "459300000000000"
+                },
+                "symbol": {
+                    "type": "string",
+                    "example": "USDC"
+                },
+                "token": {
+                    "type": "string",
+                    "example": "0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e"
+                },
+                "transfers_24h": {
+                    "type": "integer",
+                    "example": 58210
+                },
+                "volume_24h": {
+                    "description": "token base units",
+                    "type": "string",
+                    "example": "32100000000000"
+                }
+            }
+        },
+        "api.StablecoinMetricDataPoint": {
+            "type": "object",
+            "properties": {
+                "period": {
+                    "type": "string"
+                },
+                "value": {
+                    "description": "token base units for supply and volume, a count for transfers and holders",
+                    "type": "string"
+                }
+            }
+        },
+        "api.StablecoinMetricSeries": {
+            "type": "object",
+            "properties": {
+                "chain_id": {
+                    "type": "integer"
+                },
+                "data": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.StablecoinMetricDataPoint"
+                    }
+                },
+                "granularity": {
+                    "type": "string"
+                },
+                "metric_name": {
+                    "type": "string"
+                },
+                "token": {
+                    "type": "string"
+                }
+            }
+        },
+        "api.StakeConcentration": {
+            "type": "object",
+            "properties": {
+                "nakamoto_33": {
+                    "description": "fewest validators holding more than 1/3 of total stake",
+                    "type": "integer"
+                },
+                "nakamoto_50": {
+                    "description": "fewest validators holding more than 1/2 of total stake",
+                    "type": "integer"
+                },
+                "top100_percent": {
+                    "type": "number"
+                },
+                "top10_percent": {
+                    "type": "number"
+                },
+                "top50_percent": {
+                    "type": "number"
+                }
+            }
+        },
+        "api.StakingPoint": {
+            "type": "object",
+            "properties": {
+                "date": {
+                    "type": "string"
+                },
+                "delegated_stake": {
+                    "type": "string"
+                },
+                "delegation_count": {
+                    "type": "integer"
+                },
+                "own_stake": {
+                    "type": "string"
+                },
+                "staked_token": {
+                    "type": "string"
+                },
+                "staked_tokens": {
+                    "description": "total_stake in whole tokens (PoS only)",
+                    "type": "string"
+                },
+                "total_stake": {
+                    "type": "string"
+                },
+                "total_supply": {
+                    "description": "Primary Network only",
+                    "type": "string"
+                },
+                "validator_count": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.StakingSummary": {
+            "type": "object",
+            "properties": {
+                "as_of": {
+                    "description": "last validator sync",
+                    "type": "string"
+                },
+                "concentration": {
+                    "$ref": "#/definitions/api.StakeConcentration"
+                },
+                "delegated_stake": {
+                    "description": "nAVAX",
+                    "type": "string"
+                },
+                "delegation_count": {
+                    "description": "active delegations, not unique delegators",
+                    "type": "integer"
+                },
+                "delegation_fee": {
+                    "$ref": "#/definitions/api.DelegationFees"
+                },
+                "own_stake": {
+                    "description": "nAVAX",
+                    "type": "string"
+                },
+                "staked_supply_percent": {
+                    "description": "total_stake / total_supply * 100",
+                    "type": "number"
+                },
+                "total_stake": {
+                    "description": "nAVAX",
+                    "type": "string"
+                },
+                "total_supply": {
+                    "description": "AVAX total supply (not circulating), null if not yet sampled",
+                    "type": "string"
+                },
+                "validator_count": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.StakingUnlockWeek": {
+            "type": "object",
+            "properties": {
+                "delegated_stake": {
+                    "description": "nAVAX",
+                    "type": "string"
+                },
+                "delegation_count": {
+                    "type": "integer"
+                },
+                "validator_count": {
+                    "type": "integer"
+                },
+                "validator_stake": {
+                    "description": "nAVAX",
+                    "type": "string"
+                },
+                "week_start": {
+                    "description": "Monday 00:00 UTC",
+                    "type": "string"
+                }
+            }
+        },
+        "api.StorageTable": {
+            "type": "object",
+            "properties": {
+                "rows": {
+                    "type": "integer",
+                    "example": 1000000000
+                },
+                "size_bytes": {
+                    "type": "integer",
+                    "example": 123456789
+                },
+                "table": {
+                    "type": "string",
+                    "example": "raw_txs"
                 }
             }
         },
@@ -1703,6 +7495,14 @@ const docTemplate = `{
                 "subnet_type": {
                     "type": "string",
                     "example": "l1"
+                },
+                "validator_manager_address": {
+                    "type": "string",
+                    "example": "0x1234..."
+                },
+                "validator_manager_owner": {
+                    "type": "string",
+                    "example": "0x5678..."
                 }
             }
         },
@@ -1718,6 +7518,7 @@ const docTemplate = `{
                     "example": "My Chain"
                 },
                 "created_block": {
+                    "description": "Null when the chain's CreateChainTx is not indexed (only known from\nplatform.getBlockchains, which has no creation block or time).",
                     "type": "integer",
                     "example": 12345678
                 },
@@ -1751,6 +7552,154 @@ const docTemplate = `{
                 }
             }
         },
+        "api.SubnetTimelinePoint": {
+            "type": "object",
+            "properties": {
+                "period": {
+                    "type": "string"
+                },
+                "value": {
+                    "type": "integer",
+                    "example": 3
+                }
+            }
+        },
+        "api.TokenApproval": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "description": "token base units",
+                    "type": "string",
+                    "example": "1000000"
+                },
+                "decimals": {
+                    "type": "integer",
+                    "example": 6
+                },
+                "is_unlimited": {
+                    "type": "boolean",
+                    "example": false
+                },
+                "log_index": {
+                    "type": "integer",
+                    "example": 5
+                },
+                "name": {
+                    "type": "string",
+                    "example": "USD Coin"
+                },
+                "owner": {
+                    "type": "string",
+                    "example": "0x742d35Cc..."
+                },
+                "spender": {
+                    "type": "string",
+                    "example": "0x123..."
+                },
+                "symbol": {
+                    "type": "string",
+                    "example": "USDC"
+                },
+                "token": {
+                    "type": "string",
+                    "example": "0xb97ef9ef..."
+                },
+                "token_label": {
+                    "description": "label of the token contract, if known",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/api.AddressLabel"
+                        }
+                    ]
+                }
+            }
+        },
+        "api.TokenBalance": {
+            "type": "object",
+            "properties": {
+                "balance": {
+                    "description": "token base units",
+                    "type": "string",
+                    "example": "1000000"
+                },
+                "decimals": {
+                    "type": "integer",
+                    "example": 6
+                },
+                "last_updated_block": {
+                    "type": "integer",
+                    "example": 77048918
+                },
+                "name": {
+                    "type": "string",
+                    "example": "USD Coin"
+                },
+                "symbol": {
+                    "type": "string",
+                    "example": "USDC"
+                },
+                "token": {
+                    "type": "string",
+                    "example": "0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e"
+                },
+                "total_in": {
+                    "description": "token base units",
+                    "type": "string",
+                    "example": "2000000"
+                },
+                "total_out": {
+                    "description": "token base units",
+                    "type": "string",
+                    "example": "1000000"
+                }
+            }
+        },
+        "api.TokenTransfer": {
+            "type": "object",
+            "properties": {
+                "decimals": {
+                    "type": "integer",
+                    "example": 6
+                },
+                "from": {
+                    "type": "string",
+                    "example": "0x742d35Cc..."
+                },
+                "log_index": {
+                    "type": "integer",
+                    "example": 5
+                },
+                "name": {
+                    "type": "string",
+                    "example": "USD Coin"
+                },
+                "symbol": {
+                    "type": "string",
+                    "example": "USDC"
+                },
+                "to": {
+                    "type": "string",
+                    "example": "0x123..."
+                },
+                "token": {
+                    "type": "string",
+                    "example": "0xb97ef9ef..."
+                },
+                "token_label": {
+                    "description": "label of the token contract, if known",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/api.AddressLabel"
+                        }
+                    ]
+                },
+                "value": {
+                    "description": "token base units",
+                    "type": "string",
+                    "example": "1000000"
+                }
+            }
+        },
         "api.Transaction": {
             "type": "object",
             "properties": {
@@ -1769,6 +7718,14 @@ const docTemplate = `{
                     "type": "string",
                     "example": "0x742d35Cc6634C0532925a3b844Bc9e7595f..."
                 },
+                "from_label": {
+                    "description": "label of the sender, if known",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/api.AddressLabel"
+                        }
+                    ]
+                },
                 "gas_limit": {
                     "type": "integer",
                     "example": 21000
@@ -1785,6 +7742,22 @@ const docTemplate = `{
                     "type": "string",
                     "example": "0x1234..."
                 },
+                "intent": {
+                    "description": "coarse server-side reading of the tx; null when nothing can be said",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/enrich.Intent"
+                        }
+                    ]
+                },
+                "method": {
+                    "description": "Enrichment (additive, 2026-10). All null when unknown.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/enrich.Method"
+                        }
+                    ]
+                },
                 "success": {
                     "type": "boolean",
                     "example": true
@@ -1793,6 +7766,14 @@ const docTemplate = `{
                     "description": "null for contract creation",
                     "type": "string",
                     "example": "0x123..."
+                },
+                "to_label": {
+                    "description": "label of the recipient, if known",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/api.AddressLabel"
+                        }
+                    ]
                 },
                 "transaction_index": {
                     "type": "integer",
@@ -1803,6 +7784,115 @@ const docTemplate = `{
                     "example": 2
                 },
                 "value": {
+                    "description": "wei",
+                    "type": "string",
+                    "example": "1000000000000000000"
+                }
+            }
+        },
+        "api.TransactionDetail": {
+            "type": "object",
+            "properties": {
+                "approvals": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.TokenApproval"
+                    }
+                },
+                "block_number": {
+                    "type": "integer",
+                    "example": 12345678
+                },
+                "block_time": {
+                    "type": "string"
+                },
+                "chain_id": {
+                    "type": "integer",
+                    "example": 43114
+                },
+                "from": {
+                    "type": "string",
+                    "example": "0x742d35Cc6634C0532925a3b844Bc9e7595f..."
+                },
+                "from_label": {
+                    "description": "label of the sender, if known",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/api.AddressLabel"
+                        }
+                    ]
+                },
+                "gas_limit": {
+                    "type": "integer",
+                    "example": 21000
+                },
+                "gas_price": {
+                    "type": "integer",
+                    "example": 25000000000
+                },
+                "gas_used": {
+                    "type": "integer",
+                    "example": 21000
+                },
+                "hash": {
+                    "type": "string",
+                    "example": "0x1234..."
+                },
+                "intent": {
+                    "description": "coarse server-side reading of the tx; null when nothing can be said",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/enrich.Intent"
+                        }
+                    ]
+                },
+                "internal_txs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.InternalTransaction"
+                    }
+                },
+                "method": {
+                    "description": "Enrichment (additive, 2026-10). All null when unknown.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/enrich.Method"
+                        }
+                    ]
+                },
+                "success": {
+                    "type": "boolean",
+                    "example": true
+                },
+                "to": {
+                    "description": "null for contract creation",
+                    "type": "string",
+                    "example": "0x123..."
+                },
+                "to_label": {
+                    "description": "label of the recipient, if known",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/api.AddressLabel"
+                        }
+                    ]
+                },
+                "token_transfers": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.TokenTransfer"
+                    }
+                },
+                "transaction_index": {
+                    "type": "integer",
+                    "example": 0
+                },
+                "type": {
+                    "type": "integer",
+                    "example": 2
+                },
+                "value": {
+                    "description": "wei",
                     "type": "string",
                     "example": "1000000000000000000"
                 }
@@ -1812,54 +7902,154 @@ const docTemplate = `{
             "type": "object",
             "properties": {
                 "active": {
-                    "type": "boolean",
-                    "example": true
+                    "type": "boolean"
                 },
                 "balance": {
-                    "type": "integer",
-                    "example": 100000000000
+                    "description": "L1 validator fields (omit for Primary Network / legacy)",
+                    "type": "integer"
                 },
-                "end_time": {
+                "bls_public_key": {
                     "type": "string"
                 },
+                "created_block": {
+                    "type": "integer"
+                },
+                "created_time": {
+                    "type": "string"
+                },
+                "daily_fee_burn": {
+                    "type": "integer"
+                },
+                "days_remaining": {
+                    "type": "number"
+                },
+                "delegation_fee_percent": {
+                    "description": "Delegation data (active Primary Network validators, from getCurrentValidators)",
+                    "type": "number"
+                },
+                "delegator_count": {
+                    "type": "integer"
+                },
+                "end_time": {
+                    "description": "End time (omit if zero/epoch for L1 validators with no expiry)",
+                    "type": "string"
+                },
+                "estimated_days_left": {
+                    "type": "number"
+                },
                 "fees_paid": {
-                    "type": "integer",
-                    "example": 5000000000
+                    "type": "integer"
                 },
                 "initial_deposit": {
-                    "type": "integer",
-                    "example": 100000000000
+                    "type": "integer"
+                },
+                "network_share_percent": {
+                    "type": "number"
                 },
                 "node_id": {
-                    "type": "string",
-                    "example": "NodeID-P7oB2McjBGgW..."
+                    "type": "string"
+                },
+                "primary_stake": {
+                    "description": "Primary Network data (for legacy subnet validators)",
+                    "type": "integer"
+                },
+                "primary_uptime": {
+                    "type": "number"
                 },
                 "refund_amount": {
-                    "type": "integer",
-                    "example": 0
+                    "type": "integer"
+                },
+                "remaining_balance_owner": {
+                    "type": "string"
+                },
+                "staked_amount": {
+                    "description": "Staked amount in WHOLE tokens (PoS only; omitted for PoA / unresolved chains).\nDecimal string with full precision: weight * weight_to_value_factor / 10^decimals.",
+                    "type": "string"
+                },
+                "staked_token": {
+                    "description": "Symbol of the token actually staked (e.g. \"AVAX\", \"BEAM\"). PoS only.",
+                    "type": "string"
                 },
                 "start_time": {
                     "type": "string"
                 },
                 "subnet_id": {
-                    "type": "string",
-                    "example": "2XDnKyAEr..."
+                    "description": "Common fields",
+                    "type": "string"
+                },
+                "total_delegated": {
+                    "type": "integer"
+                },
+                "total_deposited": {
+                    "description": "Computed fields (detail endpoint only)",
+                    "type": "integer"
+                },
+                "total_stake": {
+                    "type": "integer"
                 },
                 "total_topups": {
-                    "type": "integer",
-                    "example": 50000000000
+                    "type": "integer"
+                },
+                "tx_hash": {
+                    "description": "Registration info (from l1_validator_history)",
+                    "type": "string"
+                },
+                "tx_type": {
+                    "type": "string"
                 },
                 "uptime_percentage": {
-                    "type": "number",
-                    "example": 99.5
+                    "description": "Uptime (omit if 0 — L1 validators don't have meaningful uptime)",
+                    "type": "number"
+                },
+                "validation_id": {
+                    "type": "string"
+                },
+                "weight": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.ValidatorCountPoint": {
+            "type": "object",
+            "properties": {
+                "l1": {
+                    "description": "Sum across all L1 subnets",
+                    "type": "integer",
+                    "example": 898
+                },
+                "period": {
+                    "type": "string"
+                },
+                "primary": {
+                    "description": "Primary Network validators",
+                    "type": "integer",
+                    "example": 1205
+                },
+                "total": {
+                    "description": "Primary + L1",
+                    "type": "integer",
+                    "example": 2103
+                }
+            }
+        },
+        "api.ValidatorDailyFeeBurn": {
+            "type": "object",
+            "properties": {
+                "active_seconds": {
+                    "type": "integer",
+                    "example": 86400
+                },
+                "fees_burned": {
+                    "type": "integer",
+                    "example": 44236800
+                },
+                "node_id": {
+                    "type": "string",
+                    "example": "NodeID-P7oB2McjBGgW..."
                 },
                 "validation_id": {
                     "type": "string",
                     "example": "2ZW6HUePB..."
-                },
-                "weight": {
-                    "type": "integer",
-                    "example": 2000
                 }
             }
         },
@@ -1883,7 +8073,84 @@ const docTemplate = `{
                 },
                 "tx_type": {
                     "type": "string",
-                    "example": "IncreaseL1ValidatorBalanceTx"
+                    "example": "IncreaseL1ValidatorBalance"
+                }
+            }
+        },
+        "api.ValidatorManagerRisk": {
+            "type": "object",
+            "properties": {
+                "address": {
+                    "type": "string"
+                },
+                "balancer_owner": {
+                    "description": "Set when Type is \"balancer\": Owner is then a Suzaku BalancerValidatorManager,\nBalancerOwner is who controls it, and SecurityModules are the modules that\nsplit validator weight. Null otherwise.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/api.OwnerInfo"
+                        }
+                    ]
+                },
+                "churn": {
+                    "$ref": "#/definitions/api.ChurnInfo"
+                },
+                "deployed_on": {
+                    "description": "DeployedOn is where the manager contract has code: \"c-chain\" means validators can\nstill be managed if the L1 halts; \"self\" means the manager lives on the L1 itself\nand is unreachable if the chain is stuck; \"unknown\" means no contract was found.",
+                    "type": "string"
+                },
+                "owner": {
+                    "$ref": "#/definitions/api.OwnerInfo"
+                },
+                "proxy": {
+                    "$ref": "#/definitions/api.ProxyInfo"
+                },
+                "security_modules": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.SecurityModule"
+                    }
+                },
+                "type": {
+                    "description": "\"PoA\" | \"PoS-native\" | \"PoS-erc20\" | \"balancer\" | \"placeholder\" | \"unknown\"",
+                    "type": "string"
+                }
+            }
+        },
+        "enrich.Intent": {
+            "type": "object",
+            "properties": {
+                "confidence": {
+                    "type": "number",
+                    "example": 0.9
+                },
+                "kind": {
+                    "type": "string",
+                    "example": "swap"
+                },
+                "label": {
+                    "type": "string",
+                    "example": "Swapped"
+                },
+                "protocol": {
+                    "type": "string",
+                    "example": "LFJ"
+                }
+            }
+        },
+        "enrich.Method": {
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "example": "transfer"
+                },
+                "selector": {
+                    "type": "string",
+                    "example": "0xa9059cbb"
+                },
+                "signature": {
+                    "type": "string",
+                    "example": "transfer(address,uint256)"
                 }
             }
         }
@@ -1931,7 +8198,7 @@ var SwaggerInfo = &swag.Spec{
 	BasePath:         "/",
 	Schemes:          []string{"http", "https"},
 	Title:            "Icicle API",
-	Description:      "Avalanche P-Chain and EVM Indexer API\n\n## Overview\nThis API provides access to indexed Avalanche blockchain data including:\n- **Data API** (`/api/v1/data/*`): Blocks, transactions, subnets, validators, P-chain data\n- **Metrics API** (`/api/v1/metrics/*`): Fee statistics, chain metrics, time series data\n\n## Rate Limiting\nAll endpoints are rate limited to 180 requests/minute per IP with a burst of 30.",
+	Description:      "Avalanche P-Chain and EVM Indexer API\n\n## Overview\nThis API provides access to indexed Avalanche blockchain data including:\n- **Data API** (`/api/v1/data/*`): Blocks, transactions, subnets, validators, P-chain data\n- **Metrics API** (`/api/v1/metrics/*`): Fee statistics, chain metrics, time series data\n\n## Rate Limiting\nAll endpoints are rate limited to 180 requests/minute per IP (burst of 30) by default. Configurable via CLI flags.",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",

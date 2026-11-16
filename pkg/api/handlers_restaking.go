@@ -50,9 +50,9 @@ type RestakingL1 struct {
 	// JavaScript numbers hold exactly.
 	RestakedWeight      uint64           `json:"restaked_weight,string"`
 	RestakedValidators  uint32           `json:"restaked_validators"`
-	TotalWeight         uint64           `json:"total_pchain_weight,string"`
-	ShareOfWeightPct    *float64         `json:"share_of_weight_percent"` // null when no active weight
-	ModuleWeight        uint64           `json:"module_weight,string"`    // middleware's weight in the balancer
+	TotalWeight         uint64           `json:"total_pchain_weight,string"` // decimal string, the L1's own weight units (not AVAX)
+	ShareOfWeightPct    *float64         `json:"share_of_weight_percent"`    // null when no active weight
+	ModuleWeight        uint64           `json:"module_weight,string"`       // middleware's weight in the balancer
 	OperatorCount       uint32           `json:"operator_count"`
 	Vaults              []RestakingVault `json:"vaults"`
 	SampledAt           time.Time        `json:"sampled_at"`

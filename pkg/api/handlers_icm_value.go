@@ -30,8 +30,8 @@ type ICMTokenValue struct {
 	Token          ICMToken `json:"token"`
 	Priced         bool     `json:"priced"` // a stablecoin or a price-feed token, matched by address
 	Transfers      uint64   `json:"transfers"`
-	SentAmount     string   `json:"sent_amount"`
-	ReceivedAmount string   `json:"received_amount"`
+	SentAmount     string   `json:"sent_amount"`     // C-Chain token base units
+	ReceivedAmount string   `json:"received_amount"` // C-Chain token base units
 	SentUSD        *float64 `json:"sent_usd"`
 	ReceivedUSD    *float64 `json:"received_usd"`
 }
@@ -162,7 +162,7 @@ func usdPtr(v float64, ok bool) *float64 {
 
 // handleICMValue returns value moved through ICTT on the C-Chain
 // @Summary C-Chain ICTT value
-// @Description Token value moved by ICTT token bridges (TokenHome / TokenRemote) on the C-Chain over the last N complete UTC days ending as_of: sent (left the C-Chain) and received (arrived on it, once executed), total, per token and per other chain. Amounts are C-Chain token base units: a TokenHome's messages are scaled back from the remote's denomination with the remote's registered multiplier. Priced by token address like /metrics/bridges (USD stablecoins $1, WAVAX/BTC.b/WETH.e/LINK.e at their Chainlink feed); other tokens have no USD. A multi-hop transfer through a C-Chain home counts once. Cached for 5 minutes.
+// @Description Token value moved by ICTT token bridges (TokenHome / TokenRemote) on the C-Chain over the last N complete UTC days ending as_of: sent (left the C-Chain) and received (arrived on it, once executed), total, per token and per other chain. Amounts are C-Chain token base units: a TokenHome's messages are scaled back from the remote's denomination with the remote's registered multiplier. Priced by token address like /metrics/bridges (USD stablecoins and legacy AEB USD tokens at $1; WAVAX, the ETH tokens WETH.e and AEB ETH, the BTC tokens BTC.b, WBTC.e, the WBTC OFT, LBTC and AEB WBTC, and LINK.e and AEB LINK at their hourly Chainlink price); other tokens have no USD. A multi-hop transfer through a C-Chain home counts once. Cached for 5 minutes.
 // @Tags Metrics - ICM
 // @Produce json
 // @Param days query int false "Complete UTC days, 1-3650" default(30)
