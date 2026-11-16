@@ -254,7 +254,10 @@ func NewTestServer(mock *MockConn) *Server {
 		},
 		Metrics: MetricsConfig{Token: testMetricsToken},
 	}
-	return NewServer(mock, cfg)
+	s := NewServer(mock, cfg)
+	// Handler tests use many chain IDs; the indexed-chain check has its own tests.
+	s.evmChains = &indexedChains{}
+	return s
 }
 
 // testMetricsToken is the bearer token the test server accepts for operator-gated

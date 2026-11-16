@@ -292,6 +292,18 @@ func addSharedResponses(doc *openapi3.T) {
 			if p != "/health" {
 				op.Responses.Set("429", tooMany)
 			}
+			// Every EVM route answers a chain the indexer does not sync with
+			// 404 "Chain not indexed" (requireIndexedChain).
+			if strings.Contains(p, "/evm/{chainId}") {
+				desc := "Chain not indexed (only 43114 is), or the requested item does not exist"
+				if r := op.Responses.Value("404"); r != nil && r.Value != nil {
+					r.Value.Description = &desc
+				} else {
+					op.Responses.Set("404", &openapi3.ResponseRef{Value: &openapi3.Response{
+						Description: &desc, Headers: rateHeaders, Content: errContent,
+					}})
+				}
+			}
 		}
 	}
 }

@@ -89,6 +89,7 @@ type Server struct {
 	wsHub       *WSHub
 	enrichment  *enrichState
 	stablecoins *stablecoinCache
+	evmChains   *indexedChains
 }
 
 type Response struct {
@@ -120,6 +121,7 @@ func NewServer(conn driver.Conn, cfg Config) *Server {
 		enrichment:  newEnrichState(),
 		stablecoins: newStablecoinCache(time.Minute),
 	}
+	s.evmChains = newIndexedChains(s.syncedEVMChains)
 	s.wsHub.clientIP = s.rateLimiter.ClientIP
 	s.registerRoutes(cfg)
 
@@ -158,35 +160,35 @@ func (s *Server) registerRoutes(cfg Config) {
 	// ==========================================
 
 	// EVM Blocks
-	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/blocks", s.handleListBlocks)
-	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/blocks/{number}", s.handleGetBlock)
+	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/blocks", s.requireIndexedChain(s.handleListBlocks))
+	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/blocks/{number}", s.requireIndexedChain(s.handleGetBlock))
 
 	// EVM Transactions
-	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/txs", s.handleListTxs)
-	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/txs/{hash}", s.handleGetTx)
-	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/address/{address}/txs", s.handleAddressTxs)
-	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/address/{address}/internal-txs", s.handleAddressInternalTxs)
+	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/txs", s.requireIndexedChain(s.handleListTxs))
+	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/txs/{hash}", s.requireIndexedChain(s.handleGetTx))
+	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/address/{address}/txs", s.requireIndexedChain(s.handleAddressTxs))
+	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/address/{address}/internal-txs", s.requireIndexedChain(s.handleAddressInternalTxs))
 
 	// EVM Address labels (curated / verified-source / token-metadata)
-	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/labels", s.handleLabels)
+	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/labels", s.requireIndexedChain(s.handleLabels))
 
 	// EVM Address Balances
-	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/address/{address}/balances", s.handleAddressBalances)
-	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/address/{address}/native", s.handleAddressNativeBalance)
+	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/address/{address}/balances", s.requireIndexedChain(s.handleAddressBalances))
+	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/address/{address}/native", s.requireIndexedChain(s.handleAddressNativeBalance))
 
 	// EVM Stablecoins
-	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/stablecoins", s.handleListStablecoins)
-	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/stablecoins/timeseries", s.handleStablecoinTimeseries)
+	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/stablecoins", s.requireIndexedChain(s.handleListStablecoins))
+	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/stablecoins/timeseries", s.requireIndexedChain(s.handleStablecoinTimeseries))
 
 	// EVM Lending liquidation-risk feed
-	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/lending/positions", s.handleLendingPositions)
-	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/lending/positions/{account}", s.handleLendingAccount)
-	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/lending/stats", s.handleLendingStats)
-	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/lending/risk", s.handleLendingRisk)
-	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/lending/risk/timeseries", s.handleLendingRiskTimeseries)
-	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/lending/liquidations", s.handleLendingLiquidations)
-	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/lending/liquidations/daily", s.handleLendingLiquidationsDaily)
-	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/lending/alerts", s.handleLendingAlerts)
+	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/lending/positions", s.requireIndexedChain(s.handleLendingPositions))
+	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/lending/positions/{account}", s.requireIndexedChain(s.handleLendingAccount))
+	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/lending/stats", s.requireIndexedChain(s.handleLendingStats))
+	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/lending/risk", s.requireIndexedChain(s.handleLendingRisk))
+	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/lending/risk/timeseries", s.requireIndexedChain(s.handleLendingRiskTimeseries))
+	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/lending/liquidations", s.requireIndexedChain(s.handleLendingLiquidations))
+	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/lending/liquidations/daily", s.requireIndexedChain(s.handleLendingLiquidationsDaily))
+	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/lending/alerts", s.requireIndexedChain(s.handleLendingAlerts))
 
 	// P-Chain Transactions
 	s.router.HandleFunc("GET /api/v1/data/pchain/txs", s.handleListPChainTxs)
@@ -255,10 +257,10 @@ func (s *Server) registerRoutes(cfg Config) {
 	s.router.HandleFunc("GET /api/v1/metrics/icm/transfers/top", s.handleICMTopTransfers)
 
 	// EVM Chain Stats & Time Series
-	s.router.HandleFunc("GET /api/v1/metrics/evm/{chainId}/stats", s.handleChainMetrics)
-	s.router.HandleFunc("GET /api/v1/metrics/evm/{chainId}/timeseries", s.handleListMetrics)
-	s.router.HandleFunc("GET /api/v1/metrics/evm/{chainId}/timeseries/{metric}", s.handleGetMetric)
-	s.router.HandleFunc("GET /api/v1/metrics/evm/{chainId}/fees/burned", s.handleFeeBurn)
+	s.router.HandleFunc("GET /api/v1/metrics/evm/{chainId}/stats", s.requireIndexedChain(s.handleChainMetrics))
+	s.router.HandleFunc("GET /api/v1/metrics/evm/{chainId}/timeseries", s.requireIndexedChain(s.handleListMetrics))
+	s.router.HandleFunc("GET /api/v1/metrics/evm/{chainId}/timeseries/{metric}", s.requireIndexedChain(s.handleGetMetric))
+	s.router.HandleFunc("GET /api/v1/metrics/evm/{chainId}/fees/burned", s.requireIndexedChain(s.handleFeeBurn))
 	s.router.HandleFunc("GET /api/v1/metrics/burned/total", s.handleNetworkBurnedTotal)
 
 	// Indexer Status
@@ -272,8 +274,8 @@ func (s *Server) registerRoutes(cfg Config) {
 	// ==========================================
 	// WebSocket - /ws/*
 	// ==========================================
-	s.router.HandleFunc("GET /ws/blocks/{chainId}", s.handleWSBlocks)
-	s.router.HandleFunc("GET /ws/lending/{chainId}", s.handleWSLending)
+	s.router.HandleFunc("GET /ws/blocks/{chainId}", s.requireIndexedChain(s.handleWSBlocks))
+	s.router.HandleFunc("GET /ws/lending/{chainId}", s.requireIndexedChain(s.handleWSLending))
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
