@@ -157,3 +157,38 @@ func TestBuildProbe_EModeCategory(t *testing.T) {
 		t.Fatalf("summary-only: calls=%d category=%d ok=%v", len(p.Calls), h.EModeCategory, h.OK)
 	}
 }
+
+// A supply leg carries the reserve's usageAsCollateralEnabled flag: Aave V3
+// legs used to be reported entered even when the user had turned collateral
+// off for that asset, so a liquidator would size a seizure the Pool rejects.
+func TestBuildProbe_CollateralFlag(t *testing.T) {
+	a := New("")
+	asset := "0x9702230a8ea53601f5cd2dc00fdbc13d4df4a8c7"
+	a.Configure(lending.Addresses{Pool: "0x794a61358d6845594f94dc1db02a252b5b4814ad", Oracle: "0x00000000000000000000000000000000000000aa", DataProvider: "0x00000000000000000000000000000000000000bb"},
+		[]lending.AssetParam{{Asset: asset, Decimals: 6}}, lending.GlobalParams{})
+	acct := "0x950e259c88a7a0f5e9af14c34001323d7f7934f1"
+	p := a.BuildProbe(acct, []lending.Exposure{{Account: acct, Asset: asset, Side: lending.SideCollateral}})
+	summary := append(append(append(append(append(word(100), word(50)...), word(0)...), word(0)...), word(0)...), word(2e18)...)
+
+	reserve := func(enabled int64) []byte {
+		out := word(59547) // currentATokenBalance
+		for i := 1; i < 8; i++ {
+			out = append(out, word(0)...)
+		}
+		return append(out, word(enabled)...) // usageAsCollateralEnabled
+	}
+	for _, tc := range []struct {
+		enabled     int64
+		wantEntered bool
+	}{{0, false}, {1, true}} {
+		h := p.Decode([]lending.CallResult{
+			{Success: true, ReturnData: summary},
+			{Success: true, ReturnData: reserve(tc.enabled)},
+			{Success: true, ReturnData: word(1e8)},
+			{Success: true, ReturnData: word(0)},
+		}, 1)
+		if len(h.Assets) != 1 || h.Assets[0].NotEntered == tc.wantEntered {
+			t.Fatalf("enabled=%d: legs %+v, want entered=%v", tc.enabled, h.Assets, tc.wantEntered)
+		}
+	}
+}

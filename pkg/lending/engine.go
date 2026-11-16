@@ -2,7 +2,9 @@ package lending
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
@@ -16,7 +18,11 @@ type Config struct {
 	DiscoveryBatch        uint64
 	ParamsRefreshInterval time.Duration
 	RiskSnapshotInterval  time.Duration
-	Health                HealthConfig
+	// BootstrapTimeout bounds how long Bootstrap retries protocols that fail
+	// to come up (typically the node restarting). Past it Bootstrap fails, so
+	// the service exits and systemd restarts it, instead of running without them.
+	BootstrapTimeout time.Duration
+	Health           HealthConfig
 }
 
 // DefaultConfig returns engine defaults for Avalanche C-Chain.
@@ -26,6 +32,7 @@ func DefaultConfig() Config {
 		DiscoveryBatch:        5000,
 		ParamsRefreshInterval: 6 * time.Hour,
 		RiskSnapshotInterval:  15 * time.Minute,
+		BootstrapTimeout:      10 * time.Minute,
 		Health:                DefaultHealthConfig(),
 	}
 }
@@ -60,43 +67,15 @@ func NewEngine(conn driver.Conn, adapters []Adapter, cfg Config) (*Engine, error
 }
 
 // Bootstrap resolves and verifies each adapter's addresses, loads parameters, and
-// wires the runtime components. An adapter that fails to resolve is skipped with
-// a loud warning rather than taking down the whole engine.
+// wires the runtime components. A protocol that fails to come up (the node is
+// often still starting) is retried until cfg.BootstrapTimeout; if any is still
+// down then, Bootstrap fails. Skipping it instead left the engine running for
+// days without Aave V3 and Benqi after a restart during a node outage, with
+// their positions frozen at the last value written before it.
 func (e *Engine) Bootstrap(ctx context.Context, adapters []Adapter) error {
-	for _, a := range adapters {
-		addrs, notes, err := a.Resolve(ctx, e.rpc)
-		if err != nil {
-			slog.Error("lending: adapter resolve failed, skipping protocol", "protocol", a.Protocol(), "error", err)
-			continue
-		}
-		if err := e.store.WriteAddresses(ctx, a.Protocol(), notes); err != nil {
-			slog.Warn("lending: write addresses failed", "protocol", a.Protocol(), "error", err)
-		}
-
-		// Inject resolved addresses before reading params: RefreshParams reads
-		// per-asset config from the data provider / market list, which the adapter
-		// only knows once configured.
-		a.Configure(addrs, nil, GlobalParams{})
-
-		params, globals, err := a.RefreshParams(ctx, e.rpc)
-		if err != nil {
-			slog.Error("lending: initial params refresh failed, skipping protocol", "protocol", a.Protocol(), "error", err)
-			continue
-		}
-		a.Configure(addrs, params, globals)
-		if err := e.store.WriteParams(ctx, a.Protocol(), params, globals); err != nil {
-			slog.Warn("lending: write params failed", "protocol", a.Protocol(), "error", err)
-		}
-
-		e.active = append(e.active, a)
-		e.discoveries = append(e.discoveries, NewDiscovery(e.store, a, e.cfg.DiscoveryBatch))
-		// Aave V4 spokes feed liquidations through AaveV4LiqSources (reserve ids,
-		// spoke oracle), not the Aave V3-style source built from params.
-		if !IsAaveV4(a.Protocol()) {
-			e.liqSources = append(e.liqSources, buildLiqSource(a.Protocol(), addrs, params))
-		}
-		slog.Info("lending: protocol ready", "protocol", a.Protocol(), "assets", len(params),
-			"close_factor_bps", globals.CloseFactorBps, "incentive_bps", globals.LiquidationIncentiveBps)
+	if err := retryUntilUp(ctx, adapters, func(a Adapter) error { return e.bringUp(ctx, a) },
+		e.cfg.BootstrapTimeout, 5*time.Second); err != nil {
+		return err
 	}
 
 	if len(e.active) == 0 {
@@ -112,6 +91,76 @@ func (e *Engine) Bootstrap(ctx context.Context, adapters []Adapter) error {
 	e.price = NewPriceWatch(e.store, e.rpc, e.health)
 	e.resolvePriceSources(ctx)
 	return nil
+}
+
+// bringUp resolves one adapter, loads its parameters and registers it.
+func (e *Engine) bringUp(ctx context.Context, a Adapter) error {
+	addrs, notes, err := a.Resolve(ctx, e.rpc)
+	if err != nil {
+		return fmt.Errorf("resolve: %w", err)
+	}
+	if err := e.store.WriteAddresses(ctx, a.Protocol(), notes); err != nil {
+		slog.Warn("lending: write addresses failed", "protocol", a.Protocol(), "error", err)
+	}
+
+	// Inject resolved addresses before reading params: RefreshParams reads
+	// per-asset config from the data provider / market list, which the adapter
+	// only knows once configured.
+	a.Configure(addrs, nil, GlobalParams{})
+
+	params, globals, err := a.RefreshParams(ctx, e.rpc)
+	if err != nil {
+		return fmt.Errorf("initial params refresh: %w", err)
+	}
+	a.Configure(addrs, params, globals)
+	if err := e.store.WriteParams(ctx, a.Protocol(), params, globals); err != nil {
+		slog.Warn("lending: write params failed", "protocol", a.Protocol(), "error", err)
+	}
+
+	e.active = append(e.active, a)
+	e.discoveries = append(e.discoveries, NewDiscovery(e.store, a, e.cfg.DiscoveryBatch))
+	// Aave V4 spokes feed liquidations through AaveV4LiqSources (reserve ids,
+	// spoke oracle), not the Aave V3-style source built from params.
+	if !IsAaveV4(a.Protocol()) {
+		e.liqSources = append(e.liqSources, buildLiqSource(a.Protocol(), addrs, params))
+	}
+	slog.Info("lending: protocol ready", "protocol", a.Protocol(), "assets", len(params),
+		"close_factor_bps", globals.CloseFactorBps, "incentive_bps", globals.LiquidationIncentiveBps)
+	return nil
+}
+
+// retryUntilUp calls up for every adapter, then retries the failed ones with a
+// backoff (delay doubling to a minute) until all are up or timeout passes.
+func retryUntilUp(ctx context.Context, adapters []Adapter, up func(Adapter) error, timeout, delay time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	pending := adapters
+	for {
+		var failed []Adapter
+		var lastErr error
+		for _, a := range pending {
+			if err := up(a); err != nil {
+				slog.Warn("lending: protocol not up, will retry", "protocol", a.Protocol(), "error", err)
+				failed, lastErr = append(failed, a), err
+			}
+		}
+		if len(failed) == 0 {
+			return nil
+		}
+		if !time.Now().Add(delay).Before(deadline) {
+			names := make([]string, len(failed))
+			for i, a := range failed {
+				names[i] = string(a.Protocol())
+			}
+			return fmt.Errorf("lending: protocols still down after %s: %s: %w", timeout, strings.Join(names, ", "), lastErr)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+		}
+		delay = min(delay*2, time.Minute)
+		pending = failed
+	}
 }
 
 // Run starts all loops and blocks until the context is cancelled.

@@ -258,6 +258,7 @@ func (a *Adapter) BuildProbe(account string, exposure []lending.Exposure) lendin
 					h.Assets = append(h.Assets, lending.AssetPosition{
 						Asset: asset, Side: lending.SideCollateral,
 						Amount: aTokenBal, BaseValue: new(big.Int).Mul(baseValue(aTokenBal, price, p.Decimals), baseScale),
+						NotEntered: !usedAsCollateral(rd.ReturnData),
 					})
 				}
 				if debt.Sign() > 0 {
@@ -270,6 +271,18 @@ func (a *Adapter) BuildProbe(account string, exposure []lending.Exposure) lendin
 			return h
 		},
 	}
+}
+
+// usedAsCollateral reads usageAsCollateralEnabled, the 9th value returned by
+// getUserReserveData. A supply the user has not enabled as collateral cannot be
+// seized (the Pool reverts CollateralCannotBeLiquidated) and is already left
+// out of getUserAccountData's collateral. A short return keeps the old
+// assumption (entered) rather than guess.
+func usedAsCollateral(reserveData []byte) bool {
+	if len(reserveData) < 9*32 {
+		return true
+	}
+	return lending.WordBool(reserveData, 8)
 }
 
 // baseScale returns the multiplier that converts Aave base-currency amounts
