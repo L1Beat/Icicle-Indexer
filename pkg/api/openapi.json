@@ -27,6 +27,213 @@
       }
     },
     "schemas": {
+      "Treasuries": {
+        "properties": {
+          "holders": {
+            "description": "Companies and ETFs holding AVAX, in a fixed order.",
+            "items": {
+              "$ref": "#/components/schemas/TreasuryHolder"
+            },
+            "type": "array"
+          },
+          "totals": {
+            "$ref": "#/components/schemas/TreasuryTotals"
+          },
+          "updated_at": {
+            "description": "Time of the latest update (UTC).",
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "holders",
+          "totals",
+          "updated_at"
+        ],
+        "type": "object"
+      },
+      "TreasuryHolder": {
+        "properties": {
+          "as_of": {
+            "description": "Date the figure is valid for, as given by the source (UTC). For a report, its reporting date; for CoinGecko, the day it was read.",
+            "format": "date",
+            "nullable": true,
+            "type": "string"
+          },
+          "aum_usd": {
+            "description": "Fund assets as reported by the fund, in USD. Null for companies.",
+            "nullable": true,
+            "type": "number"
+          },
+          "avax_held": {
+            "description": "AVAX held, in AVAX. For DeFi Technologies this is an estimate from its latest quarterly report: AVAX held directly plus its Fund A stake, minus the AVAX backing its Valour ETPs.",
+            "nullable": true,
+            "type": "number"
+          },
+          "exchange": {
+            "description": "Listing exchange.",
+            "type": "string"
+          },
+          "id": {
+            "description": "Stable holder identifier.",
+            "example": "vaneck-vavx",
+            "type": "string"
+          },
+          "kind": {
+            "description": "Company treasury or spot ETF.",
+            "enum": [
+              "treasury",
+              "etf"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "description": "Holder name.",
+            "type": "string"
+          },
+          "nav_per_share": {
+            "description": "Net asset value per share, in USD.",
+            "nullable": true,
+            "type": "number"
+          },
+          "source": {
+            "description": "\"live\": read automatically from the fund or CoinGecko every 6 hours. \"manual\": entered from the holder's latest report.",
+            "enum": [
+              "live",
+              "manual"
+            ],
+            "type": "string"
+          },
+          "source_url": {
+            "description": "Where the figure comes from.",
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "sponsor": {
+            "description": "ETF sponsor. Null for companies.",
+            "nullable": true,
+            "type": "string"
+          },
+          "sponsor_fee_pct": {
+            "description": "Annual sponsor fee, in percent.",
+            "nullable": true,
+            "type": "number"
+          },
+          "staking_max_pct": {
+            "description": "Most of its AVAX the fund may stake, in percent (0-100).",
+            "nullable": true,
+            "type": "number"
+          },
+          "staking_pct": {
+            "description": "Share of the fund's AVAX that is staked, in percent (0-100).",
+            "nullable": true,
+            "type": "number"
+          },
+          "ticker": {
+            "description": "Stock ticker.",
+            "type": "string"
+          },
+          "website_url": {
+            "description": "Holder's website.",
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "ticker",
+          "exchange",
+          "kind",
+          "sponsor",
+          "avax_held",
+          "aum_usd",
+          "nav_per_share",
+          "staking_pct",
+          "staking_max_pct",
+          "sponsor_fee_pct",
+          "as_of",
+          "source",
+          "source_url",
+          "website_url"
+        ],
+        "type": "object"
+      },
+      "TreasuryTotals": {
+        "properties": {
+          "avax_price_usd": {
+            "description": "AVAX price, in USD.",
+            "nullable": true,
+            "type": "number"
+          },
+          "circulating_supply_avax": {
+            "description": "Circulating AVAX supply, in AVAX.",
+            "nullable": true,
+            "type": "number"
+          },
+          "circulating_supply_source": {
+            "description": "Source of the circulating supply.",
+            "enum": [
+              "coingecko"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "combined_avax": {
+            "description": "AVAX held by all holders, in AVAX.",
+            "type": "number"
+          },
+          "combined_share_of_circulating_percent": {
+            "description": "combined_avax as a share of the circulating supply, in percent (0-100).",
+            "nullable": true,
+            "type": "number"
+          },
+          "combined_usd": {
+            "description": "combined_avax at avax_price_usd, in USD.",
+            "nullable": true,
+            "type": "number"
+          },
+          "etf_avax": {
+            "description": "AVAX held by all ETFs, in AVAX.",
+            "type": "number"
+          },
+          "etf_count": {
+            "description": "ETFs with a figure.",
+            "type": "integer"
+          },
+          "market_as_of": {
+            "description": "Time the price and supply are for (UTC).",
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "treasury_avax": {
+            "description": "AVAX held by all company treasuries, in AVAX.",
+            "type": "number"
+          },
+          "treasury_count": {
+            "description": "Company treasuries with a figure.",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "treasury_avax",
+          "etf_avax",
+          "combined_avax",
+          "treasury_count",
+          "etf_count",
+          "avax_price_usd",
+          "circulating_supply_avax",
+          "circulating_supply_source",
+          "market_as_of",
+          "combined_usd",
+          "combined_share_of_circulating_percent"
+        ],
+        "type": "object"
+      },
       "api.APIError": {
         "properties": {
           "code": {
@@ -3728,7 +3935,7 @@
   },
   "info": {
     "contact": {},
-    "description": "Avalanche data from L1Beat's indexer: C-Chain blocks, transactions, balances and DeFi metrics, P-Chain transactions, L1s and validators, staking, and the network genesis.\n\n**Scope.** EVM, DeFi and ICM data cover the Avalanche C-Chain (chain ID 43114) only. `/api/v1/treasuries` is served on this host by the L1Beat backend and is not part of this spec. Live blocks stream over WebSocket at `wss://api.l1beat.io/ws/blocks/43114`, which OpenAPI cannot describe.\n\n**Units.**\n- Values that can exceed 2^53 are decimal strings: token amounts in base units (divide by 10^decimals), P-Chain stake and fees in nAVAX (1 AVAX = 10^9 nAVAX), and C-Chain native amounts in wei (10^18).\n- USD values are JSON numbers.\n- Fields ending in `_percent` are percent (0-100); `priced_share` and similar shares are ratios (0-1).\n- Timestamps are RFC 3339 in UTC. Addresses are lowercase 0x hex; P-Chain IDs are CB58.\n- Fields marked nullable can be `null` (for example `created_time` of a chain whose creation was never indexed, or `block_time` of C-Chain block 0, whose header timestamp is 0).\n\n**Windows.** Metrics with a `days` parameter cover N complete UTC days ending at `as_of` (normally yesterday), not a rolling 24 hours. A window that reaches back before the start of the data is clamped, so the returned `days` can be smaller than requested.\n\n**Pagination.** List endpoints take `limit` and `offset`; where a response carries `meta.next_cursor`, pass it back as `cursor` (or `before` on ICM messages) for stable paging. Treat cursors as opaque.\n\n**Errors.** Errors return `{\"error\":{\"code\",\"message\"}}` with code INVALID_PARAMETER (400), NOT_FOUND (404), RATE_LIMITED (429) or INTERNAL_ERROR (500).\n\n**Rate limits.** 180 requests per minute per IP with a burst of 30 (token bucket). Every response carries X-RateLimit-Limit (burst size), X-RateLimit-Remaining and X-RateLimit-Reset (epoch second when the bucket is full again); a 429 also carries Retry-After.\n\n**Caching.** Metric and data responses are cached for 1-10 minutes and sent with Cache-Control: public, max-age=60, stale-while-revalidate=300.",
+    "description": "Avalanche data from L1Beat's indexer: C-Chain blocks, transactions, balances and DeFi metrics, P-Chain transactions, L1s and validators, staking, and the network genesis.\n\n**Scope.** EVM, DeFi and ICM data cover the Avalanche C-Chain (chain ID 43114) only. `/api/v1/treasuries` is served on this host by the L1Beat backend: its errors are `{\"error\": string}` and its rate limit is 1000 requests per 15 minutes per IP, separate from the limit below. Live blocks stream over WebSocket at `wss://api.l1beat.io/ws/blocks/43114`, which OpenAPI cannot describe.\n\n**Units.**\n- Values that can exceed 2^53 are decimal strings: token amounts in base units (divide by 10^decimals), P-Chain stake and fees in nAVAX (1 AVAX = 10^9 nAVAX), and C-Chain native amounts in wei (10^18).\n- USD values are JSON numbers.\n- Fields ending in `_percent` are percent (0-100); `priced_share` and similar shares are ratios (0-1).\n- Timestamps are RFC 3339 in UTC. Addresses are lowercase 0x hex; P-Chain IDs are CB58.\n- Fields marked nullable can be `null` (for example `created_time` of a chain whose creation was never indexed, or `block_time` of C-Chain block 0, whose header timestamp is 0).\n\n**Windows.** Metrics with a `days` parameter cover N complete UTC days ending at `as_of` (normally yesterday), not a rolling 24 hours. A window that reaches back before the start of the data is clamped, so the returned `days` can be smaller than requested.\n\n**Pagination.** List endpoints take `limit` and `offset`; where a response carries `meta.next_cursor`, pass it back as `cursor` (or `before` on ICM messages) for stable paging. Treat cursors as opaque.\n\n**Errors.** Errors return `{\"error\":{\"code\",\"message\"}}` with code INVALID_PARAMETER (400), NOT_FOUND (404), RATE_LIMITED (429) or INTERNAL_ERROR (500).\n\n**Rate limits.** 180 requests per minute per IP with a burst of 30 (token bucket). Every response carries X-RateLimit-Limit (burst size), X-RateLimit-Remaining and X-RateLimit-Reset (epoch second when the bucket is full again); a 429 also carries Retry-After.\n\n**Caching.** Metric and data responses are cached for 1-10 minutes and sent with Cache-Control: public, max-age=60, stale-while-revalidate=300.",
     "title": "L1Beat API",
     "version": "1.0"
   },
@@ -9986,6 +10193,67 @@
           "Metrics - Staking"
         ]
       }
+    },
+    "/api/v1/treasuries": {
+      "get": {
+        "description": "Each holder's AVAX, with totals, the AVAX price and the circulating supply. Cached for 60 seconds.",
+        "operationId": "getTreasuries",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Treasuries"
+                }
+              }
+            },
+            "description": "Holders and totals."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "description": "Error message.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Rate limit exceeded: 1000 requests per 15 minutes per IP."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "error": {
+                      "description": "Error message.",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The data could not be loaded."
+          }
+        },
+        "summary": "AVAX held by companies and ETFs",
+        "tags": [
+          "Treasuries"
+        ]
+      },
+      "x-l1beat-service": "backend"
     },
     "/health": {
       "get": {

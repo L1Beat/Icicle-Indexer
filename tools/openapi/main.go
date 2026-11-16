@@ -5,10 +5,15 @@
 // marks pointer fields nullable and adds the shared documentation (units,
 // errors, rate-limit headers). Run it through scripts/gen-openapi.sh.
 //
-//	go run ./tools/openapi <swagger.json> <pkg/api> <out.json>
+//	go run ./tools/openapi <swagger.json> <pkg/api> <out.json> [other-service.json ...]
+//
+// Each extra file is another service's OpenAPI 3 spec for paths it serves on
+// the same host (the L1Beat backend's /api/v1/treasuries). Its paths and
+// schemas are merged in as published, marked with x-l1beat-service.
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"go/ast"
@@ -83,7 +88,7 @@ var publicPaths = []string{
 
 const apiDescription = `Avalanche data from L1Beat's indexer: C-Chain blocks, transactions, balances and DeFi metrics, P-Chain transactions, L1s and validators, staking, and the network genesis.
 
-**Scope.** EVM, DeFi and ICM data cover the Avalanche C-Chain (chain ID 43114) only. ` + "`/api/v1/treasuries`" + ` is served on this host by the L1Beat backend and is not part of this spec. Live blocks stream over WebSocket at ` + "`wss://api.l1beat.io/ws/blocks/43114`" + `, which OpenAPI cannot describe.
+**Scope.** EVM, DeFi and ICM data cover the Avalanche C-Chain (chain ID 43114) only. ` + "`/api/v1/treasuries`" + ` is served on this host by the L1Beat backend: its errors are ` + "`{\"error\": string}`" + ` and its rate limit is 1000 requests per 15 minutes per IP, separate from the limit below. Live blocks stream over WebSocket at ` + "`wss://api.l1beat.io/ws/blocks/43114`" + `, which OpenAPI cannot describe.
 
 **Units.**
 - Values that can exceed 2^53 are decimal strings: token amounts in base units (divide by 10^decimals), P-Chain stake and fees in nAVAX (1 AVAX = 10^9 nAVAX), and C-Chain native amounts in wei (10^18).
@@ -103,17 +108,17 @@ const apiDescription = `Avalanche data from L1Beat's indexer: C-Chain blocks, tr
 **Caching.** Metric and data responses are cached for 1-10 minutes and sent with Cache-Control: public, max-age=60, stale-while-revalidate=300.`
 
 func main() {
-	if len(os.Args) != 4 {
-		fmt.Fprintln(os.Stderr, "usage: openapi <swagger.json> <pkg/api dir> <out.json>")
+	if len(os.Args) < 4 {
+		fmt.Fprintln(os.Stderr, "usage: openapi <swagger.json> <pkg/api dir> <out.json> [other-service.json ...]")
 		os.Exit(2)
 	}
-	if err := run(os.Args[1], os.Args[2], os.Args[3]); err != nil {
+	if err := run(os.Args[1], os.Args[2], os.Args[3], os.Args[4:]); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func run(swaggerPath, apiDir, outPath string) error {
+func run(swaggerPath, apiDir, outPath string, others []string) error {
 	raw, err := os.ReadFile(swaggerPath)
 	if err != nil {
 		return err
@@ -171,6 +176,11 @@ func run(swaggerPath, apiDir, outPath string) error {
 
 	addSharedResponses(doc)
 	pruneSchemas(doc)
+	for _, o := range others {
+		if err := mergeService(doc, o); err != nil {
+			return fmt.Errorf("merge %s: %w", o, err)
+		}
+	}
 
 	out, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
@@ -318,3 +328,36 @@ func pruneSchemas(doc *openapi3.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// mergeService adds another service's paths and schemas unchanged. Its own
+// error bodies and rate-limit notes stay as that service publishes them; a path
+// or schema name already in the spec is an error rather than an overwrite.
+func mergeService(doc *openapi3.T, path string) error {
+	other, err := openapi3.NewLoader().LoadFromFile(path)
+	if err != nil {
+		return err
+	}
+	if err := other.Validate(context.Background()); err != nil {
+		return fmt.Errorf("invalid spec: %w", err)
+	}
+	for p, item := range other.Paths.Map() {
+		if doc.Paths.Value(p) != nil {
+			return fmt.Errorf("path %s is already in the spec", p)
+		}
+		if item.Extensions == nil {
+			item.Extensions = map[string]any{}
+		}
+		item.Extensions["x-l1beat-service"] = "backend"
+		doc.Paths.Set(p, item)
+	}
+	if other.Components == nil {
+		return nil
+	}
+	for name, schema := range other.Components.Schemas {
+		if _, dup := doc.Components.Schemas[name]; dup {
+			return fmt.Errorf("schema %s is already in the spec", name)
+		}
+		doc.Components.Schemas[name] = schema
+	}
+	return nil
+}

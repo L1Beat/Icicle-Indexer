@@ -22,7 +22,13 @@ func loadOpenAPISpec(t *testing.T) *openapi3.T {
 func TestOpenAPISpecIsValid(t *testing.T) {
 	doc := loadOpenAPISpec(t)
 	require.Equal(t, "https://api.l1beat.io", doc.Servers[0].URL)
-	require.Len(t, doc.Paths.Map(), 51)
+	require.Len(t, doc.Paths.Map(), 52)
+
+	// /api/v1/treasuries comes from the L1Beat backend's own spec.
+	treasuries := doc.Paths.Value("/api/v1/treasuries")
+	require.NotNil(t, treasuries)
+	require.Equal(t, "backend", treasuries.Extensions["x-l1beat-service"])
+	require.NotNil(t, doc.Components.Schemas["Treasuries"])
 
 	// Internal endpoints must stay out of the public spec.
 	for _, internal := range []string{
@@ -43,7 +49,10 @@ func TestOpenAPIPathsAreRouted(t *testing.T) {
 	doc := loadOpenAPISpec(t)
 	server := NewTestServer(&MockConn{})
 	param := regexp.MustCompile(`\{[^}]+\}`)
-	for path := range doc.Paths.Map() {
+	for path, item := range doc.Paths.Map() {
+		if item.Extensions["x-l1beat-service"] != nil {
+			continue // served by another service on the same host
+		}
 		url := param.ReplaceAllString(path, "1")
 		w := MakeRequest(t, server, "GET", url)
 		require.NotEqual(t, "404 page not found\n", w.Body.String(), path)
