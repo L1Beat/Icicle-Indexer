@@ -151,6 +151,11 @@ func TestReadAaveV4(t *testing.T) {
 	f.on(hub, "getAddedAssets(uint256)", ub("2000000000000000000000000"), id)
 	f.on(hub, "getAssetTotalOwed(uint256)", ub("500000000000000000000000"), id)
 	f.on(hub, "getAssetDrawnRate(uint256)", ub("40000000000000000000000000"), id)
+	// index 1.1: 400k drawn shares are 440k drawn, 100k premium shares add
+	// premium interest on top (the 60k owed premium is not what earns it).
+	f.on(hub, "getAssetDrawnIndex(uint256)", ub("1100000000000000000000000000"), id)
+	f.on(hub, "getAssetDrawnShares(uint256)", ub("400000000000000000000000"), id)
+	f.on(hub, "getAssetPremiumData(uint256)", cat(ub("100000000000000000000000"), ub("50000000000000000000000000000000000000000000000000")), id)
 	f.on(hub, "getAssetConfig(uint256)", cat(addrWord(pool), u(2000), addrWord(pool), addrWord(pool)), id)
 	f.erc20(WAVAX, "WAVAX", 18)
 	f.on(main, "getReserveId(address,uint256)", u(3), addrWord(hub), id)
@@ -162,7 +167,8 @@ func TestReadAaveV4(t *testing.T) {
 	m := ms[0]
 	require.Equal(t, "WAVAX", m.Symbol)
 	require.InDelta(t, 0.04, m.BorrowAPR, 1e-12)
-	require.InDelta(t, 0.04*0.25*0.8, m.SupplyAPR, 1e-12) // utilization 25%, 20% fee
+	// 4% on (400k+100k)*1.1 = 550k earning, 20% fee, over 2M added
+	require.InDelta(t, 0.04*550000/2000000*0.8, m.SupplyAPR, 1e-12)
 	require.Nil(t, m.CollateralEnabled)
 	require.Nil(t, m.LTVBps)
 	require.InDelta(t, 8.66658, *m.PriceUSD, 1e-9)

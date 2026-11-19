@@ -178,6 +178,19 @@ func ReadAaveV4(ctx context.Context, c Caller) ([]Market, error) {
 		if err != nil {
 			return nil, err
 		}
+		index, err := r.uint(AaveV4CoreHub, "getAssetDrawnIndex(uint256)", id)
+		if err != nil {
+			return nil, err
+		}
+		drawnShares, err := r.uint(AaveV4CoreHub, "getAssetDrawnShares(uint256)", id)
+		if err != nil {
+			return nil, err
+		}
+		// premiumShares, premiumOffsetRay
+		prem, err := r.call(AaveV4CoreHub, 2, "getAssetPremiumData(uint256)", id)
+		if err != nil {
+			return nil, err
+		}
 		// feeReceiver, liquidityFee, irStrategy, reinvestmentController
 		cfg, err := r.call(AaveV4CoreHub, 2, "getAssetConfig(uint256)", id)
 		if err != nil {
@@ -188,6 +201,8 @@ func ReadAaveV4(ctx context.Context, c Caller) ([]Market, error) {
 			return nil, err
 		}
 
+		// The drawn rate is the base borrow rate, the figure Aave's own UI and
+		// API show. Each borrower also pays a personal risk premium on top.
 		borrowAPR := ratioFloat(rate, 27)
 		m := Market{
 			Protocol:  ProtocolAaveV4,
@@ -198,7 +213,7 @@ func ReadAaveV4(ctx context.Context, c Caller) ([]Market, error) {
 			Supplied:  added,
 			Borrowed:  owed,
 			BorrowAPR: borrowAPR,
-			SupplyAPR: v4SupplyAPR(borrowAPR, owed, added, wordUint(cfg, 1).Uint64()),
+			SupplyAPR: v4SupplyAPR(rate, index, drawnShares, wordUint(prem, 0), added, wordUint(cfg, 1).Uint64()),
 		}
 		m.PriceUSD = v4Price(r, oracles, i)
 		out = append(out, m)
@@ -206,15 +221,24 @@ func ReadAaveV4(ctx context.Context, c Caller) ([]Market, error) {
 	return out, nil
 }
 
-// v4SupplyAPR estimates what suppliers earn: interest on everything owed at the
-// drawn rate, less the hub's liquidity fee, spread over everything added.
-// Borrowers' risk premiums add on top, so this slightly understates it.
-func v4SupplyAPR(borrowAPR float64, owed, added *big.Int, feeBps uint64) float64 {
+// v4SupplyAPR is what suppliers earn. Drawn and premium debt both grow with
+// the drawn index (premium debt is premiumShares*index - offset), so interest
+// accrues at the drawn rate on drawnShares+premiumShares at the current index.
+// Suppliers get that, less the hub's liquidity fee, spread over everything
+// added. Counting only the drawn debt misses the risk premiums borrowers pay,
+// which on USDt in Nov 2026 was 16% of drawn debt.
+func v4SupplyAPR(drawnRateRay, indexRay, drawnShares, premiumShares, added *big.Int, feeBps uint64) float64 {
 	if added.Sign() == 0 || feeBps >= 10000 {
 		return 0
 	}
-	u, _ := new(big.Float).Quo(new(big.Float).SetInt(owed), new(big.Float).SetInt(added)).Float64()
-	return borrowAPR * u * float64(10000-feeBps) / 10000
+	shares := new(big.Int).Add(drawnShares, premiumShares)
+	// interest per year in asset units, scaled by RAY^2
+	num := new(big.Int).Mul(new(big.Int).Mul(drawnRateRay, indexRay), shares)
+	num.Mul(num, big.NewInt(int64(10000-feeBps)))
+	den := new(big.Int).Mul(added, new(big.Int).Exp(big.NewInt(10), big.NewInt(54), nil))
+	den.Mul(den, big.NewInt(10000))
+	f, _ := new(big.Rat).SetFrac(num, den).Float64()
+	return f
 }
 
 // v4Price reads the asset price from the first spoke that lists it. Spoke
