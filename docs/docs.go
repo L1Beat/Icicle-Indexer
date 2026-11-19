@@ -737,7 +737,7 @@ const docTemplate = `{
         },
         "/api/v1/data/evm/{chainId}/rwa": {
             "get": {
-                "description": "Returns every tokenized real-world asset in the registry that is not a stablecoin: fund shares (category tokenized_fund, the /tokenized-funds rows), company shares (category equity, e.g. Securitize SECZ) and commodities (category commodity, e.g. Tether gold XAUt0, peg XAU, one token per troy ounce). Same row shape and price fields as /tokenized-funds. supply is in token units. An equity price comes from its RedStone end-of-day price feed (price_source redstone). XAUt0 has no verified on-chain gold price yet, so its price fields are null. Rows are sorted by value_usd, highest first, unpriced rows last.",
+                "description": "Returns every tokenized real-world asset in the registry that is not a stablecoin: fund shares (category tokenized_fund, the /tokenized-funds rows), company shares (category equity, e.g. Securitize SECZ) and commodities (category commodity, e.g. Tether gold XAUt0, peg XAU, one token per troy ounce). Same row shape and price fields as /tokenized-funds. supply is in token units. An equity price comes from its RedStone end-of-day price feed (price_source redstone). XAUt0 is priced per troy ounce from Chainlink's XAU / USD feed (price_source chainlink), which does not update while gold markets are closed. Rows are sorted by value_usd, highest first, unpriced rows last.",
                 "produces": [
                     "application/json"
                 ],
@@ -8059,17 +8059,18 @@ const docTemplate = `{
                     "example": "USD"
                 },
                 "price_at": {
-                    "description": "when the NAV was set (Centrifuge priceLastUpdated, RedStone updatedAt), else when it was read. Null for peg prices",
+                    "description": "when the NAV was set (Centrifuge priceLastUpdated, RedStone or Chainlink updatedAt), else when it was read. Null for peg prices",
                     "type": "string"
                 },
                 "price_source": {
-                    "description": "peg: $1 per share. erc4626: the fund vault's convertToAssets. erc7540: convertToAssets of the fund's ERC-7540 vault (Centrifuge, Nest). redstone: the fund's RedStone NAV feed",
+                    "description": "peg: $1 per share. erc4626: the fund vault's convertToAssets. erc7540: convertToAssets of the fund's ERC-7540 vault (Centrifuge, Nest). redstone: the asset's RedStone NAV or price feed. chainlink: the asset's Chainlink price feed (XAU / USD for XAUt0)",
                     "type": "string",
                     "enum": [
                         "peg",
                         "erc4626",
                         "erc7540",
-                        "redstone"
+                        "redstone",
+                        "chainlink"
                     ],
                     "example": "erc4626"
                 },

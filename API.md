@@ -717,7 +717,7 @@ Tokenized funds on a chain. On the C-Chain: BlackRock BUIDL, Franklin Templeton 
 Every tokenized real-world asset in the registry that is not a stablecoin: the `/tokenized-funds` rows (`category: "tokenized_fund"`), tokenized company shares (`category: "equity"`, Securitize SECZ) and commodities (`category: "commodity"`, Tether gold XAUt0). Same row shape and price fields as `/tokenized-funds`. `supply` is in token units (shares, or troy ounces for XAUt0) in base units: scale by `decimals`.
 
 - Equity is priced from its RedStone end-of-day price feed (`price_source: "redstone"`, `price_at` = the feed's `updatedAt`). SECZ: feed `SECZ_EOD`, updated on a 0.1% move or every 12h.
-- XAUt0 (`peg: "XAU"`, one token per troy ounce) has no verified on-chain gold price yet: its price fields are `null`. Never value it at $1.
+- XAUt0 (`peg: "XAU"`, one token per troy ounce) is priced from Chainlink's XAU / USD feed (`price_source: "chainlink"`, `price_at` = the feed's last update). Gold does not trade on weekends, so `price_at` can be up to ~3 days old. Never value it at $1.
 - Rows are sorted by `value_usd`, highest first; unpriced rows last. (`/tokenized-funds` keeps its own order.)
 - Sum `value_usd` for a USD total. Rows with a null price have no USD value: count their shares, never $1.
 

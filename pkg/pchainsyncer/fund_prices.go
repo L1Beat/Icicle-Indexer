@@ -29,24 +29,33 @@ var (
 	selLatestRoundData  = []byte{0xfe, 0xaf, 0x96, 0x8c} // latestRoundData()
 )
 
-// navFeed is a RedStone NAV feed (Chainlink AggregatorV3 interface) for a fund
-// with no price in its own contracts. id is the RedStone data feed ID: the
-// feed's description() must name it, so a wrong or repointed address is
+// navFeed is a price feed (Chainlink AggregatorV3 interface) for an asset with
+// no price in its own contracts. source is "redstone" or "chainlink". id names
+// the feed: a RedStone description() must end in its data feed ID, a
+// Chainlink description() must equal it, so a wrong or repointed address is
 // rejected rather than read.
 type navFeed struct {
-	feed string
-	id   string
+	feed   string
+	id     string
+	source string
 }
 
-// redstoneFeeds maps a fund token (lowercase hex, no 0x) to its RedStone NAV
-// feed on the C-Chain. Addresses from RedStone's relayer manifest
+// priceFeeds maps an asset token (lowercase hex, no 0x) to its price feed
+// on the C-Chain. RedStone addresses from its relayer manifest
 // (redstone-oracles-monorepo, relayer-manifests-multi-feed/avalancheMultiFeed.json,
 // adapter 0x3587a73AA02519335A8a6053a97657BECe0bC2Cc), checked on-chain 2026-11-19.
 // Updated on a 0.01% move or every 24h.
-var redstoneFeeds = map[string]navFeed{
-	"f5fa39a16449b1ee07aa52ae79c6b00567c59f83": {"0xc9e11c60e24bef478cc999fa9fa2d89cc098a86e", "HINC_AVALANCHE_FUNDAMENTAL"}, // HINC
-	"7c64925002bfa705834b118a923e9911bee32875": {"0x4bad96dd1c7d541270a0c92e1d4e5f12eeea7a57", "ACRED_FUNDAMENTAL"},          // ACRED
-	"5954ff4099ac47c4d6d098a9216f3278bb8c9506": {"0x29d2fec890b037b2d34f061f9a50f76f85ddbcae", "SECZ_EOD"},                   // SECZ, end-of-day equity price, updated on 0.1% or 12h
+//
+// XAUt0 (one token per troy ounce of gold) reads Chainlink's XAU / USD proxy,
+// from Chainlink's registry (smartcontractkit/hardhat-chainlink,
+// src/registries/dataFeedsRegistry.ts, avalanche xau-usd), checked on-chain
+// 2026-11-20. Gold only updates while markets are open, so weekend gaps are
+// normal: the API's 7-day NAV age limit covers them.
+var priceFeeds = map[string]navFeed{
+	"f5fa39a16449b1ee07aa52ae79c6b00567c59f83": {"0xc9e11c60e24bef478cc999fa9fa2d89cc098a86e", "HINC_AVALANCHE_FUNDAMENTAL", "redstone"}, // HINC
+	"7c64925002bfa705834b118a923e9911bee32875": {"0x4bad96dd1c7d541270a0c92e1d4e5f12eeea7a57", "ACRED_FUNDAMENTAL", "redstone"},          // ACRED
+	"5954ff4099ac47c4d6d098a9216f3278bb8c9506": {"0x29d2fec890b037b2d34f061f9a50f76f85ddbcae", "SECZ_EOD", "redstone"},                   // SECZ, end-of-day equity price, updated on 0.1% or 12h
+	"2775d5105276781b4b85ba6ea6a6653beed1dd32": {"0x1f41ef93dece881ad0b98082b2d44d3f6f0c515b", "XAU / USD", "chainlink"},                 // XAUt0
 }
 
 // preferredUSD are the USD stablecoins tried first, in order, when asking an
@@ -68,18 +77,18 @@ type registryToken struct {
 // fundPrice is one on-chain share price.
 type fundPrice struct {
 	usd     float64
-	source  string    // erc4626, erc7540 or redstone
+	source  string    // erc4626, erc7540, redstone or chainlink
 	priceAt time.Time // when the NAV was set, if the vault says, else the read time
 }
 
 // SnapshotFundPrices writes tokenized_fund_prices rows for the floating-price
-// registry assets (tokenized funds and equity, peg NAV) with an on-chain USD
-// price per share: a curated RedStone feed, an ERC-4626 vault share in a
+// registry assets (tokenized funds, equity and commodities: every peg but USD)
+// with an on-chain USD price per share: a curated RedStone or Chainlink feed, an ERC-4626 vault share in a
 // registry USD stablecoin, or an ERC-7575 share token whose ERC-7540 vault
 // (Centrifuge, Nest) reports convertToAssets. Assets with none get no row,
 // and an asset whose read fails keeps its previous row.
 func SnapshotFundPrices(ctx context.Context, conn clickhouse.Conn, caller lendingmarkets.Caller) error {
-	funds, err := queryRegistry(ctx, conn, "category != 'stablecoin' AND peg = 'NAV'")
+	funds, err := queryRegistry(ctx, conn, "category != 'stablecoin' AND peg != 'USD'")
 	if err != nil {
 		return err
 	}
@@ -162,8 +171,8 @@ func addrArg(a []byte) []byte { return append(make([]byte, 12), a...) }
 func readFundPrice(ctx context.Context, c lendingmarkets.Caller, f registryToken, usd map[string]uint8, now time.Time) (fundPrice, bool, error) {
 	fund := "0x" + hex.EncodeToString(f.token)
 
-	// A curated NAV feed wins: it is the issuer's published NAV.
-	if nf, ok := redstoneFeeds[hex.EncodeToString(f.token)]; ok {
+	// A curated feed wins: it is the issuer's published NAV or the market price.
+	if nf, ok := priceFeeds[hex.EncodeToString(f.token)]; ok {
 		p, err := readNAVFeed(ctx, c, nf, now)
 		if err != nil {
 			return fundPrice{}, false, err
@@ -254,14 +263,15 @@ func convertShare(ctx context.Context, c lendingmarkets.Caller, vault string, sh
 	return price, nil
 }
 
-// readNAVFeed reads a RedStone NAV feed: USD per share from latestRoundData,
-// stamped with its updatedAt.
+// readNAVFeed reads a RedStone or Chainlink feed: USD per token from
+// latestRoundData, stamped with its updatedAt.
 func readNAVFeed(ctx context.Context, c lendingmarkets.Caller, nf navFeed, now time.Time) (fundPrice, error) {
 	out, err := c.Call(ctx, nf.feed, selDescription)
 	if err != nil {
 		return fundPrice{}, err
 	}
-	if desc := abiString(out); !strings.HasSuffix(desc, " "+nf.id) {
+	desc := abiString(out)
+	if nf.source == "redstone" && !strings.HasSuffix(desc, " "+nf.id) || nf.source != "redstone" && desc != nf.id {
 		return fundPrice{}, fmt.Errorf("feed %s describes itself as %q, want %s", nf.feed, desc, nf.id)
 	}
 	out, err = c.Call(ctx, nf.feed, selDecimals)
@@ -292,7 +302,7 @@ func readNAVFeed(ctx context.Context, c lendingmarkets.Caller, nf navFeed, now t
 	if price <= 0 || price > 1e6 {
 		return fundPrice{}, fmt.Errorf("feed %s: implausible share price %v", nf.feed, price)
 	}
-	return fundPrice{usd: price, source: "redstone", priceAt: time.Unix(updated.Int64(), 0).UTC()}, nil
+	return fundPrice{usd: price, source: nf.source, priceAt: time.Unix(updated.Int64(), 0).UTC()}, nil
 }
 
 // abiString decodes an ABI-encoded string return value, or "".

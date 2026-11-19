@@ -57,10 +57,10 @@ type Stablecoin struct {
 // the price fields are null.
 type TokenizedFund struct {
 	Stablecoin
-	PriceUSD    *float64   `json:"price_usd" example:"1.065417"`                                        // USD per whole share, null when unknown
-	ValueUSD    *float64   `json:"value_usd" example:"26483900.5"`                                      // supply in whole shares times price_usd, null when unknown
-	PriceSource *string    `json:"price_source" example:"erc4626" enums:"peg,erc4626,erc7540,redstone"` // peg: $1 per share. erc4626: the fund vault's convertToAssets. erc7540: convertToAssets of the fund's ERC-7540 vault (Centrifuge, Nest). redstone: the fund's RedStone NAV feed
-	PriceAt     *time.Time `json:"price_at"`                                                            // when the NAV was set (Centrifuge priceLastUpdated, RedStone updatedAt), else when it was read. Null for peg prices
+	PriceUSD    *float64   `json:"price_usd" example:"1.065417"`                                                  // USD per whole share, null when unknown
+	ValueUSD    *float64   `json:"value_usd" example:"26483900.5"`                                                // supply in whole shares times price_usd, null when unknown
+	PriceSource *string    `json:"price_source" example:"erc4626" enums:"peg,erc4626,erc7540,redstone,chainlink"` // peg: $1 per share. erc4626: the fund vault's convertToAssets. erc7540: convertToAssets of the fund's ERC-7540 vault (Centrifuge, Nest). redstone: the asset's RedStone NAV or price feed. chainlink: the asset's Chainlink price feed (XAU / USD for XAUt0)
+	PriceAt     *time.Time `json:"price_at"`                                                                      // when the NAV was set (Centrifuge priceLastUpdated, RedStone or Chainlink updatedAt), else when it was read. Null for peg prices
 }
 
 // An on-chain fund price is dropped when it was last read more than
@@ -128,7 +128,7 @@ func (s *Server) handleListTokenizedFunds(w http.ResponseWriter, r *http.Request
 // funds, equity and commodities, priced like /tokenized-funds.
 //
 // @Summary List tokenized real-world assets for a chain
-// @Description Returns every tokenized real-world asset in the registry that is not a stablecoin: fund shares (category tokenized_fund, the /tokenized-funds rows), company shares (category equity, e.g. Securitize SECZ) and commodities (category commodity, e.g. Tether gold XAUt0, peg XAU, one token per troy ounce). Same row shape and price fields as /tokenized-funds. supply is in token units. An equity price comes from its RedStone end-of-day price feed (price_source redstone). XAUt0 has no verified on-chain gold price yet, so its price fields are null. Rows are sorted by value_usd, highest first, unpriced rows last.
+// @Description Returns every tokenized real-world asset in the registry that is not a stablecoin: fund shares (category tokenized_fund, the /tokenized-funds rows), company shares (category equity, e.g. Securitize SECZ) and commodities (category commodity, e.g. Tether gold XAUt0, peg XAU, one token per troy ounce). Same row shape and price fields as /tokenized-funds. supply is in token units. An equity price comes from its RedStone end-of-day price feed (price_source redstone). XAUt0 is priced per troy ounce from Chainlink's XAU / USD feed (price_source chainlink), which does not update while gold markets are closed. Rows are sorted by value_usd, highest first, unpriced rows last.
 // @Tags Data - EVM
 // @Produce json
 // @Param chainId path int true "Chain ID (e.g. 43114 for Avalanche C-Chain)"
