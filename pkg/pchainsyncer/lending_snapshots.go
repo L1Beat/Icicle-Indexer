@@ -244,3 +244,72 @@ func bigOrEmpty(v *big.Int) string {
 	}
 	return v.String()
 }
+
+// RebackfillLendingProtocol re-reads one protocol's past daily snapshots at
+// each day's last block and overwrites them, for when a reader's math changed
+// (Aave V4 supply APR started counting risk premiums on 2026-11-19). Only days
+// that already have rows for the protocol are rewritten, today excluded. Rows
+// are stamped at the end of their day so they win over every live sample of
+// that day in the ReplacingMergeTree. Idempotent.
+func RebackfillLendingProtocol(ctx context.Context, conn clickhouse.Conn, nodeURL, protocol string) error {
+	read, ok := map[string]func(context.Context, lendingmarkets.Caller) ([]lendingmarkets.Market, error){
+		lendingmarkets.ProtocolAaveV3: lendingmarkets.ReadAaveV3,
+		lendingmarkets.ProtocolAaveV4: lendingmarkets.ReadAaveV4,
+		lendingmarkets.ProtocolBenqi:  lendingmarkets.ReadBenqi,
+	}[protocol]
+	if !ok {
+		return fmt.Errorf("unknown lending protocol %q", protocol)
+	}
+
+	today := time.Now().UTC().Truncate(24 * time.Hour)
+	rows, err := conn.Query(ctx, `
+		SELECT toDate(block_time) AS d, max(block_number)
+		FROM raw_blocks
+		WHERE chain_id = 43114
+		  AND block_time >= (SELECT min(snapshot_date) FROM lending_market_snapshots WHERE protocol_id = ?)
+		  AND block_time < ?
+		  AND toDate(block_time) IN (
+			SELECT DISTINCT snapshot_date FROM lending_market_snapshots
+			WHERE protocol_id = ? AND snapshot_date < ?
+		  )
+		GROUP BY d ORDER BY d`, protocol, today, protocol, today)
+	if err != nil {
+		return err
+	}
+	type dayBlock struct {
+		day   time.Time
+		block uint32
+	}
+	var days []dayBlock
+	for rows.Next() {
+		var d dayBlock
+		if err := rows.Scan(&d.day, &d.block); err != nil {
+			rows.Close()
+			return err
+		}
+		days = append(days, d)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	base := strings.TrimSuffix(strings.TrimRight(nodeURL, "/"), "/ext/bc/P")
+	for i, d := range days {
+		caller := restaking.RPCCaller{URL: base + "/ext/bc/C/rpc", Client: liquidRPCClient, Block: fmt.Sprintf("0x%x", d.block)}
+		markets, err := read(ctx, caller)
+		if err != nil {
+			return fmt.Errorf("%s %s at block %d: %w", protocol, d.day.Format("2006-01-02"), d.block, err)
+		}
+		if len(markets) == 0 {
+			continue
+		}
+		dayEnd := d.day.UTC().Add(24*time.Hour - time.Millisecond)
+		if err := insertLendingMarkets(ctx, conn, markets, dayEnd); err != nil {
+			return err
+		}
+		slog.Info("Lending day re-read", "protocol", protocol, "day", d.day.Format("2006-01-02"), "block", d.block, "markets", len(markets), "progress", fmt.Sprintf("%d/%d", i+1, len(days)))
+	}
+	slog.Info("Lending rebackfill done", "protocol", protocol, "days", len(days))
+	return nil
+}

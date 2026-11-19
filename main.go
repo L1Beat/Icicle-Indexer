@@ -280,6 +280,16 @@ func main() {
 	validatorBackfillCmd.Flags().String("interval", "month", "Sample interval: day, week, or month")
 	validatorBackfillCmd.Flags().Int("concurrency", 2, "Parallel getValidatorsAt calls (keep low - deep history is expensive for the node)")
 
+	lendingRebackfillCmd := &cobra.Command{
+		Use:   "lending-rebackfill",
+		Short: "Re-read one protocol's past daily lending market snapshots and overwrite them (idempotent)",
+		Run: func(command *cobra.Command, args []string) {
+			protocol, _ := command.Flags().GetString("protocol")
+			cmd.RunLendingRebackfill(ctx, protocol)
+		},
+	}
+	lendingRebackfillCmd.Flags().String("protocol", "aave-v4", "Protocol id: aave-v3, aave-v4 or benqi")
+
 	enrichBackfillCmd := &cobra.Command{
 		Use:   "enrich-backfill",
 		Short: "Resolve method signatures and label contracts for recent history (idempotent, runs alongside the indexer)",
@@ -361,6 +371,7 @@ func main() {
 		replayCmd,
 		fixturesCmd,
 		validatorBackfillCmd,
+		lendingRebackfillCmd,
 		&cobra.Command{
 			Use:   "cache",
 			Short: "Fill RPC cache at max speed (no ClickHouse)",
