@@ -26,7 +26,7 @@ func parseAggregate3Input(t *testing.T, calldata string) []Call {
 		elemOff := int(new(big.Int).SetBytes(b[headBase+i*32 : headBase+i*32+32]).Uint64())
 		elemStart := headBase + elemOff
 		target := "0x" + hex.EncodeToString(b[elemStart+12:elemStart+32])
-		allow := new(big.Int).SetBytes(b[elemStart+32 : elemStart+64]).Sign() != 0
+		allow := new(big.Int).SetBytes(b[elemStart+32:elemStart+64]).Sign() != 0
 		bytesOff := int(new(big.Int).SetBytes(b[elemStart+64 : elemStart+96]).Uint64())
 		bytesStart := elemStart + bytesOff
 		blen := int(new(big.Int).SetBytes(b[bytesStart : bytesStart+32]).Uint64())

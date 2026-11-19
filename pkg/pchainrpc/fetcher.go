@@ -91,7 +91,6 @@ type FetcherOptions struct {
 	Cache          *cache.Cache  // Optional cache for complete blocks
 }
 
-
 // pooledRequester implements EndpointRequester with proper connection pooling
 type pooledRequester struct {
 	uri        string
@@ -1532,11 +1531,11 @@ func (f *Fetcher) FindRefundUTXO(ctx context.Context, addresses []string, target
 
 // GetL1ValidatorResponse represents the response from platform.getL1Validator
 type GetL1ValidatorResponse struct {
-	NodeID               string `json:"nodeID"`
-	Weight               string `json:"weight"`
-	StartTime            string `json:"startTime"`
-	ValidationID         string `json:"validationID"`
-	PublicKey            string `json:"publicKey"`
+	NodeID                string `json:"nodeID"`
+	Weight                string `json:"weight"`
+	StartTime             string `json:"startTime"`
+	ValidationID          string `json:"validationID"`
+	PublicKey             string `json:"publicKey"`
 	RemainingBalanceOwner struct {
 		Locktime  string   `json:"locktime"`
 		Threshold string   `json:"threshold"`
@@ -1547,10 +1546,10 @@ type GetL1ValidatorResponse struct {
 		Threshold string   `json:"threshold"`
 		Addresses []string `json:"addresses"`
 	} `json:"deactivationOwner"`
-	MinNonce  string `json:"minNonce"`
-	Balance   string `json:"balance"`
-	SubnetID  string `json:"subnetID"`
-	Height    string `json:"height"`
+	MinNonce string `json:"minNonce"`
+	Balance  string `json:"balance"`
+	SubnetID string `json:"subnetID"`
+	Height   string `json:"height"`
 }
 
 // GetL1Validator fetches L1 validator info including remainingBalanceOwner

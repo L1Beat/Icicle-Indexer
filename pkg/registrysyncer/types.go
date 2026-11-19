@@ -2,16 +2,16 @@ package registrysyncer
 
 // ChainRegistry represents the top-level chain.json from l1beat-l1-registry
 type ChainRegistry struct {
-	SubnetID    string        `json:"subnetId"`
-	Network     string        `json:"network"`
-	IsL1        bool          `json:"isL1"`
-	Categories  []string      `json:"categories"`
-	Name        string        `json:"name"`
-	Description string        `json:"description"`
-	Logo        string        `json:"logo"`
-	Website     string        `json:"website"`
-	Socials     []Social      `json:"socials"`
-	Chains      []ChainEntry  `json:"chains"`
+	SubnetID    string       `json:"subnetId"`
+	Network     string       `json:"network"`
+	IsL1        bool         `json:"isL1"`
+	Categories  []string     `json:"categories"`
+	Name        string       `json:"name"`
+	Description string       `json:"description"`
+	Logo        string       `json:"logo"`
+	Website     string       `json:"website"`
+	Socials     []Social     `json:"socials"`
+	Chains      []ChainEntry `json:"chains"`
 }
 
 // Social represents a social media link

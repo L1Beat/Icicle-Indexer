@@ -48,9 +48,11 @@ func (m *MockConn) QueryRow(ctx context.Context, query string, args ...interface
 }
 
 // Unused driver.Conn methods - return errors
-func (m *MockConn) Stats() driver.Stats                                              { return driver.Stats{} }
-func (m *MockConn) Close() error                                                     { return nil }
-func (m *MockConn) Exec(ctx context.Context, query string, args ...interface{}) error { return ErrMockNotImpl }
+func (m *MockConn) Stats() driver.Stats { return driver.Stats{} }
+func (m *MockConn) Close() error        { return nil }
+func (m *MockConn) Exec(ctx context.Context, query string, args ...interface{}) error {
+	return ErrMockNotImpl
+}
 func (m *MockConn) AsyncInsert(ctx context.Context, query string, wait bool, args ...interface{}) error {
 	return ErrMockNotImpl
 }
@@ -248,7 +250,7 @@ func (r *MockRows) Err() error { return nil }
 func NewTestServer(mock *MockConn) *Server {
 	cfg := Config{
 		RateLimit: RateLimitConfig{
-			RequestsPerMinute: 1000,      // High limit for tests
+			RequestsPerMinute: 1000, // High limit for tests
 			BurstSize:         100,
 			CleanupInterval:   time.Hour, // Long interval for tests
 		},

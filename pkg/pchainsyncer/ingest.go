@@ -1560,12 +1560,12 @@ func BackfillValidatorStateFromHistory(ctx context.Context, conn clickhouse.Conn
 			v.SubnetID,
 			v.ValidationID,
 			v.NodeID,
-			uint64(0),         // balance (unknown, will be updated by RPC sync if active)
-			v.InitialWeight,   // weight from creation tx
-			v.CreatedTime,     // start_time = creation time
-			zeroTime,          // end_time unknown
-			float64(0),        // uptime unknown
-			false,             // inactive until confirmed by RPC
+			uint64(0),       // balance (unknown, will be updated by RPC sync if active)
+			v.InitialWeight, // weight from creation tx
+			v.CreatedTime,   // start_time = creation time
+			zeroTime,        // end_time unknown
+			float64(0),      // uptime unknown
+			false,           // inactive until confirmed by RPC
 			now,
 			pchainID,
 			v.InitialBalance, // initial_deposit from creation tx
