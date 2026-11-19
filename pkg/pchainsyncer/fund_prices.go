@@ -46,6 +46,7 @@ type navFeed struct {
 var redstoneFeeds = map[string]navFeed{
 	"f5fa39a16449b1ee07aa52ae79c6b00567c59f83": {"0xc9e11c60e24bef478cc999fa9fa2d89cc098a86e", "HINC_AVALANCHE_FUNDAMENTAL"}, // HINC
 	"7c64925002bfa705834b118a923e9911bee32875": {"0x4bad96dd1c7d541270a0c92e1d4e5f12eeea7a57", "ACRED_FUNDAMENTAL"},          // ACRED
+	"5954ff4099ac47c4d6d098a9216f3278bb8c9506": {"0x29d2fec890b037b2d34f061f9a50f76f85ddbcae", "SECZ_EOD"},                   // SECZ, end-of-day equity price, updated on 0.1% or 12h
 }
 
 // preferredUSD are the USD stablecoins tried first, in order, when asking an
@@ -71,13 +72,14 @@ type fundPrice struct {
 	priceAt time.Time // when the NAV was set, if the vault says, else the read time
 }
 
-// SnapshotFundPrices writes tokenized_fund_prices rows for the floating-NAV
-// tokenized funds with an on-chain USD share price: a curated RedStone NAV
-// feed, an ERC-4626 vault share in a registry USD stablecoin, or an ERC-7575
-// share token whose ERC-7540 vault (Centrifuge, Nest) reports convertToAssets.
-// Funds with none get no row, and a fund whose read fails keeps its previous row.
+// SnapshotFundPrices writes tokenized_fund_prices rows for the floating-price
+// registry assets (tokenized funds and equity, peg NAV) with an on-chain USD
+// price per share: a curated RedStone feed, an ERC-4626 vault share in a
+// registry USD stablecoin, or an ERC-7575 share token whose ERC-7540 vault
+// (Centrifuge, Nest) reports convertToAssets. Assets with none get no row,
+// and an asset whose read fails keeps its previous row.
 func SnapshotFundPrices(ctx context.Context, conn clickhouse.Conn, caller lendingmarkets.Caller) error {
-	funds, err := queryRegistry(ctx, conn, "category = 'tokenized_fund' AND peg = 'NAV'")
+	funds, err := queryRegistry(ctx, conn, "category != 'stablecoin' AND peg = 'NAV'")
 	if err != nil {
 		return err
 	}

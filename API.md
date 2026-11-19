@@ -712,6 +712,19 @@ Tokenized funds on a chain. On the C-Chain: BlackRock BUIDL, Franklin Templeton 
 | `price_source` | string \| null | `peg`, `erc4626`, `erc7540` or `redstone` |
 | `price_at` | string \| null | RFC3339 time the NAV was set (Centrifuge `priceLastUpdated`, RedStone `updatedAt`), else the time of the on-chain read. Null for `peg`. A price is dropped (null) when its NAV is over 7 days old or it was not read for 24h |
 
+### GET /api/v1/data/evm/{chainId}/rwa
+
+Every tokenized real-world asset in the registry that is not a stablecoin: the `/tokenized-funds` rows (`category: "tokenized_fund"`), tokenized company shares (`category: "equity"`, Securitize SECZ) and commodities (`category: "commodity"`, Tether gold XAUt0). Same row shape and price fields as `/tokenized-funds`. `supply` is in token units (shares, or troy ounces for XAUt0) in base units: scale by `decimals`.
+
+- Equity is priced from its RedStone end-of-day price feed (`price_source: "redstone"`, `price_at` = the feed's `updatedAt`). SECZ: feed `SECZ_EOD`, updated on a 0.1% move or every 12h.
+- XAUt0 (`peg: "XAU"`, one token per troy ounce) has no verified on-chain gold price yet: its price fields are `null`. Never value it at $1.
+- Rows are sorted by `value_usd`, highest first; unpriced rows last. (`/tokenized-funds` keeps its own order.)
+- Sum `value_usd` for a USD total. Rows with a null price have no USD value: count their shares, never $1.
+
+### GET /api/v1/data/evm/{chainId}/rwa/timeseries
+
+Same parameters and response as `/stablecoins/timeseries`, for every `/rwa` asset.
+
 ### GET /api/v1/data/evm/{chainId}/tokenized-funds/timeseries
 
 Time series for a tokenized fund metric. Same parameters and response as `/stablecoins/timeseries`; `token` omitted returns every fund on the chain. The `holders` metric is forward-only, like the stablecoin one.
@@ -3113,6 +3126,8 @@ ws.onmessage = (event) => {
 | GET | `/api/v1/data/evm/{chainId}/stablecoins/timeseries` | Stablecoin metric time series |
 | GET | `/api/v1/data/evm/{chainId}/tokenized-funds` | List tokenized funds (BUIDL, BENJI), same shape as stablecoins |
 | GET | `/api/v1/data/evm/{chainId}/tokenized-funds/timeseries` | Tokenized fund metric time series |
+| GET | `/api/v1/data/evm/{chainId}/rwa` | All tokenized real-world assets (funds, equity, commodities), priced |
+| GET | `/api/v1/data/evm/{chainId}/rwa/timeseries` | Tokenized real-world asset metric time series |
 | GET | `/api/v1/data/evm/{chainId}/lending/positions` | Lending positions by liquidation proximity |
 | GET | `/api/v1/data/evm/{chainId}/lending/positions/{account}` | Lending positions for one account |
 | GET | `/api/v1/data/evm/{chainId}/lending/stats` | Lending open/liquidatable counts |

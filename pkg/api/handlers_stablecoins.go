@@ -32,9 +32,11 @@ type Stablecoin struct {
 	// stablecoins (e.g. avUSD, UTY, reUSD, FRXUSD). Sum all rows for the GROSS total;
 	// exclude doublecounted rows for the NET total (the DeFiLlama-style headline).
 	Doublecounted bool `json:"doublecounted" example:"false"`
-	// Category is "stablecoin" on /stablecoins and "tokenized_fund" on
-	// /tokenized-funds (money-market fund shares such as BUIDL and BENJI).
-	Category     string `json:"category" example:"stablecoin" enums:"stablecoin,tokenized_fund"`
+	// Category is "stablecoin" on /stablecoins, "tokenized_fund" on
+	// /tokenized-funds (fund shares such as BUIDL and JAAA), and
+	// "tokenized_fund", "equity" (company shares such as SECZ) or "commodity"
+	// (such as gold token XAUt0) on /rwa.
+	Category     string `json:"category" example:"stablecoin" enums:"stablecoin,tokenized_fund,equity,commodity"`
 	Supply       string `json:"supply" example:"459300000000000"` // token base units, circulating
 	Holders      uint64 `json:"holders" example:"128453"`
 	Volume24h    string `json:"volume_24h" example:"32100000000000"` // token base units
@@ -76,7 +78,13 @@ const (
 const (
 	categoryStablecoin    = "stablecoin"
 	categoryTokenizedFund = "tokenized_fund"
+	categoryEquity        = "equity"
+	categoryCommodity     = "commodity"
 )
+
+// rwaCategories are the registry categories served by /rwa: every one but
+// stablecoins.
+var rwaCategories = []string{categoryTokenizedFund, categoryEquity, categoryCommodity}
 
 // handleListStablecoins returns curated stablecoins for a chain with circulating supply,
 // holder count, and last-24h transfer volume / count. Volume leaves out issuer
@@ -97,7 +105,7 @@ func (s *Server) handleListStablecoins(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, Response{Data: filterCategory(all, categoryStablecoin)})
+	writeJSON(w, http.StatusOK, Response{Data: filterCategory(all, []string{categoryStablecoin})})
 }
 
 // handleListTokenizedFunds returns the tokenized money-market funds in the
@@ -113,16 +121,55 @@ func (s *Server) handleListStablecoins(w http.ResponseWriter, r *http.Request) {
 // @Failure 500 {object} ErrorResponse
 // @Router /api/v1/data/evm/{chainId}/tokenized-funds [get]
 func (s *Server) handleListTokenizedFunds(w http.ResponseWriter, r *http.Request) {
+	s.listPriced(w, r, []string{categoryTokenizedFund}, false)
+}
+
+// handleListRWA returns every non-stablecoin asset in the registry: tokenized
+// funds, equity and commodities, priced like /tokenized-funds.
+//
+// @Summary List tokenized real-world assets for a chain
+// @Description Returns every tokenized real-world asset in the registry that is not a stablecoin: fund shares (category tokenized_fund, the /tokenized-funds rows), company shares (category equity, e.g. Securitize SECZ) and commodities (category commodity, e.g. Tether gold XAUt0, peg XAU, one token per troy ounce). Same row shape and price fields as /tokenized-funds. supply is in token units. An equity price comes from its RedStone end-of-day price feed (price_source redstone). XAUt0 has no verified on-chain gold price yet, so its price fields are null. Rows are sorted by value_usd, highest first, unpriced rows last.
+// @Tags Data - EVM
+// @Produce json
+// @Param chainId path int true "Chain ID (e.g. 43114 for Avalanche C-Chain)"
+// @Success 200 {object} Response{data=[]TokenizedFund}
+// @Failure 400 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/data/evm/{chainId}/rwa [get]
+func (s *Server) handleListRWA(w http.ResponseWriter, r *http.Request) {
+	s.listPriced(w, r, rwaCategories, true)
+}
+
+// listPriced serves the registry rows of the given categories with their
+// share price and USD value. byValue sorts them highest value first; otherwise
+// they keep the registry list's order (by raw supply).
+func (s *Server) listPriced(w http.ResponseWriter, r *http.Request, categories []string, byValue bool) {
 	all, ok := s.cachedRegistry(w, r)
 	if !ok {
 		return
 	}
-	funds := filterCategory(all, categoryTokenizedFund)
-	out := make([]TokenizedFund, 0, len(funds))
-	for _, f := range funds {
-		out = append(out, priceFund(f, time.Now()))
+	rows := filterCategory(all, categories)
+	out := make([]TokenizedFund, 0, len(rows))
+	now := time.Now()
+	for _, f := range rows {
+		out = append(out, priceFund(f, now))
+	}
+	if byValue {
+		sortByValue(out)
 	}
 	writeJSON(w, http.StatusOK, Response{Data: out})
+}
+
+// sortByValue orders rows by value_usd, highest first. Unpriced rows go last,
+// in their existing order.
+func sortByValue(rows []TokenizedFund) {
+	sort.SliceStable(rows, func(i, j int) bool {
+		a, b := rows[i].ValueUSD, rows[j].ValueUSD
+		if a == nil || b == nil {
+			return a != nil && b == nil
+		}
+		return *a > *b
+	})
 }
 
 // priceFund adds the share price and USD value to a fund row.
@@ -167,13 +214,16 @@ func (s *Server) cachedRegistry(w http.ResponseWriter, r *http.Request) ([]Stabl
 	return all, true
 }
 
-// filterCategory returns the entries of one category, keeping their order. It
-// never returns nil, so an empty category encodes as [].
-func filterCategory(all []Stablecoin, category string) []Stablecoin {
+// filterCategory returns the entries of the given categories, keeping their
+// order. It never returns nil, so an empty result encodes as [].
+func filterCategory(all []Stablecoin, categories []string) []Stablecoin {
 	out := make([]Stablecoin, 0, len(all))
 	for _, c := range all {
-		if c.Category == category {
-			out = append(out, c)
+		for _, want := range categories {
+			if c.Category == want {
+				out = append(out, c)
+				break
+			}
 		}
 	}
 	return out
@@ -395,7 +445,7 @@ type StablecoinMetricSeries struct {
 // @Failure 500 {object} ErrorResponse
 // @Router /api/v1/data/evm/{chainId}/stablecoins/timeseries [get]
 func (s *Server) handleStablecoinTimeseries(w http.ResponseWriter, r *http.Request) {
-	s.registryTimeseries(w, r, categoryStablecoin)
+	s.registryTimeseries(w, r, []string{categoryStablecoin})
 }
 
 // handleTokenizedFundTimeseries returns time-series data for tokenized funds.
@@ -416,12 +466,33 @@ func (s *Server) handleStablecoinTimeseries(w http.ResponseWriter, r *http.Reque
 // @Failure 500 {object} ErrorResponse
 // @Router /api/v1/data/evm/{chainId}/tokenized-funds/timeseries [get]
 func (s *Server) handleTokenizedFundTimeseries(w http.ResponseWriter, r *http.Request) {
-	s.registryTimeseries(w, r, categoryTokenizedFund)
+	s.registryTimeseries(w, r, []string{categoryTokenizedFund})
+}
+
+// handleRWATimeseries returns time-series data for tokenized real-world assets.
+//
+// @Summary Get tokenized real-world asset metric time series
+// @Description Returns time-series data for a metric (supply, volume, transfers, holders) of every non-stablecoin registry asset: tokenized funds, equity and commodities. Same parameters and shape as /stablecoins/timeseries.
+// @Tags Data - EVM
+// @Produce json
+// @Param chainId path int true "Chain ID (e.g. 43114 for Avalanche C-Chain)"
+// @Param metric query string true "Metric name (supply, volume, transfers, holders)"
+// @Param granularity query string false "Time granularity (hour, day, week, month)" default(day)
+// @Param token query string false "Token address (0x-prefixed hex). Omit for all assets."
+// @Param from query string false "Start time (date, RFC3339, or unix timestamp)"
+// @Param to query string false "End time (date, RFC3339, or unix timestamp)"
+// @Param limit query int false "Number of data points per token (max 5000)" default(365)
+// @Success 200 {object} Response{data=[]StablecoinMetricSeries}
+// @Failure 400 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/data/evm/{chainId}/rwa/timeseries [get]
+func (s *Server) handleRWATimeseries(w http.ResponseWriter, r *http.Request) {
+	s.registryTimeseries(w, r, rwaCategories)
 }
 
 // registryTimeseries serves stablecoin_metrics series for the registry tokens
-// of one category.
-func (s *Server) registryTimeseries(w http.ResponseWriter, r *http.Request, category string) {
+// of the given categories.
+func (s *Server) registryTimeseries(w http.ResponseWriter, r *http.Request, categories []string) {
 	ctx := r.Context()
 
 	chainID, err := getChainIDFromPath(r)
@@ -490,7 +561,12 @@ func (s *Server) registryTimeseries(w http.ResponseWriter, r *http.Request, cate
 	}
 	// Scope to the category's registry tokens. stablecoin_metrics holds every
 	// registry token, funds included.
-	const categoryFilter = " AND sm.token IN (SELECT token FROM stablecoins FINAL WHERE chain_id = ? AND category = ?)"
+	marks := strings.TrimSuffix(strings.Repeat("?, ", len(categories)), ", ")
+	categoryFilter := " AND sm.token IN (SELECT token FROM stablecoins FINAL WHERE chain_id = ? AND category IN (" + marks + "))"
+	categoryArgs := []interface{}{chainID}
+	for _, c := range categories {
+		categoryArgs = append(categoryArgs, c)
+	}
 
 	var query string
 	var args []interface{}
@@ -509,7 +585,7 @@ func (s *Server) registryTimeseries(w http.ResponseWriter, r *http.Request, cate
 		inner += tokenFilter
 		args = append(args, tokenArg...)
 		inner += categoryFilter
-		args = append(args, chainID, category)
+		args = append(args, categoryArgs...)
 
 		query = "SELECT token, period, value FROM (" + inner + ") WHERE 1=1"
 		if !fromTime.IsZero() {
@@ -537,7 +613,7 @@ func (s *Server) registryTimeseries(w http.ResponseWriter, r *http.Request, cate
 		query += tokenFilter
 		args = append(args, tokenArg...)
 		query += categoryFilter
-		args = append(args, chainID, category)
+		args = append(args, categoryArgs...)
 
 		if !fromTime.IsZero() {
 			query += " AND sm.period >= ?"

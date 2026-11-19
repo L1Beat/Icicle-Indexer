@@ -76,6 +76,15 @@ INSERT INTO stablecoins (chain_id, token, symbol, name, decimals, peg, issuer, b
     -- JTRSY (Janus Henderson Treasury, Centrifuge): 1 share on C-Chain as of 2026-11-19, priced via its ERC-7540 vault.
     (43114, unhex('a5d465251fbcc907f5dd6bb2145488dfc6a2627b'), 'JTRSY', 'Janus Henderson Treasury Fund', 6, 'NAV', 'Janus Henderson', false, '2026-11-19 20:00:00', false, 'tokenized_fund');
 
+-- Tokenized equity and commodities, served by /rwa only. Never peg 'USD', so the
+-- peg='USD' pricing readers never value them at $1. Equity priced from RedStone feeds.
+INSERT INTO stablecoins (chain_id, token, symbol, name, decimals, peg, issuer, bridged, added_at, doublecounted, category) VALUES
+    -- SECZ: Securitize Corp. shares, checked on-chain 2026-11-19 (25,729,401 shares, RedStone SECZ_EOD $6.74).
+    (43114, unhex('5954ff4099ac47c4d6d098a9216f3278bb8c9506'), 'SECZ', 'Securitize Corp.', 6, 'NAV', 'Securitize', false, '2026-11-19 21:00:00', false, 'equity'),
+    -- XAUt0: Tether gold (LayerZero OFT), one token per troy ounce, 400.32 on C-Chain 2026-11-19.
+    -- peg 'XAU': no verified on-chain gold price yet, so /rwa returns it unpriced.
+    (43114, unhex('2775d5105276781b4b85ba6ea6a6653beed1dd32'), 'XAUt0', 'XAUt0', 6, 'XAU', 'Tether', false, '2026-11-19 21:00:00', false, 'commodity');
+
 -- Known issuer/treasury holders to exclude from circulating supply.
 -- Idempotent via fixed added_at + ReplacingMergeTree on (chain_id, token, holder).
 INSERT INTO stablecoin_excluded_holders (chain_id, token, holder, reason, added_at) VALUES

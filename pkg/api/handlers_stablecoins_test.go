@@ -23,6 +23,8 @@ func TestStablecoinListsSplitByCategory(t *testing.T) {
 			{Symbol: "BUIDL", Category: categoryTokenizedFund},
 			{Symbol: "USDT", Category: categoryStablecoin},
 			{Symbol: "BENJI", Category: categoryTokenizedFund},
+			{Symbol: "SECZ", Category: categoryEquity},
+			{Symbol: "XAUt0", Peg: "XAU", Category: categoryCommodity},
 		},
 	}
 
@@ -41,11 +43,13 @@ func TestStablecoinListsSplitByCategory(t *testing.T) {
 
 	assert.Equal(t, []string{"USDC", "USDT"}, symbols("/api/v1/data/evm/43114/stablecoins"))
 	assert.Equal(t, []string{"BUIDL", "BENJI"}, symbols("/api/v1/data/evm/43114/tokenized-funds"))
+	// /rwa is every non-stablecoin: funds, equity and commodities, never stablecoins.
+	assert.Equal(t, []string{"BUIDL", "BENJI", "SECZ", "XAUt0"}, symbols("/api/v1/data/evm/43114/rwa"))
 }
 
 // A category with no tokens answers [], not null.
 func TestFilterCategoryEmptyIsNotNil(t *testing.T) {
-	got := filterCategory([]Stablecoin{{Category: categoryStablecoin}}, categoryTokenizedFund)
+	got := filterCategory([]Stablecoin{{Category: categoryStablecoin}}, []string{categoryTokenizedFund})
 	require.NotNil(t, got)
 	assert.Empty(t, got)
 }
@@ -54,13 +58,15 @@ func TestFilterCategoryEmptyIsNotNil(t *testing.T) {
 // registry tokens, for every metric branch.
 func TestRegistryTimeseriesScopedToCategory(t *testing.T) {
 	for _, tc := range []struct {
-		path     string
-		category string
+		path       string
+		categories []string
 	}{
-		{"/api/v1/data/evm/43114/stablecoins/timeseries?metric=supply", categoryStablecoin},
-		{"/api/v1/data/evm/43114/stablecoins/timeseries?metric=holders", categoryStablecoin},
-		{"/api/v1/data/evm/43114/tokenized-funds/timeseries?metric=supply", categoryTokenizedFund},
-		{"/api/v1/data/evm/43114/tokenized-funds/timeseries?metric=volume", categoryTokenizedFund},
+		{"/api/v1/data/evm/43114/stablecoins/timeseries?metric=supply", []string{categoryStablecoin}},
+		{"/api/v1/data/evm/43114/stablecoins/timeseries?metric=holders", []string{categoryStablecoin}},
+		{"/api/v1/data/evm/43114/tokenized-funds/timeseries?metric=supply", []string{categoryTokenizedFund}},
+		{"/api/v1/data/evm/43114/tokenized-funds/timeseries?metric=volume", []string{categoryTokenizedFund}},
+		{"/api/v1/data/evm/43114/rwa/timeseries?metric=supply", rwaCategories},
+		{"/api/v1/data/evm/43114/rwa/timeseries?metric=transfers", rwaCategories},
 	} {
 		var gotQuery string
 		var gotArgs []interface{}
@@ -72,8 +78,17 @@ func TestRegistryTimeseriesScopedToCategory(t *testing.T) {
 		})
 		w := MakeRequest(t, server, "GET", tc.path)
 		require.Equal(t, http.StatusOK, w.Code, tc.path)
-		assert.True(t, strings.Contains(gotQuery, "FROM stablecoins FINAL WHERE chain_id = ? AND category = ?"), tc.path)
-		assert.Contains(t, gotArgs, tc.category, tc.path)
+		marks := strings.TrimSuffix(strings.Repeat("?, ", len(tc.categories)), ", ")
+		assert.Contains(t, gotQuery, "FROM stablecoins FINAL WHERE chain_id = ? AND category IN ("+marks+"))", tc.path)
+		for _, c := range tc.categories {
+			assert.Contains(t, gotArgs, c, tc.path)
+		}
+		assert.NotContains(t, gotArgs, func() string {
+			if tc.categories[0] == categoryStablecoin {
+				return categoryTokenizedFund
+			}
+			return categoryStablecoin
+		}(), tc.path)
 	}
 }
 
@@ -134,4 +149,53 @@ func TestTokenizedFundNullPriceJSON(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.Contains(t, w.Body.String(), `"price_usd":null`)
 	assert.Contains(t, w.Body.String(), `"value_usd":null`)
+}
+
+// Priced rows sort by value, highest first, and unpriced rows go last.
+func TestSortByValue(t *testing.T) {
+	v := func(f float64) *float64 { return &f }
+	rows := []TokenizedFund{
+		{Stablecoin: Stablecoin{Symbol: "AoABTd"}},
+		{Stablecoin: Stablecoin{Symbol: "BENJI"}, ValueUSD: v(2.1e6)},
+		{Stablecoin: Stablecoin{Symbol: "BUIDL"}, ValueUSD: v(356.7e6)},
+		{Stablecoin: Stablecoin{Symbol: "X"}},
+		{Stablecoin: Stablecoin{Symbol: "SECZ"}, ValueUSD: v(173.4e6)},
+	}
+	sortByValue(rows)
+	var got []string
+	for _, r := range rows {
+		got = append(got, r.Symbol)
+	}
+	assert.Equal(t, []string{"BUIDL", "SECZ", "BENJI", "AoABTd", "X"}, got)
+}
+
+// /tokenized-funds keeps the registry order. Only /rwa sorts by value.
+func TestTokenizedFundsOrderUnchanged(t *testing.T) {
+	server := NewTestServer(&MockConn{})
+	server.stablecoins.entries[43114] = &stablecoinEntry{
+		fetched: time.Now(),
+		data: []Stablecoin{
+			{Symbol: "SMALL", Peg: "USD", Decimals: 0, Supply: "1", Category: categoryTokenizedFund},
+			{Symbol: "BIG", Peg: "USD", Decimals: 0, Supply: "100", Category: categoryTokenizedFund},
+			{Symbol: "XAUt0", Peg: "XAU", Decimals: 6, Supply: "400317069", Category: categoryCommodity},
+		},
+	}
+	get := func(path string) []TokenizedFund {
+		w := MakeRequest(t, server, "GET", path)
+		require.Equal(t, http.StatusOK, w.Code)
+		return ParseResponse[struct {
+			Data []TokenizedFund `json:"data"`
+		}](t, w).Data
+	}
+	funds := get("/api/v1/data/evm/43114/tokenized-funds")
+	require.Len(t, funds, 2)
+	assert.Equal(t, "SMALL", funds[0].Symbol)
+
+	rwa := get("/api/v1/data/evm/43114/rwa")
+	require.Len(t, rwa, 3)
+	assert.Equal(t, []string{"BIG", "SMALL", "XAUt0"}, []string{rwa[0].Symbol, rwa[1].Symbol, rwa[2].Symbol})
+	// A gold token with no on-chain price is never valued at $1.
+	assert.Equal(t, categoryCommodity, rwa[2].Category)
+	assert.Nil(t, rwa[2].PriceUSD)
+	assert.Nil(t, rwa[2].ValueUSD)
 }

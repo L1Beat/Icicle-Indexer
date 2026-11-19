@@ -47,6 +47,8 @@ var publicPaths = []string{
 	"/api/v1/data/evm/{chainId}/stablecoins/timeseries",
 	"/api/v1/data/evm/{chainId}/tokenized-funds",
 	"/api/v1/data/evm/{chainId}/tokenized-funds/timeseries",
+	"/api/v1/data/evm/{chainId}/rwa",
+	"/api/v1/data/evm/{chainId}/rwa/timeseries",
 	"/api/v1/data/pchain/txs",
 	"/api/v1/data/pchain/txs/{txId}",
 	"/api/v1/data/pchain/tx-types",

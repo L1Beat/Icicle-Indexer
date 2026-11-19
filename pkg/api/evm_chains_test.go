@@ -33,6 +33,8 @@ func TestUnindexedChainIs404(t *testing.T) {
 		"/api/v1/data/evm/36463/stablecoins/timeseries",
 		"/api/v1/data/evm/36463/tokenized-funds",
 		"/api/v1/data/evm/36463/tokenized-funds/timeseries",
+		"/api/v1/data/evm/36463/rwa",
+		"/api/v1/data/evm/36463/rwa/timeseries",
 		"/api/v1/metrics/evm/36463/stats",
 		"/api/v1/metrics/evm/36463/timeseries",
 		"/api/v1/metrics/evm/36463/timeseries/tx_count",

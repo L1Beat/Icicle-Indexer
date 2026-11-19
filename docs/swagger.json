@@ -733,6 +733,157 @@
                 }
             }
         },
+        "/api/v1/data/evm/{chainId}/rwa": {
+            "get": {
+                "description": "Returns every tokenized real-world asset in the registry that is not a stablecoin: fund shares (category tokenized_fund, the /tokenized-funds rows), company shares (category equity, e.g. Securitize SECZ) and commodities (category commodity, e.g. Tether gold XAUt0, peg XAU, one token per troy ounce). Same row shape and price fields as /tokenized-funds. supply is in token units. An equity price comes from its RedStone end-of-day price feed (price_source redstone). XAUt0 has no verified on-chain gold price yet, so its price fields are null. Rows are sorted by value_usd, highest first, unpriced rows last.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Data - EVM"
+                ],
+                "summary": "List tokenized real-world assets for a chain",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Chain ID (e.g. 43114 for Avalanche C-Chain)",
+                        "name": "chainId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/api.TokenizedFund"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/data/evm/{chainId}/rwa/timeseries": {
+            "get": {
+                "description": "Returns time-series data for a metric (supply, volume, transfers, holders) of every non-stablecoin registry asset: tokenized funds, equity and commodities. Same parameters and shape as /stablecoins/timeseries.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Data - EVM"
+                ],
+                "summary": "Get tokenized real-world asset metric time series",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Chain ID (e.g. 43114 for Avalanche C-Chain)",
+                        "name": "chainId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Metric name (supply, volume, transfers, holders)",
+                        "name": "metric",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "default": "day",
+                        "description": "Time granularity (hour, day, week, month)",
+                        "name": "granularity",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Token address (0x-prefixed hex). Omit for all assets.",
+                        "name": "token",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Start time (date, RFC3339, or unix timestamp)",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "End time (date, RFC3339, or unix timestamp)",
+                        "name": "to",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 365,
+                        "description": "Number of data points per token (max 5000)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/api.StablecoinMetricSeries"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/data/evm/{chainId}/stablecoins": {
             "get": {
                 "description": "Returns curated stablecoins with circulating supply (excludes addresses listed in stablecoin_excluded_holders, e.g. issuer treasuries), holder count, and 24h transfer stats. Tokenized money-market funds (BUIDL, BENJI) are not stablecoins and are listed on /tokenized-funds instead.",
@@ -7395,11 +7546,13 @@
                     "example": false
                 },
                 "category": {
-                    "description": "Category is \"stablecoin\" on /stablecoins and \"tokenized_fund\" on\n/tokenized-funds (money-market fund shares such as BUIDL and BENJI).",
+                    "description": "Category is \"stablecoin\" on /stablecoins, \"tokenized_fund\" on\n/tokenized-funds (fund shares such as BUIDL and JAAA), and\n\"tokenized_fund\", \"equity\" (company shares such as SECZ) or \"commodity\"\n(such as gold token XAUt0) on /rwa.",
                     "type": "string",
                     "enum": [
                         "stablecoin",
-                        "tokenized_fund"
+                        "tokenized_fund",
+                        "equity",
+                        "commodity"
                     ],
                     "example": "stablecoin"
                 },
@@ -7867,11 +8020,13 @@
                     "example": false
                 },
                 "category": {
-                    "description": "Category is \"stablecoin\" on /stablecoins and \"tokenized_fund\" on\n/tokenized-funds (money-market fund shares such as BUIDL and BENJI).",
+                    "description": "Category is \"stablecoin\" on /stablecoins, \"tokenized_fund\" on\n/tokenized-funds (fund shares such as BUIDL and JAAA), and\n\"tokenized_fund\", \"equity\" (company shares such as SECZ) or \"commodity\"\n(such as gold token XAUt0) on /rwa.",
                     "type": "string",
                     "enum": [
                         "stablecoin",
-                        "tokenized_fund"
+                        "tokenized_fund",
+                        "equity",
+                        "commodity"
                     ],
                     "example": "stablecoin"
                 },
