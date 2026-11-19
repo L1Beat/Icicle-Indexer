@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/hex"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"sort"
@@ -38,7 +39,30 @@ type Stablecoin struct {
 	Holders      uint64 `json:"holders" example:"128453"`
 	Volume24h    string `json:"volume_24h" example:"32100000000000"` // token base units
 	Transfers24h uint64 `json:"transfers_24h" example:"58210"`
+
+	// On-chain share price of a floating-NAV tokenized fund, from
+	// tokenized_fund_prices. Served only on /tokenized-funds.
+	navPrice    *float64
+	navSource   string
+	navSampleAt time.Time
 }
+
+// TokenizedFund is a /tokenized-funds row: the /stablecoins fields plus a
+// share price and USD value. A $1-per-share fund (peg USD) is priced at 1 from
+// its peg. A floating-NAV fund (peg NAV) is priced only when its contract
+// reports a price on-chain (an ERC-4626 vault over a USD stablecoin); otherwise
+// the price fields are null.
+type TokenizedFund struct {
+	Stablecoin
+	PriceUSD    *float64   `json:"price_usd" example:"1.065417"`                       // USD per whole share, null when unknown
+	ValueUSD    *float64   `json:"value_usd" example:"26483900.5"`                     // supply in whole shares times price_usd, null when unknown
+	PriceSource *string    `json:"price_source" example:"erc4626" enums:"peg,erc4626"` // peg: $1 per share. erc4626: the vault's convertToAssets
+	PriceAt     *time.Time `json:"price_at"`                                           // when an on-chain price was read, null for peg prices
+}
+
+// fundPriceMaxAge is how old an on-chain fund price may be before it is
+// dropped. The snapshotter refreshes it every few minutes.
+const fundPriceMaxAge = 24 * time.Hour
 
 // Registry categories. Tokenized money-market funds (BUIDL, BENJI) share the
 // stablecoin pipeline but are not stablecoins, so they are served apart and
@@ -63,40 +87,78 @@ const (
 // @Failure 500 {object} ErrorResponse
 // @Router /api/v1/data/evm/{chainId}/stablecoins [get]
 func (s *Server) handleListStablecoins(w http.ResponseWriter, r *http.Request) {
-	s.listRegistryCategory(w, r, categoryStablecoin)
+	all, ok := s.cachedRegistry(w, r)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, Response{Data: filterCategory(all, categoryStablecoin)})
 }
 
 // handleListTokenizedFunds returns the tokenized money-market funds in the
 // stablecoin registry, with the same fields and methodology as /stablecoins.
 //
 // @Summary List tokenized funds for a chain
-// @Description Returns tokenized money-market funds (e.g. BlackRock BUIDL, Franklin Templeton BENJI) with circulating supply (excludes addresses listed in stablecoin_excluded_holders), holder count, and 24h transfer stats. Same shape as /stablecoins. These are fund shares, not stablecoins, so they are not part of the /stablecoins list. supply is in shares: peg USD means $1 per share, peg NAV means a floating share price that the API does not provide, so those funds cannot be valued at $1.
+// @Description Returns tokenized money-market funds (e.g. BlackRock BUIDL, Franklin Templeton BENJI) with circulating supply (excludes addresses listed in stablecoin_excluded_holders), holder count, and 24h transfer stats. Same shape as /stablecoins. These are fund shares, not stablecoins, so they are not part of the /stablecoins list. supply is in shares. price_usd and value_usd: peg USD funds are priced at $1 per share (price_source peg). Peg NAV funds have a floating share price, priced only when the contract reports it on-chain (ERC-4626 vaults over a USD stablecoin, price_source erc4626, read every few minutes); otherwise the price fields are null. Never value a NAV fund at $1.
 // @Tags Data - EVM
 // @Produce json
 // @Param chainId path int true "Chain ID (e.g. 43114 for Avalanche C-Chain)"
-// @Success 200 {object} Response{data=[]Stablecoin}
+// @Success 200 {object} Response{data=[]TokenizedFund}
 // @Failure 400 {object} ErrorResponse
 // @Failure 500 {object} ErrorResponse
 // @Router /api/v1/data/evm/{chainId}/tokenized-funds [get]
 func (s *Server) handleListTokenizedFunds(w http.ResponseWriter, r *http.Request) {
-	s.listRegistryCategory(w, r, categoryTokenizedFund)
+	all, ok := s.cachedRegistry(w, r)
+	if !ok {
+		return
+	}
+	funds := filterCategory(all, categoryTokenizedFund)
+	out := make([]TokenizedFund, 0, len(funds))
+	for _, f := range funds {
+		out = append(out, priceFund(f, time.Now()))
+	}
+	writeJSON(w, http.StatusOK, Response{Data: out})
 }
 
-// listRegistryCategory serves one category of the cached registry list. The
-// cache holds every registry token, so both endpoints share one ~8s load.
-func (s *Server) listRegistryCategory(w http.ResponseWriter, r *http.Request, category string) {
+// priceFund adds the share price and USD value to a fund row.
+func priceFund(f Stablecoin, now time.Time) TokenizedFund {
+	out := TokenizedFund{Stablecoin: f}
+	var price float64
+	switch {
+	case f.Peg == "USD":
+		price = 1
+		src := "peg"
+		out.PriceSource = &src
+	case f.navPrice != nil && now.Sub(f.navSampleAt) <= fundPriceMaxAge:
+		price = *f.navPrice
+		src, at := f.navSource, f.navSampleAt
+		out.PriceSource, out.PriceAt = &src, &at
+	default:
+		return out
+	}
+	out.PriceUSD = &price
+	if supply, ok := new(big.Float).SetString(f.Supply); ok {
+		unit := new(big.Float).SetInt(new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(f.Decimals)), nil))
+		v, _ := new(big.Float).Mul(new(big.Float).Quo(supply, unit), big.NewFloat(price)).Float64()
+		out.ValueUSD = &v
+	}
+	return out
+}
+
+// cachedRegistry returns the cached registry list for the path's chain, or
+// writes the error response. The cache holds every registry token, so both
+// list endpoints share one ~8s load.
+func (s *Server) cachedRegistry(w http.ResponseWriter, r *http.Request) ([]Stablecoin, bool) {
 	chainID, err := getChainIDFromPath(r)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid chain_id")
-		return
+		return nil, false
 	}
-
 	all, err := s.stablecoins.get(r.Context(), chainID, s.loadStablecoins)
 	if err != nil {
 		writeInternalError(w, err.Error())
-		return
+		return nil, false
 	}
-	writeJSON(w, http.StatusOK, Response{Data: filterCategory(all, category)})
+	return all, true
 }
 
 // filterCategory returns the entries of one category, keeping their order. It
@@ -109,6 +171,12 @@ func filterCategory(all []Stablecoin, category string) []Stablecoin {
 		}
 	}
 	return out
+}
+
+// registryEntry is a registry row being filled in by loadStablecoins.
+type registryEntry struct {
+	Stablecoin
+	tokenBytes []byte
 }
 
 // loadStablecoins runs the registry, supply and 24h volume queries for every
@@ -127,14 +195,10 @@ func (s *Server) loadStablecoins(ctx context.Context, chainID uint32) ([]Stablec
 	}
 	defer rows.Close()
 
-	type entry struct {
-		Stablecoin
-		tokenBytes []byte
-	}
-	byToken := map[string]*entry{}
-	var ordered []*entry
+	byToken := map[string]*registryEntry{}
+	var ordered []*registryEntry
 	for rows.Next() {
-		var e entry
+		var e registryEntry
 		if err := rows.Scan(&e.tokenBytes, &e.Symbol, &e.Name, &e.Decimals, &e.Peg, &e.Issuer, &e.Bridged, &e.Doublecounted, &e.Category); err != nil {
 			return nil, err
 		}
@@ -236,6 +300,12 @@ func (s *Server) loadStablecoins(ctx context.Context, chainID uint32) ([]Stablec
 		return nil, err
 	}
 
+	// Fund share prices are optional: a failed read leaves funds unpriced and
+	// never fails the list.
+	if err := s.loadFundPrices(ctx, chainID, byToken); err != nil {
+		slog.Warn("Tokenized fund price read failed", "chain_id", chainID, "error", err)
+	}
+
 	sort.Slice(ordered, func(i, j int) bool {
 		a, _ := new(big.Int).SetString(ordered[i].Supply, 10)
 		b, _ := new(big.Int).SetString(ordered[j].Supply, 10)
@@ -254,6 +324,36 @@ func (s *Server) loadStablecoins(ctx context.Context, chainID uint32) ([]Stablec
 	}
 
 	return out, nil
+}
+
+// loadFundPrices attaches the latest on-chain share price to each fund in
+// byToken that has one.
+func (s *Server) loadFundPrices(ctx context.Context, chainID uint32, byToken map[string]*registryEntry) error {
+	rows, err := s.conn.Query(ctx, `
+		SELECT token, price_usd, source, sampled_at
+		FROM tokenized_fund_prices FINAL
+		WHERE chain_id = ?
+	`, chainID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var (
+			tokenBytes []byte
+			price      float64
+			source     string
+			sampledAt  time.Time
+		)
+		if err := rows.Scan(&tokenBytes, &price, &source, &sampledAt); err != nil {
+			return err
+		}
+		if e, ok := byToken["0x"+hex.EncodeToString(tokenBytes)]; ok {
+			p := price
+			e.navPrice, e.navSource, e.navSampleAt = &p, source, sampledAt
+		}
+	}
+	return rows.Err()
 }
 
 type StablecoinMetricDataPoint struct {

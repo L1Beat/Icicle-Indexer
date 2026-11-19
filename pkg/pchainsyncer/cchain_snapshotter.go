@@ -85,5 +85,9 @@ func (s *CChainSnapshotter) runOnce(ctx context.Context) {
 	if err := icm.Sync(ctx, s.conn, caller); err != nil {
 		slog.Warn("Failed to sync ICM messages", "error", err)
 	}
+	// Share prices of floating-NAV tokenized funds that are ERC-4626 vaults.
+	if err := SnapshotFundPrices(ctx, s.conn, caller); err != nil {
+		slog.Warn("Failed to snapshot tokenized fund prices", "error", err)
+	}
 	slog.Info("C-Chain snapshot cycle completed", "duration", time.Since(start))
 }

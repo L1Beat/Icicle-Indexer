@@ -66,7 +66,14 @@ INSERT INTO stablecoins (chain_id, token, symbol, name, decimals, peg, issuer, b
     (43114, unhex('870fd36b3bf7f5abeeea2c8d4abdf1dc4e33109d'), 'WTGXX', 'WisdomTree Government Money Market Digital Fund', 18, 'USD', 'WisdomTree', false, '2026-11-19 00:00:00', false, 'tokenized_fund'),
     (43114, unhex('7f4546ef315efc65336187fe3765ea779ac90183'), 'VBILL', 'VanEck Treasury Fund', 6, 'USD', 'VanEck', false, '2026-11-19 00:00:00', false, 'tokenized_fund'),
     (43114, unhex('58f93d6b1ef2f44ec379cb975657c132cbed3b6b'), 'JAAA', 'Janus Henderson AAA CLO Fund', 6, 'NAV', 'Janus Henderson', false, '2026-11-19 00:00:00', false, 'tokenized_fund'),
-    (43114, unhex('7c64925002bfa705834b118a923e9911bee32875'), 'ACRED', 'Apollo Diversified Credit Securitize Fund', 6, 'NAV', 'Apollo', false, '2026-11-19 00:00:00', false, 'tokenized_fund');
+    (43114, unhex('7c64925002bfa705834b118a923e9911bee32875'), 'ACRED', 'Apollo Diversified Credit Securitize Fund', 6, 'NAV', 'Apollo', false, '2026-11-19 00:00:00', false, 'tokenized_fund'),
+    -- Added 2026-11-19 (second batch), from DefiLlama RWA contracts, checked on-chain. All
+    -- floating NAV. ULTRA (0x66c5bd…38c9, named UltraNodes on-chain) held until confirmed.
+    (43114, unhex('c0fd0afa73b35544cea520138cfdfa723bead848'), 'XDFIS-DeFi-2', 'Diversified Fixed Income Strategy Vault (DeFi) 2', 6, 'NAV', 'OpenTrade', false, '2026-11-19 12:00:00', false, 'tokenized_fund'),
+    (43114, unhex('b2ea3e7b80317c4e20d1927034162176e25834e2'), 'AoABTd', 'AoABTd', 18, 'NAV', 'Asseto', false, '2026-11-19 12:00:00', false, 'tokenized_fund'),
+    (43114, unhex('f5fa39a16449b1ee07aa52ae79c6b00567c59f83'), 'HINC', 'Neuberger Securitize High Income Tokenized Fund', 6, 'NAV', 'Neuberger Berman', false, '2026-11-19 12:00:00', false, 'tokenized_fund'),
+    (43114, unhex('119dd7daff816f29d7ee47596ae5e4bdc4299165'), 'nOPAL', 'Nest BlackOpal LiquidStone II Vault', 6, 'NAV', 'Nest Credit', false, '2026-11-19 12:00:00', false, 'tokenized_fund'),
+    (43114, unhex('8475509d391e6ee5a8b7133221ce17019d307b3e'), 'hyTB', 'HiYield Treasury Bill Vault', 18, 'NAV', 'HiYield', false, '2026-11-19 12:00:00', false, 'tokenized_fund');
 
 -- Known issuer/treasury holders to exclude from circulating supply.
 -- Idempotent via fixed added_at + ReplacingMergeTree on (chain_id, token, holder).

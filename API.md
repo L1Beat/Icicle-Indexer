@@ -694,11 +694,19 @@ Time series for a stablecoin metric. Tokenized funds are left out, also when ask
 
 ### GET /api/v1/data/evm/{chainId}/tokenized-funds
 
-Tokenized funds on a chain. On the C-Chain: BlackRock BUIDL, Franklin Templeton BENJI, WisdomTree WTGXX, VanEck VBILL (peg `USD`), and Janus Henderson JAAA, Apollo ACRED (peg `NAV`). Same response shape and methodology as `/stablecoins` (circulating supply, holders, 24h volume/transfers), with `category: "tokenized_fund"`. Fund shares are not stablecoins, so they are never part of the `/stablecoins` list or its totals.
+Tokenized funds on a chain. On the C-Chain: BlackRock BUIDL, Franklin Templeton BENJI, WisdomTree WTGXX, VanEck VBILL (peg `USD`), and Janus Henderson JAAA, Apollo ACRED, OpenTrade XDFIS-DeFi-2, Asseto AoABTd, Neuberger Berman HINC, Nest nOPAL, HiYield hyTB (peg `NAV`). Same response shape and methodology as `/stablecoins` (circulating supply, holders, 24h volume/transfers), with `category: "tokenized_fund"`. Fund shares are not stablecoins, so they are never part of the `/stablecoins` list or its totals.
 
 - `supply` and `volume_24h` are in fund shares (base units, scale by `decimals`).
-- `peg: "USD"` is a $1-per-share money-market fund: shares × $1 is its USD value.
-- `peg: "NAV"` is a floating share price (credit or CLO funds). The API has no NAV feed, so do **not** value these at $1. Show shares, or price them from the issuer's NAV.
+- `peg: "USD"` is a $1-per-share money-market fund, priced at 1 (`price_source: "peg"`).
+- `peg: "NAV"` is a floating share price. It is priced only when the contract reports it on-chain: ERC-4626 vaults over a USD stablecoin (XDFIS-DeFi-2, hyTB), read every ~5 minutes by the indexer (`price_source: "erc4626"`, `price_at` is the read time). Other NAV funds (JAAA, ACRED, HINC, AoABTd, nOPAL) have no on-chain price and return `null`: do **not** value them at $1.
+- Extra fields on top of the `/stablecoins` shape:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `price_usd` | number \| null | USD per whole share |
+| `value_usd` | number \| null | `supply / 10^decimals × price_usd` |
+| `price_source` | string \| null | `peg` or `erc4626` |
+| `price_at` | string \| null | RFC3339 time of the on-chain read, null for `peg`. Prices older than 24h are dropped (null) |
 
 ### GET /api/v1/data/evm/{chainId}/tokenized-funds/timeseries
 

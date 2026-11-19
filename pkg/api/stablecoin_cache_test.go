@@ -123,7 +123,7 @@ func TestWarmStablecoins(t *testing.T) {
 	s := NewTestServer(mock)
 	s.WarmStablecoins(context.Background())
 
-	require.Eventually(t, func() bool { return queries.Load() == 4 }, time.Second, 5*time.Millisecond)
+	require.Eventually(t, func() bool { return queries.Load() == 5 }, time.Second, 5*time.Millisecond)
 	require.Eventually(t, func() bool {
 		s.stablecoins.mu.Lock()
 		defer s.stablecoins.mu.Unlock()
@@ -134,5 +134,5 @@ func TestWarmStablecoins(t *testing.T) {
 	got, err := s.stablecoins.get(context.Background(), 43114, s.loadStablecoins)
 	require.NoError(t, err)
 	assert.Equal(t, "USDC", got[0].Symbol)
-	assert.Equal(t, int32(4), queries.Load())
+	assert.Equal(t, int32(5), queries.Load())
 }

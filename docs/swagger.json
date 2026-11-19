@@ -886,7 +886,7 @@
         },
         "/api/v1/data/evm/{chainId}/tokenized-funds": {
             "get": {
-                "description": "Returns tokenized money-market funds (e.g. BlackRock BUIDL, Franklin Templeton BENJI) with circulating supply (excludes addresses listed in stablecoin_excluded_holders), holder count, and 24h transfer stats. Same shape as /stablecoins. These are fund shares, not stablecoins, so they are not part of the /stablecoins list. supply is in shares: peg USD means $1 per share, peg NAV means a floating share price that the API does not provide, so those funds cannot be valued at $1.",
+                "description": "Returns tokenized money-market funds (e.g. BlackRock BUIDL, Franklin Templeton BENJI) with circulating supply (excludes addresses listed in stablecoin_excluded_holders), holder count, and 24h transfer stats. Same shape as /stablecoins. These are fund shares, not stablecoins, so they are not part of the /stablecoins list. supply is in shares. price_usd and value_usd: peg USD funds are priced at $1 per share (price_source peg). Peg NAV funds have a floating share price, priced only when the contract reports it on-chain (ERC-4626 vaults over a USD stablecoin, price_source erc4626, read every few minutes); otherwise the price fields are null. Never value a NAV fund at $1.",
                 "produces": [
                     "application/json"
                 ],
@@ -917,7 +917,7 @@
                                         "data": {
                                             "type": "array",
                                             "items": {
-                                                "$ref": "#/definitions/api.Stablecoin"
+                                                "$ref": "#/definitions/api.TokenizedFund"
                                             }
                                         }
                                     }
@@ -7856,6 +7856,95 @@
                     "description": "token base units",
                     "type": "string",
                     "example": "1000000"
+                }
+            }
+        },
+        "api.TokenizedFund": {
+            "type": "object",
+            "properties": {
+                "bridged": {
+                    "type": "boolean",
+                    "example": false
+                },
+                "category": {
+                    "description": "Category is \"stablecoin\" on /stablecoins and \"tokenized_fund\" on\n/tokenized-funds (money-market fund shares such as BUIDL and BENJI).",
+                    "type": "string",
+                    "enum": [
+                        "stablecoin",
+                        "tokenized_fund"
+                    ],
+                    "example": "stablecoin"
+                },
+                "decimals": {
+                    "type": "integer",
+                    "example": 6
+                },
+                "doublecounted": {
+                    "description": "Doublecounted marks stablecoins whose reserves are themselves other counted\nstablecoins (e.g. avUSD, UTY, reUSD, FRXUSD). Sum all rows for the GROSS total;\nexclude doublecounted rows for the NET total (the DeFiLlama-style headline).",
+                    "type": "boolean",
+                    "example": false
+                },
+                "holders": {
+                    "type": "integer",
+                    "example": 128453
+                },
+                "issuer": {
+                    "type": "string",
+                    "example": "Circle"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "USD Coin"
+                },
+                "peg": {
+                    "description": "Peg is the currency a unit tracks. On /tokenized-funds it is \"USD\" for\n$1-per-share money-market funds and \"NAV\" for floating-NAV funds (credit or\nCLO funds such as ACRED and JAAA), whose share price the API does not carry.",
+                    "type": "string",
+                    "example": "USD"
+                },
+                "price_at": {
+                    "description": "when an on-chain price was read, null for peg prices",
+                    "type": "string"
+                },
+                "price_source": {
+                    "description": "peg: $1 per share. erc4626: the vault's convertToAssets",
+                    "type": "string",
+                    "enum": [
+                        "peg",
+                        "erc4626"
+                    ],
+                    "example": "erc4626"
+                },
+                "price_usd": {
+                    "description": "USD per whole share, null when unknown",
+                    "type": "number",
+                    "example": 1.065417
+                },
+                "supply": {
+                    "description": "token base units, circulating",
+                    "type": "string",
+                    "example": "459300000000000"
+                },
+                "symbol": {
+                    "type": "string",
+                    "example": "USDC"
+                },
+                "token": {
+                    "type": "string",
+                    "example": "0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e"
+                },
+                "transfers_24h": {
+                    "type": "integer",
+                    "example": 58210
+                },
+                "value_usd": {
+                    "description": "supply in whole shares times price_usd, null when unknown",
+                    "type": "number",
+                    "example": 26483900.5
+                },
+                "volume_24h": {
+                    "description": "token base units",
+                    "type": "string",
+                    "example": "32100000000000"
                 }
             }
         },

@@ -76,3 +76,50 @@ func TestRegistryTimeseriesScopedToCategory(t *testing.T) {
 		assert.Contains(t, gotArgs, tc.category, tc.path)
 	}
 }
+
+func TestPriceFund(t *testing.T) {
+	now := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
+	fresh := 1.065417
+
+	// $1-per-share fund: priced from its peg. 2.5 shares at 6 decimals.
+	got := priceFund(Stablecoin{Peg: "USD", Decimals: 6, Supply: "2500000"}, now)
+	require.NotNil(t, got.PriceUSD)
+	assert.Equal(t, 1.0, *got.PriceUSD)
+	assert.InDelta(t, 2.5, *got.ValueUSD, 1e-9)
+	assert.Equal(t, "peg", *got.PriceSource)
+	assert.Nil(t, got.PriceAt)
+
+	// Floating NAV with a fresh on-chain price.
+	f := Stablecoin{Peg: "NAV", Decimals: 6, Supply: "10000000", navPrice: &fresh, navSource: "erc4626", navSampleAt: now.Add(-5 * time.Minute)}
+	got = priceFund(f, now)
+	require.NotNil(t, got.PriceUSD)
+	assert.Equal(t, fresh, *got.PriceUSD)
+	assert.InDelta(t, 10.65417, *got.ValueUSD, 1e-9)
+	assert.Equal(t, "erc4626", *got.PriceSource)
+	require.NotNil(t, got.PriceAt)
+
+	// A stale price is dropped rather than shown as current.
+	f.navSampleAt = now.Add(-25 * time.Hour)
+	got = priceFund(f, now)
+	assert.Nil(t, got.PriceUSD)
+	assert.Nil(t, got.ValueUSD)
+	assert.Nil(t, got.PriceSource)
+
+	// Floating NAV with no on-chain price is never valued at $1.
+	got = priceFund(Stablecoin{Peg: "NAV", Decimals: 6, Supply: "10000000"}, now)
+	assert.Nil(t, got.PriceUSD)
+	assert.Nil(t, got.ValueUSD)
+}
+
+// Price fields are explicit nulls in JSON, so clients can tell "unknown" apart.
+func TestTokenizedFundNullPriceJSON(t *testing.T) {
+	server := NewTestServer(&MockConn{})
+	server.stablecoins.entries[43114] = &stablecoinEntry{
+		fetched: time.Now(),
+		data:    []Stablecoin{{Symbol: "ACRED", Peg: "NAV", Category: categoryTokenizedFund, Supply: "1"}},
+	}
+	w := MakeRequest(t, server, "GET", "/api/v1/data/evm/43114/tokenized-funds")
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Contains(t, w.Body.String(), `"price_usd":null`)
+	assert.Contains(t, w.Body.String(), `"value_usd":null`)
+}
