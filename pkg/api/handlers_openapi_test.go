@@ -22,7 +22,7 @@ func loadOpenAPISpec(t *testing.T) *openapi3.T {
 func TestOpenAPISpecIsValid(t *testing.T) {
 	doc := loadOpenAPISpec(t)
 	require.Equal(t, "https://api.l1beat.io", doc.Servers[0].URL)
-	require.Len(t, doc.Paths.Map(), 52)
+	require.Len(t, doc.Paths.Map(), 54)
 
 	// /api/v1/treasuries comes from the L1Beat backend's own spec.
 	treasuries := doc.Paths.Value("/api/v1/treasuries")

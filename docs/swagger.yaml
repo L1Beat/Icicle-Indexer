@@ -2197,6 +2197,15 @@ definitions:
       bridged:
         example: false
         type: boolean
+      category:
+        description: |-
+          Category is "stablecoin" on /stablecoins and "tokenized_fund" on
+          /tokenized-funds (money-market fund shares such as BUIDL and BENJI).
+        enum:
+        - stablecoin
+        - tokenized_fund
+        example: stablecoin
+        type: string
       decimals:
         example: 6
         type: integer
@@ -3329,7 +3338,8 @@ paths:
     get:
       description: Returns curated stablecoins with circulating supply (excludes addresses
         listed in stablecoin_excluded_holders, e.g. issuer treasuries), holder count,
-        and 24h transfer stats.
+        and 24h transfer stats. Tokenized money-market funds (BUIDL, BENJI) are not
+        stablecoins and are listed on /tokenized-funds instead.
       parameters:
       - description: Chain ID (e.g. 43114 for Avalanche C-Chain)
         in: path
@@ -3363,8 +3373,9 @@ paths:
       - Data - EVM
   /api/v1/data/evm/{chainId}/stablecoins/timeseries:
     get:
-      description: Returns time-series data for a stablecoin metric (supply, volume,
-        transfers, holders)
+      description: 'Returns time-series data for a stablecoin metric (supply, volume,
+        transfers, holders). Tokenized funds (BUIDL, BENJI) are not included, also
+        when asked for by token: use /tokenized-funds/timeseries.'
       parameters:
       - description: Chain ID (e.g. 43114 for Avalanche C-Chain)
         in: path
@@ -3421,6 +3432,105 @@ paths:
           schema:
             $ref: '#/definitions/api.ErrorResponse'
       summary: Get stablecoin metric time series
+      tags:
+      - Data - EVM
+  /api/v1/data/evm/{chainId}/tokenized-funds:
+    get:
+      description: Returns tokenized money-market funds (e.g. BlackRock BUIDL, Franklin
+        Templeton BENJI) with circulating supply (excludes addresses listed in stablecoin_excluded_holders),
+        holder count, and 24h transfer stats. Same shape as /stablecoins. These are
+        fund shares, not stablecoins, so they are not part of the /stablecoins list.
+      parameters:
+      - description: Chain ID (e.g. 43114 for Avalanche C-Chain)
+        in: path
+        name: chainId
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/api.Stablecoin'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: List tokenized funds for a chain
+      tags:
+      - Data - EVM
+  /api/v1/data/evm/{chainId}/tokenized-funds/timeseries:
+    get:
+      description: Returns time-series data for a tokenized money-market fund metric
+        (supply, volume, transfers, holders). Same parameters and shape as /stablecoins/timeseries.
+      parameters:
+      - description: Chain ID (e.g. 43114 for Avalanche C-Chain)
+        in: path
+        name: chainId
+        required: true
+        type: integer
+      - description: Metric name (supply, volume, transfers, holders)
+        in: query
+        name: metric
+        required: true
+        type: string
+      - default: day
+        description: Time granularity (hour, day, week, month)
+        in: query
+        name: granularity
+        type: string
+      - description: Token address (0x-prefixed hex). Omit for all tokenized funds.
+        in: query
+        name: token
+        type: string
+      - description: Start time (date, RFC3339, or unix timestamp)
+        in: query
+        name: from
+        type: string
+      - description: End time (date, RFC3339, or unix timestamp)
+        in: query
+        name: to
+        type: string
+      - default: 365
+        description: Number of data points per token (max 5000)
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            allOf:
+            - $ref: '#/definitions/api.Response'
+            - properties:
+                data:
+                  items:
+                    $ref: '#/definitions/api.StablecoinMetricSeries'
+                  type: array
+              type: object
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/api.ErrorResponse'
+      summary: Get tokenized fund metric time series
       tags:
       - Data - EVM
   /api/v1/data/evm/{chainId}/txs:

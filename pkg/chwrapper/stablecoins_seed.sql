@@ -1,6 +1,8 @@
 -- Seed stablecoin registry for Avalanche C-Chain (chain_id 43114).
 -- Idempotent: rerunning produces identical rows because added_at is fixed,
 -- and ReplacingMergeTree dedupes on (chain_id, token).
+-- category defaults to 'stablecoin'. Tokenized money-market funds are seeded in the
+-- second INSERT below with a later added_at, so their row wins over the older seed.
 INSERT INTO stablecoins (chain_id, token, symbol, name, decimals, peg, issuer, bridged, added_at, doublecounted) VALUES
     (43114, unhex('b97ef9ef8734c71904d8002f8b6bc66dd9c48a6e'), 'USDC',   'USD Coin',                  6, 'USD', 'Circle',   false, '2026-01-01 00:00:00', false),
     (43114, unhex('9702230a8ea53601f5cd2dc00fdbc13d4df4a8c7'), 'USDT',   'Tether USD',                6, 'USD', 'Tether',   false, '2026-01-01 00:00:00', false),
@@ -11,9 +13,6 @@ INSERT INTO stablecoins (chain_id, token, symbol, name, decimals, peg, issuer, b
     (43114, unhex('00000000efe302beaa2b3e6e1b18d08d69a9012a'), 'AUSD',  'Agora Dollar',                  6, 'USD', 'Agora',       false, '2026-01-01 00:00:00', false),
     (43114, unhex('24de8771bc5ddb3362db529fc3358f2df3a0e346'), 'avUSD', 'Avant USD',                    18, 'USD', 'Avant',       false, '2026-01-01 00:00:00', true),
     (43114, unhex('9c9e5fd8bbc25984b178fdce6117defa39d2db39'), 'BUSD',  'Binance USD',                  18, 'USD', 'Binance',     false, '2026-01-01 00:00:00', false),
-    -- BUIDL: Securitize-issued, 6 decimals. Live circulating contract on C-Chain (~$386M).
-    -- Replaced 2026-05-31: old seed used 0xd33176… (decimals 18), a dead/old contract with junk balances.
-    (43114, unhex('53fc82f14f009009b440a706e31c9021e1196a2f'), 'BUIDL', 'BlackRock USD Institutional Digital Liquidity Fund', 6, 'USD', 'BlackRock', false, '2026-01-01 00:00:00', false),
     (43114, unhex('c891eb4cbdeff6e073e859e987815ed1505c2acd'), 'EURC',  'Euro Coin',                     6, 'EUR', 'Circle',      false, '2026-01-01 00:00:00', false),
     (43114, unhex('e7c3d8c9a439fede00d2600032d5db0be71c3c29'), 'JPYC',  'JPY Coin',                     18, 'JPY', 'JPYC Inc.',   false, '2026-01-01 00:00:00', false),
     (43114, unhex('130966628846bfd36ff31a822705796e8cb8c18d'), 'MIM',   'Magic Internet Money',         18, 'USD', 'Abracadabra', false, '2026-01-01 00:00:00', false),
@@ -45,7 +44,6 @@ INSERT INTO stablecoins (chain_id, token, symbol, name, decimals, peg, issuer, b
     (43114, unhex('7dc9748da8e762e569f9269f48f69a1a9f8ea761'), 'ZeUSD',  'Zoth ZeUSD',                    6, 'USD', 'Zoth',              false, '2026-01-01 00:00:00', false),
     (43114, unhex('da0019e7e50ee4990440b1aa5dffcac6e27ee27b'), 'LUSD',   'Liquity USD',                  18, 'USD', 'Liquity',           false, '2026-01-01 00:00:00', false),
     (43114, unhex('0000206329b97db379d5e1bf586bbdb969c63274'), 'USDA',   'USDA',                         18, 'USD', 'Angle',             false, '2026-01-01 00:00:00', false),
-    (43114, unhex('e08b4c1005603427420e64252a8b120cace4d122'), 'BENJI',  'Franklin OnChain U.S. Government Money Fund', 18, 'USD', 'Franklin Templeton', false, '2026-01-01 00:00:00', false),
     (43114, unhex('564a341df6c126f90cf3ecb92120fd7190acb401'), 'TRYB',   'BiLira',                        6, 'TRY', 'BiLira',            false, '2026-01-01 00:00:00', false),
     (43114, unhex('228a48df6819ccc2eca01e2192ebafffdad56c19'), 'VCHF',   'VNX Swiss Franc',              18, 'CHF', 'VNX',               false, '2026-01-01 00:00:00', false),
     (43114, unhex('8835a2f66a7aaccb297cb985831a616b75e2e16c'), 'EUROP',  'Schuman EUROP',                 6, 'EUR', 'Schuman',           false, '2026-01-01 00:00:00', false),
@@ -53,6 +51,14 @@ INSERT INTO stablecoins (chain_id, token, symbol, name, decimals, peg, issuer, b
     (43114, unhex('05539f021b66fd01d1fb1ff8e167cdd09bf7c2d0'), 'BRZ',    'Brazilian Digital',            18, 'BRL', 'Transfero',         false, '2026-01-01 00:00:00', false),
     (43114, unhex('27f6c8289550fce67f6b50bed1f519966afe5287'), 'tGBP',   'Tokenised GBP',                18, 'GBP', '',                  false, '2026-01-01 00:00:00', false),
     (43114, unhex('820802fa8a99901f52e39acd21177b0be6ee2974'), 'EUROe',  'EUROe Stablecoin',              6, 'EUR', 'Membrane',          false, '2026-01-01 00:00:00', false);
+
+-- Tokenized money-market funds: tracked like stablecoins (supply, holders, volume)
+-- but served by /tokenized-funds, not counted in the stablecoin list or totals.
+-- BUIDL: Securitize-issued, 6 decimals. Live circulating contract on C-Chain (~$386M).
+-- Replaced 2026-05-31: old seed used 0xd33176… (decimals 18), a dead/old contract with junk balances.
+INSERT INTO stablecoins (chain_id, token, symbol, name, decimals, peg, issuer, bridged, added_at, doublecounted, category) VALUES
+    (43114, unhex('53fc82f14f009009b440a706e31c9021e1196a2f'), 'BUIDL', 'BlackRock USD Institutional Digital Liquidity Fund', 6, 'USD', 'BlackRock', false, '2026-11-19 00:00:00', false, 'tokenized_fund'),
+    (43114, unhex('e08b4c1005603427420e64252a8b120cace4d122'), 'BENJI',  'Franklin OnChain U.S. Government Money Fund', 18, 'USD', 'Franklin Templeton', false, '2026-11-19 00:00:00', false, 'tokenized_fund');
 
 -- Known issuer/treasury holders to exclude from circulating supply.
 -- Idempotent via fixed added_at + ReplacingMergeTree on (chain_id, token, holder).

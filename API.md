@@ -615,7 +615,7 @@ Get native token balance (AVAX, ETH, etc.) for an address.
 
 ### GET /api/v1/data/evm/{chainId}/stablecoins
 
-Curated stablecoins on a chain with **circulating** supply (excludes issuer-treasury addresses), holder count, and 24h transfer stats.
+Curated stablecoins on a chain with **circulating** supply (excludes issuer-treasury addresses), holder count, and 24h transfer stats. Tokenized money-market funds (BUIDL, BENJI) are not stablecoins and are not listed here: see `/tokenized-funds`.
 
 **Path Parameters:**
 | Parameter | Type | Description |
@@ -635,6 +635,7 @@ Curated stablecoins on a chain with **circulating** supply (excludes issuer-trea
       "issuer": "Circle",
       "bridged": false,
       "doublecounted": false,
+      "category": "stablecoin",
       "supply": "459300000000000",
       "holders": 128453,
       "volume_24h": "32100000000000",
@@ -649,12 +650,13 @@ Curated stablecoins on a chain with **circulating** supply (excludes issuer-trea
 - `supply` is circulating (issuer treasuries in `stablecoin_excluded_holders` are subtracted), DeFiLlama-style.
 - `volume_24h` and `transfers_24h` (and the `volume` and `transfers` timeseries) leave out issuer operations: mints, burns, and transfers to or from an excluded issuer treasury. A treasury burn, such as Tether burning $1B of unissued USDT on 2026-11-02, is not volume. Everything else counts, including DEX, bridge and contract transfers.
 - `doublecounted` marks stablecoins whose reserves are themselves other counted stablecoins (e.g. `avUSD`, `UTY`, `reUSD`, `FRXUSD`). Summing every row gives the **gross** total; excluding `doublecounted` rows gives the **net** total (the DeFiLlama-style headline, which avoids counting the same dollars twice). Show all rows in a table, but compute the headline from the net set.
+- `category` is always `stablecoin` here and `tokenized_fund` on `/tokenized-funds`.
 
 ---
 
 ### GET /api/v1/data/evm/{chainId}/stablecoins/timeseries
 
-Time series for a stablecoin metric.
+Time series for a stablecoin metric. Tokenized funds are left out, also when asked for by `token`: use `/tokenized-funds/timeseries`.
 
 **Path Parameters:**
 | Parameter | Type | Description |
@@ -687,6 +689,16 @@ Time series for a stablecoin metric.
   ]
 }
 ```
+
+---
+
+### GET /api/v1/data/evm/{chainId}/tokenized-funds
+
+Tokenized money-market funds on a chain (BlackRock BUIDL, Franklin Templeton BENJI on the C-Chain). Same response shape and methodology as `/stablecoins` (circulating supply, holders, 24h volume/transfers), with `category: "tokenized_fund"`. Fund shares are not stablecoins, so they are never part of the `/stablecoins` list or its totals.
+
+### GET /api/v1/data/evm/{chainId}/tokenized-funds/timeseries
+
+Time series for a tokenized fund metric. Same parameters and response as `/stablecoins/timeseries`; `token` omitted returns every fund on the chain. The `holders` metric is forward-only, like the stablecoin one.
 
 ---
 
@@ -3083,6 +3095,8 @@ ws.onmessage = (event) => {
 | GET | `/api/v1/data/evm/{chainId}/address/{address}/native` | Native token balance |
 | GET | `/api/v1/data/evm/{chainId}/stablecoins` | List stablecoins (supply, holders, 24h) |
 | GET | `/api/v1/data/evm/{chainId}/stablecoins/timeseries` | Stablecoin metric time series |
+| GET | `/api/v1/data/evm/{chainId}/tokenized-funds` | List tokenized funds (BUIDL, BENJI), same shape as stablecoins |
+| GET | `/api/v1/data/evm/{chainId}/tokenized-funds/timeseries` | Tokenized fund metric time series |
 | GET | `/api/v1/data/evm/{chainId}/lending/positions` | Lending positions by liquidation proximity |
 | GET | `/api/v1/data/evm/{chainId}/lending/positions/{account}` | Lending positions for one account |
 | GET | `/api/v1/data/evm/{chainId}/lending/stats` | Lending open/liquidatable counts |

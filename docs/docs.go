@@ -737,7 +737,7 @@ const docTemplate = `{
         },
         "/api/v1/data/evm/{chainId}/stablecoins": {
             "get": {
-                "description": "Returns curated stablecoins with circulating supply (excludes addresses listed in stablecoin_excluded_holders, e.g. issuer treasuries), holder count, and 24h transfer stats.",
+                "description": "Returns curated stablecoins with circulating supply (excludes addresses listed in stablecoin_excluded_holders, e.g. issuer treasuries), holder count, and 24h transfer stats. Tokenized money-market funds (BUIDL, BENJI) are not stablecoins and are listed on /tokenized-funds instead.",
                 "produces": [
                     "application/json"
                 ],
@@ -793,7 +793,7 @@ const docTemplate = `{
         },
         "/api/v1/data/evm/{chainId}/stablecoins/timeseries": {
             "get": {
-                "description": "Returns time-series data for a stablecoin metric (supply, volume, transfers, holders)",
+                "description": "Returns time-series data for a stablecoin metric (supply, volume, transfers, holders). Tokenized funds (BUIDL, BENJI) are not included, also when asked for by token: use /tokenized-funds/timeseries.",
                 "produces": [
                     "application/json"
                 ],
@@ -826,6 +826,157 @@ const docTemplate = `{
                     {
                         "type": "string",
                         "description": "Token address (0x-prefixed hex). Omit for all stablecoins.",
+                        "name": "token",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Start time (date, RFC3339, or unix timestamp)",
+                        "name": "from",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "End time (date, RFC3339, or unix timestamp)",
+                        "name": "to",
+                        "in": "query"
+                    },
+                    {
+                        "type": "integer",
+                        "default": 365,
+                        "description": "Number of data points per token (max 5000)",
+                        "name": "limit",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/api.StablecoinMetricSeries"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/data/evm/{chainId}/tokenized-funds": {
+            "get": {
+                "description": "Returns tokenized money-market funds (e.g. BlackRock BUIDL, Franklin Templeton BENJI) with circulating supply (excludes addresses listed in stablecoin_excluded_holders), holder count, and 24h transfer stats. Same shape as /stablecoins. These are fund shares, not stablecoins, so they are not part of the /stablecoins list.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Data - EVM"
+                ],
+                "summary": "List tokenized funds for a chain",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Chain ID (e.g. 43114 for Avalanche C-Chain)",
+                        "name": "chainId",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "allOf": [
+                                {
+                                    "$ref": "#/definitions/api.Response"
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "data": {
+                                            "type": "array",
+                                            "items": {
+                                                "$ref": "#/definitions/api.Stablecoin"
+                                            }
+                                        }
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/api.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/v1/data/evm/{chainId}/tokenized-funds/timeseries": {
+            "get": {
+                "description": "Returns time-series data for a tokenized money-market fund metric (supply, volume, transfers, holders). Same parameters and shape as /stablecoins/timeseries.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Data - EVM"
+                ],
+                "summary": "Get tokenized fund metric time series",
+                "parameters": [
+                    {
+                        "type": "integer",
+                        "description": "Chain ID (e.g. 43114 for Avalanche C-Chain)",
+                        "name": "chainId",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Metric name (supply, volume, transfers, holders)",
+                        "name": "metric",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "default": "day",
+                        "description": "Time granularity (hour, day, week, month)",
+                        "name": "granularity",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Token address (0x-prefixed hex). Omit for all tokenized funds.",
                         "name": "token",
                         "in": "query"
                     },
@@ -7244,6 +7395,15 @@ const docTemplate = `{
                 "bridged": {
                     "type": "boolean",
                     "example": false
+                },
+                "category": {
+                    "description": "Category is \"stablecoin\" on /stablecoins and \"tokenized_fund\" on\n/tokenized-funds (money-market fund shares such as BUIDL and BENJI).",
+                    "type": "string",
+                    "enum": [
+                        "stablecoin",
+                        "tokenized_fund"
+                    ],
+                    "example": "stablecoin"
                 },
                 "decimals": {
                     "type": "integer",

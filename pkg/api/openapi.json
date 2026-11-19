@@ -3032,6 +3032,15 @@
             "example": false,
             "type": "boolean"
           },
+          "category": {
+            "description": "Category is \"stablecoin\" on /stablecoins and \"tokenized_fund\" on\n/tokenized-funds (money-market fund shares such as BUIDL and BENJI).",
+            "enum": [
+              "stablecoin",
+              "tokenized_fund"
+            ],
+            "example": "stablecoin",
+            "type": "string"
+          },
           "decimals": {
             "example": 6,
             "type": "integer"
@@ -5186,7 +5195,7 @@
     },
     "/api/v1/data/evm/{chainId}/stablecoins": {
       "get": {
-        "description": "Returns curated stablecoins with circulating supply (excludes addresses listed in stablecoin_excluded_holders, e.g. issuer treasuries), holder count, and 24h transfer stats.",
+        "description": "Returns curated stablecoins with circulating supply (excludes addresses listed in stablecoin_excluded_holders, e.g. issuer treasuries), holder count, and 24h transfer stats. Tokenized money-market funds (BUIDL, BENJI) are not stablecoins and are listed on /tokenized-funds instead.",
         "parameters": [
           {
             "description": "Chain ID (e.g. 43114 for Avalanche C-Chain)",
@@ -5331,7 +5340,7 @@
     },
     "/api/v1/data/evm/{chainId}/stablecoins/timeseries": {
       "get": {
-        "description": "Returns time-series data for a stablecoin metric (supply, volume, transfers, holders)",
+        "description": "Returns time-series data for a stablecoin metric (supply, volume, transfers, holders). Tokenized funds (BUIDL, BENJI) are not included, also when asked for by token: use /tokenized-funds/timeseries.",
         "parameters": [
           {
             "description": "Chain ID (e.g. 43114 for Avalanche C-Chain)",
@@ -5520,6 +5529,347 @@
           }
         },
         "summary": "Get stablecoin metric time series",
+        "tags": [
+          "Data - EVM"
+        ]
+      }
+    },
+    "/api/v1/data/evm/{chainId}/tokenized-funds": {
+      "get": {
+        "description": "Returns tokenized money-market funds (e.g. BlackRock BUIDL, Franklin Templeton BENJI) with circulating supply (excludes addresses listed in stablecoin_excluded_holders), holder count, and 24h transfer stats. Same shape as /stablecoins. These are fund shares, not stablecoins, so they are not part of the /stablecoins list.",
+        "parameters": [
+          {
+            "description": "Chain ID (e.g. 43114 for Avalanche C-Chain)",
+            "in": "path",
+            "name": "chainId",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/api.Response"
+                    },
+                    {
+                      "properties": {
+                        "data": {
+                          "items": {
+                            "$ref": "#/components/schemas/api.Stablecoin"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.ErrorResponse"
+                }
+              }
+            },
+            "description": "Chain not indexed (only 43114 is), or the requested item does not exist",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.ErrorResponse"
+                }
+              }
+            },
+            "description": "Rate limit exceeded",
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              }
+            }
+          }
+        },
+        "summary": "List tokenized funds for a chain",
+        "tags": [
+          "Data - EVM"
+        ]
+      }
+    },
+    "/api/v1/data/evm/{chainId}/tokenized-funds/timeseries": {
+      "get": {
+        "description": "Returns time-series data for a tokenized money-market fund metric (supply, volume, transfers, holders). Same parameters and shape as /stablecoins/timeseries.",
+        "parameters": [
+          {
+            "description": "Chain ID (e.g. 43114 for Avalanche C-Chain)",
+            "in": "path",
+            "name": "chainId",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Metric name (supply, volume, transfers, holders)",
+            "in": "query",
+            "name": "metric",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Time granularity (hour, day, week, month)",
+            "in": "query",
+            "name": "granularity",
+            "schema": {
+              "default": "day",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Token address (0x-prefixed hex). Omit for all tokenized funds.",
+            "in": "query",
+            "name": "token",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Start time (date, RFC3339, or unix timestamp)",
+            "in": "query",
+            "name": "from",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "End time (date, RFC3339, or unix timestamp)",
+            "in": "query",
+            "name": "to",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Number of data points per token (max 5000)",
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 365,
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/api.Response"
+                    },
+                    {
+                      "properties": {
+                        "data": {
+                          "items": {
+                            "$ref": "#/components/schemas/api.StablecoinMetricSeries"
+                          },
+                          "type": "array"
+                        }
+                      },
+                      "type": "object"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "OK",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.ErrorResponse"
+                }
+              }
+            },
+            "description": "Bad Request",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.ErrorResponse"
+                }
+              }
+            },
+            "description": "Chain not indexed (only 43114 is), or the requested item does not exist",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.ErrorResponse"
+                }
+              }
+            },
+            "description": "Rate limit exceeded",
+            "headers": {
+              "Retry-After": {
+                "$ref": "#/components/headers/Retry-After"
+              },
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/api.ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error",
+            "headers": {
+              "X-RateLimit-Limit": {
+                "$ref": "#/components/headers/X-RateLimit-Limit"
+              },
+              "X-RateLimit-Remaining": {
+                "$ref": "#/components/headers/X-RateLimit-Remaining"
+              },
+              "X-RateLimit-Reset": {
+                "$ref": "#/components/headers/X-RateLimit-Reset"
+              }
+            }
+          }
+        },
+        "summary": "Get tokenized fund metric time series",
         "tags": [
           "Data - EVM"
         ]

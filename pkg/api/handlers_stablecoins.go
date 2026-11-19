@@ -27,19 +27,31 @@ type Stablecoin struct {
 	// Doublecounted marks stablecoins whose reserves are themselves other counted
 	// stablecoins (e.g. avUSD, UTY, reUSD, FRXUSD). Sum all rows for the GROSS total;
 	// exclude doublecounted rows for the NET total (the DeFiLlama-style headline).
-	Doublecounted bool   `json:"doublecounted" example:"false"`
-	Supply        string `json:"supply" example:"459300000000000"` // token base units, circulating
-	Holders       uint64 `json:"holders" example:"128453"`
-	Volume24h     string `json:"volume_24h" example:"32100000000000"` // token base units
-	Transfers24h  uint64 `json:"transfers_24h" example:"58210"`
+	Doublecounted bool `json:"doublecounted" example:"false"`
+	// Category is "stablecoin" on /stablecoins and "tokenized_fund" on
+	// /tokenized-funds (money-market fund shares such as BUIDL and BENJI).
+	Category     string `json:"category" example:"stablecoin" enums:"stablecoin,tokenized_fund"`
+	Supply       string `json:"supply" example:"459300000000000"` // token base units, circulating
+	Holders      uint64 `json:"holders" example:"128453"`
+	Volume24h    string `json:"volume_24h" example:"32100000000000"` // token base units
+	Transfers24h uint64 `json:"transfers_24h" example:"58210"`
 }
+
+// Registry categories. Tokenized money-market funds (BUIDL, BENJI) share the
+// stablecoin pipeline but are not stablecoins, so they are served apart and
+// never counted in stablecoin totals.
+const (
+	categoryStablecoin    = "stablecoin"
+	categoryTokenizedFund = "tokenized_fund"
+)
 
 // handleListStablecoins returns curated stablecoins for a chain with circulating supply,
 // holder count, and last-24h transfer volume / count. Volume leaves out issuer
 // operations: mints, burns, and transfers to or from an excluded issuer treasury.
+// Tokenized funds are left out: they are listed on /tokenized-funds.
 //
 // @Summary List stablecoins for a chain
-// @Description Returns curated stablecoins with circulating supply (excludes addresses listed in stablecoin_excluded_holders, e.g. issuer treasuries), holder count, and 24h transfer stats.
+// @Description Returns curated stablecoins with circulating supply (excludes addresses listed in stablecoin_excluded_holders, e.g. issuer treasuries), holder count, and 24h transfer stats. Tokenized money-market funds (BUIDL, BENJI) are not stablecoins and are listed on /tokenized-funds instead.
 // @Tags Data - EVM
 // @Produce json
 // @Param chainId path int true "Chain ID (e.g. 43114 for Avalanche C-Chain)"
@@ -48,26 +60,61 @@ type Stablecoin struct {
 // @Failure 500 {object} ErrorResponse
 // @Router /api/v1/data/evm/{chainId}/stablecoins [get]
 func (s *Server) handleListStablecoins(w http.ResponseWriter, r *http.Request) {
+	s.listRegistryCategory(w, r, categoryStablecoin)
+}
+
+// handleListTokenizedFunds returns the tokenized money-market funds in the
+// stablecoin registry, with the same fields and methodology as /stablecoins.
+//
+// @Summary List tokenized funds for a chain
+// @Description Returns tokenized money-market funds (e.g. BlackRock BUIDL, Franklin Templeton BENJI) with circulating supply (excludes addresses listed in stablecoin_excluded_holders), holder count, and 24h transfer stats. Same shape as /stablecoins. These are fund shares, not stablecoins, so they are not part of the /stablecoins list.
+// @Tags Data - EVM
+// @Produce json
+// @Param chainId path int true "Chain ID (e.g. 43114 for Avalanche C-Chain)"
+// @Success 200 {object} Response{data=[]Stablecoin}
+// @Failure 400 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/data/evm/{chainId}/tokenized-funds [get]
+func (s *Server) handleListTokenizedFunds(w http.ResponseWriter, r *http.Request) {
+	s.listRegistryCategory(w, r, categoryTokenizedFund)
+}
+
+// listRegistryCategory serves one category of the cached registry list. The
+// cache holds every registry token, so both endpoints share one ~8s load.
+func (s *Server) listRegistryCategory(w http.ResponseWriter, r *http.Request, category string) {
 	chainID, err := getChainIDFromPath(r)
 	if err != nil {
 		writeAPIError(w, http.StatusBadRequest, ErrInvalidParameter, "Invalid chain_id")
 		return
 	}
 
-	out, err := s.stablecoins.get(r.Context(), chainID, s.loadStablecoins)
+	all, err := s.stablecoins.get(r.Context(), chainID, s.loadStablecoins)
 	if err != nil {
 		writeInternalError(w, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, Response{Data: out})
+	writeJSON(w, http.StatusOK, Response{Data: filterCategory(all, category)})
 }
 
-// loadStablecoins runs the registry, supply and 24h volume queries. Together
+// filterCategory returns the entries of one category, keeping their order. It
+// never returns nil, so an empty category encodes as [].
+func filterCategory(all []Stablecoin, category string) []Stablecoin {
+	out := make([]Stablecoin, 0, len(all))
+	for _, c := range all {
+		if c.Category == category {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// loadStablecoins runs the registry, supply and 24h volume queries for every
+// registry token, of every category. Together
 // they take ~8s (measured 2026-10-26), so the handler serves them through
 // stablecoinCache rather than per request.
 func (s *Server) loadStablecoins(ctx context.Context, chainID uint32) ([]Stablecoin, error) {
 	registryQuery := `
-		SELECT token, symbol, name, decimals, peg, issuer, bridged, doublecounted
+		SELECT token, symbol, name, decimals, peg, issuer, bridged, doublecounted, category
 		FROM stablecoins FINAL
 		WHERE chain_id = ?
 	`
@@ -85,7 +132,7 @@ func (s *Server) loadStablecoins(ctx context.Context, chainID uint32) ([]Stablec
 	var ordered []*entry
 	for rows.Next() {
 		var e entry
-		if err := rows.Scan(&e.tokenBytes, &e.Symbol, &e.Name, &e.Decimals, &e.Peg, &e.Issuer, &e.Bridged, &e.Doublecounted); err != nil {
+		if err := rows.Scan(&e.tokenBytes, &e.Symbol, &e.Name, &e.Decimals, &e.Peg, &e.Issuer, &e.Bridged, &e.Doublecounted, &e.Category); err != nil {
 			return nil, err
 		}
 		e.Token = "0x" + hex.EncodeToString(e.tokenBytes)
@@ -220,9 +267,10 @@ type StablecoinMetricSeries struct {
 }
 
 // handleStablecoinTimeseries returns time-series data for stablecoin metrics.
+// Tokenized funds are left out: their series are on /tokenized-funds/timeseries.
 //
 // @Summary Get stablecoin metric time series
-// @Description Returns time-series data for a stablecoin metric (supply, volume, transfers, holders)
+// @Description Returns time-series data for a stablecoin metric (supply, volume, transfers, holders). Tokenized funds (BUIDL, BENJI) are not included, also when asked for by token: use /tokenized-funds/timeseries.
 // @Tags Data - EVM
 // @Produce json
 // @Param chainId path int true "Chain ID (e.g. 43114 for Avalanche C-Chain)"
@@ -237,6 +285,33 @@ type StablecoinMetricSeries struct {
 // @Failure 500 {object} ErrorResponse
 // @Router /api/v1/data/evm/{chainId}/stablecoins/timeseries [get]
 func (s *Server) handleStablecoinTimeseries(w http.ResponseWriter, r *http.Request) {
+	s.registryTimeseries(w, r, categoryStablecoin)
+}
+
+// handleTokenizedFundTimeseries returns time-series data for tokenized funds.
+//
+// @Summary Get tokenized fund metric time series
+// @Description Returns time-series data for a tokenized money-market fund metric (supply, volume, transfers, holders). Same parameters and shape as /stablecoins/timeseries.
+// @Tags Data - EVM
+// @Produce json
+// @Param chainId path int true "Chain ID (e.g. 43114 for Avalanche C-Chain)"
+// @Param metric query string true "Metric name (supply, volume, transfers, holders)"
+// @Param granularity query string false "Time granularity (hour, day, week, month)" default(day)
+// @Param token query string false "Token address (0x-prefixed hex). Omit for all tokenized funds."
+// @Param from query string false "Start time (date, RFC3339, or unix timestamp)"
+// @Param to query string false "End time (date, RFC3339, or unix timestamp)"
+// @Param limit query int false "Number of data points per token (max 5000)" default(365)
+// @Success 200 {object} Response{data=[]StablecoinMetricSeries}
+// @Failure 400 {object} ErrorResponse
+// @Failure 500 {object} ErrorResponse
+// @Router /api/v1/data/evm/{chainId}/tokenized-funds/timeseries [get]
+func (s *Server) handleTokenizedFundTimeseries(w http.ResponseWriter, r *http.Request) {
+	s.registryTimeseries(w, r, categoryTokenizedFund)
+}
+
+// registryTimeseries serves stablecoin_metrics series for the registry tokens
+// of one category.
+func (s *Server) registryTimeseries(w http.ResponseWriter, r *http.Request, category string) {
 	ctx := r.Context()
 
 	chainID, err := getChainIDFromPath(r)
@@ -303,6 +378,9 @@ func (s *Server) handleStablecoinTimeseries(w http.ResponseWriter, r *http.Reque
 		tokenFilter = " AND sm.token = ?"
 		tokenArg = append(tokenArg, string(tokenBytes))
 	}
+	// Scope to the category's registry tokens. stablecoin_metrics holds every
+	// registry token, funds included.
+	const categoryFilter = " AND sm.token IN (SELECT token FROM stablecoins FINAL WHERE chain_id = ? AND category = ?)"
 
 	var query string
 	var args []interface{}
@@ -320,6 +398,8 @@ func (s *Server) handleStablecoinTimeseries(w http.ResponseWriter, r *http.Reque
 		args = append(args, chainID, granularity)
 		inner += tokenFilter
 		args = append(args, tokenArg...)
+		inner += categoryFilter
+		args = append(args, chainID, category)
 
 		query = "SELECT token, period, value FROM (" + inner + ") WHERE 1=1"
 		if !fromTime.IsZero() {
@@ -346,6 +426,8 @@ func (s *Server) handleStablecoinTimeseries(w http.ResponseWriter, r *http.Reque
 		args = append(args, chainID, dbMetric, granularity)
 		query += tokenFilter
 		args = append(args, tokenArg...)
+		query += categoryFilter
+		args = append(args, chainID, category)
 
 		if !fromTime.IsZero() {
 			query += " AND sm.period >= ?"

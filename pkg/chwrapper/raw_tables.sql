@@ -422,10 +422,15 @@ CREATE TABLE IF NOT EXISTS stablecoins (
     -- UTY, reUSD, FRXUSD), so they inflate a naive sum. Excluded from the NET total;
     -- still listed (GROSS). Frontend sources the exclusion set from this flag.
     doublecounted Bool DEFAULT false,
+    -- category: 'stablecoin' or 'tokenized_fund' (money-market fund shares such as
+    -- BUIDL and BENJI). Funds are tracked like stablecoins but are served only by
+    -- /tokenized-funds and stay out of the /stablecoins list and timeseries.
+    category LowCardinality(String) DEFAULT 'stablecoin',
     added_at DateTime64(3, 'UTC') DEFAULT now64(3)
 ) ENGINE = ReplacingMergeTree(added_at)
 ORDER BY (chain_id, token);
 ALTER TABLE stablecoins ADD COLUMN IF NOT EXISTS doublecounted Bool DEFAULT false;
+ALTER TABLE stablecoins ADD COLUMN IF NOT EXISTS category LowCardinality(String) DEFAULT 'stablecoin' AFTER doublecounted;
 
 -- Stablecoin excluded holders - wallets to subtract when computing circulating supply.
 -- Used for treasury / issuance / bridge contracts that hold tokens which haven't been

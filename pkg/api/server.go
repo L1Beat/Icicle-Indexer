@@ -179,6 +179,8 @@ func (s *Server) registerRoutes(cfg Config) {
 	// EVM Stablecoins
 	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/stablecoins", s.requireIndexedChain(s.handleListStablecoins))
 	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/stablecoins/timeseries", s.requireIndexedChain(s.handleStablecoinTimeseries))
+	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/tokenized-funds", s.requireIndexedChain(s.handleListTokenizedFunds))
+	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/tokenized-funds/timeseries", s.requireIndexedChain(s.handleTokenizedFundTimeseries))
 
 	// EVM Lending liquidation-risk feed
 	s.router.HandleFunc("GET /api/v1/data/evm/{chainId}/lending/positions", s.requireIndexedChain(s.handleLendingPositions))
