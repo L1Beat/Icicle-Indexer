@@ -44,7 +44,8 @@ type Stablecoin struct {
 	// tokenized_fund_prices. Served only on /tokenized-funds.
 	navPrice    *float64
 	navSource   string
-	navSampleAt time.Time
+	navPriceAt  time.Time // when the NAV was set
+	navSampleAt time.Time // when it was last read
 }
 
 // TokenizedFund is a /tokenized-funds row: the /stablecoins fields plus a
@@ -54,15 +55,20 @@ type Stablecoin struct {
 // the price fields are null.
 type TokenizedFund struct {
 	Stablecoin
-	PriceUSD    *float64   `json:"price_usd" example:"1.065417"`                       // USD per whole share, null when unknown
-	ValueUSD    *float64   `json:"value_usd" example:"26483900.5"`                     // supply in whole shares times price_usd, null when unknown
-	PriceSource *string    `json:"price_source" example:"erc4626" enums:"peg,erc4626"` // peg: $1 per share. erc4626: the vault's convertToAssets
-	PriceAt     *time.Time `json:"price_at"`                                           // when an on-chain price was read, null for peg prices
+	PriceUSD    *float64   `json:"price_usd" example:"1.065417"`                               // USD per whole share, null when unknown
+	ValueUSD    *float64   `json:"value_usd" example:"26483900.5"`                             // supply in whole shares times price_usd, null when unknown
+	PriceSource *string    `json:"price_source" example:"erc4626" enums:"peg,erc4626,erc7540"` // peg: $1 per share. erc4626: the fund vault's convertToAssets. erc7540: convertToAssets of the fund's ERC-7540 vault (Centrifuge, Nest)
+	PriceAt     *time.Time `json:"price_at"`                                                   // when the NAV was set (Centrifuge reports it), else when it was read. Null for peg prices
 }
 
-// fundPriceMaxAge is how old an on-chain fund price may be before it is
-// dropped. The snapshotter refreshes it every few minutes.
-const fundPriceMaxAge = 24 * time.Hour
+// An on-chain fund price is dropped when it was last read more than
+// fundPriceMaxReadAge ago (the snapshotter reads every few minutes, so the
+// reader is broken) or the NAV itself is older than fundNAVMaxAge (issuers
+// update daily or on business days, so the fund stopped updating).
+const (
+	fundPriceMaxReadAge = 24 * time.Hour
+	fundNAVMaxAge       = 7 * 24 * time.Hour
+)
 
 // Registry categories. Tokenized money-market funds (BUIDL, BENJI) share the
 // stablecoin pipeline but are not stablecoins, so they are served apart and
@@ -98,7 +104,7 @@ func (s *Server) handleListStablecoins(w http.ResponseWriter, r *http.Request) {
 // stablecoin registry, with the same fields and methodology as /stablecoins.
 //
 // @Summary List tokenized funds for a chain
-// @Description Returns tokenized money-market funds (e.g. BlackRock BUIDL, Franklin Templeton BENJI) with circulating supply (excludes addresses listed in stablecoin_excluded_holders), holder count, and 24h transfer stats. Same shape as /stablecoins. These are fund shares, not stablecoins, so they are not part of the /stablecoins list. supply is in shares. price_usd and value_usd: peg USD funds are priced at $1 per share (price_source peg). Peg NAV funds have a floating share price, priced only when the contract reports it on-chain (ERC-4626 vaults over a USD stablecoin, price_source erc4626, read every few minutes); otherwise the price fields are null. Never value a NAV fund at $1.
+// @Description Returns tokenized money-market funds (e.g. BlackRock BUIDL, Franklin Templeton BENJI) with circulating supply (excludes addresses listed in stablecoin_excluded_holders), holder count, and 24h transfer stats. Same shape as /stablecoins. These are fund shares, not stablecoins, so they are not part of the /stablecoins list. supply is in shares. price_usd and value_usd: peg USD funds are priced at $1 per share (price_source peg). Peg NAV funds have a floating share price, priced only when it is reported on-chain in a USD stablecoin, read every few minutes: the fund is an ERC-4626 vault (price_source erc4626), or its share token has an ERC-7540 vault such as Centrifuge's (price_source erc7540). Otherwise the price fields are null. A price whose NAV is more than 7 days old is null. Never value a NAV fund at $1.
 // @Tags Data - EVM
 // @Produce json
 // @Param chainId path int true "Chain ID (e.g. 43114 for Avalanche C-Chain)"
@@ -128,9 +134,9 @@ func priceFund(f Stablecoin, now time.Time) TokenizedFund {
 		price = 1
 		src := "peg"
 		out.PriceSource = &src
-	case f.navPrice != nil && now.Sub(f.navSampleAt) <= fundPriceMaxAge:
+	case f.navPrice != nil && now.Sub(f.navSampleAt) <= fundPriceMaxReadAge && now.Sub(f.navPriceAt) <= fundNAVMaxAge:
 		price = *f.navPrice
-		src, at := f.navSource, f.navSampleAt
+		src, at := f.navSource, f.navPriceAt
 		out.PriceSource, out.PriceAt = &src, &at
 	default:
 		return out
@@ -330,7 +336,7 @@ func (s *Server) loadStablecoins(ctx context.Context, chainID uint32) ([]Stablec
 // byToken that has one.
 func (s *Server) loadFundPrices(ctx context.Context, chainID uint32, byToken map[string]*registryEntry) error {
 	rows, err := s.conn.Query(ctx, `
-		SELECT token, price_usd, source, sampled_at
+		SELECT token, price_usd, source, price_at, sampled_at
 		FROM tokenized_fund_prices FINAL
 		WHERE chain_id = ?
 	`, chainID)
@@ -343,14 +349,15 @@ func (s *Server) loadFundPrices(ctx context.Context, chainID uint32, byToken map
 			tokenBytes []byte
 			price      float64
 			source     string
+			priceAt    time.Time
 			sampledAt  time.Time
 		)
-		if err := rows.Scan(&tokenBytes, &price, &source, &sampledAt); err != nil {
+		if err := rows.Scan(&tokenBytes, &price, &source, &priceAt, &sampledAt); err != nil {
 			return err
 		}
 		if e, ok := byToken["0x"+hex.EncodeToString(tokenBytes)]; ok {
 			p := price
-			e.navPrice, e.navSource, e.navSampleAt = &p, source, sampledAt
+			e.navPrice, e.navSource, e.navPriceAt, e.navSampleAt = &p, source, priceAt, sampledAt
 		}
 	}
 	return rows.Err()

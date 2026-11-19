@@ -90,7 +90,7 @@ func TestPriceFund(t *testing.T) {
 	assert.Nil(t, got.PriceAt)
 
 	// Floating NAV with a fresh on-chain price.
-	f := Stablecoin{Peg: "NAV", Decimals: 6, Supply: "10000000", navPrice: &fresh, navSource: "erc4626", navSampleAt: now.Add(-5 * time.Minute)}
+	f := Stablecoin{Peg: "NAV", Decimals: 6, Supply: "10000000", navPrice: &fresh, navSource: "erc4626", navPriceAt: now.Add(-5 * time.Minute), navSampleAt: now.Add(-5 * time.Minute)}
 	got = priceFund(f, now)
 	require.NotNil(t, got.PriceUSD)
 	assert.Equal(t, fresh, *got.PriceUSD)
@@ -98,8 +98,20 @@ func TestPriceFund(t *testing.T) {
 	assert.Equal(t, "erc4626", *got.PriceSource)
 	require.NotNil(t, got.PriceAt)
 
-	// A stale price is dropped rather than shown as current.
-	f.navSampleAt = now.Add(-25 * time.Hour)
+	// A Centrifuge NAV set a day ago, read just now, is still current, and
+	// price_at is the NAV time.
+	f.navPriceAt = now.Add(-31 * time.Hour)
+	got = priceFund(f, now)
+	require.NotNil(t, got.PriceUSD)
+	assert.Equal(t, f.navPriceAt, *got.PriceAt)
+
+	// A NAV older than 7 days is dropped: the fund stopped updating.
+	f.navPriceAt = now.Add(-8 * 24 * time.Hour)
+	got = priceFund(f, now)
+	assert.Nil(t, got.PriceUSD)
+
+	// A price not read for over 24h is dropped: the reader is broken.
+	f.navPriceAt, f.navSampleAt = now.Add(-25*time.Hour), now.Add(-25*time.Hour)
 	got = priceFund(f, now)
 	assert.Nil(t, got.PriceUSD)
 	assert.Nil(t, got.ValueUSD)

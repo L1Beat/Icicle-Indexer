@@ -1,6 +1,7 @@
 package pchainsyncer
 
 import (
+	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
@@ -18,9 +19,22 @@ import (
 const cChainID = 43114
 
 var (
-	selAsset           = []byte{0x38, 0xd5, 0x2e, 0x0f} // asset()
-	selConvertToAssets = []byte{0x07, 0xa2, 0xd1, 0x3a} // convertToAssets(uint256)
+	selAsset            = []byte{0x38, 0xd5, 0x2e, 0x0f} // asset()
+	selConvertToAssets  = []byte{0x07, 0xa2, 0xd1, 0x3a} // convertToAssets(uint256)
+	selVault            = []byte{0xf8, 0x15, 0xc0, 0x3d} // vault(address), ERC-7575 share token
+	selShare            = []byte{0xa8, 0xd5, 0xfd, 0x65} // share(), ERC-7575 vault
+	selPriceLastUpdated = []byte{0x52, 0xaa, 0xea, 0xd8} // priceLastUpdated(), Centrifuge vaults
 )
+
+// preferredUSD are the USD stablecoins tried first, in order, when asking an
+// ERC-7575 share token for its vault: USDC, USDT, USDC.e, USDT.e. Fund vaults
+// settle in these, so the rest of the registry is not tried.
+var preferredUSD = []string{
+	"b97ef9ef8734c71904d8002f8b6bc66dd9c48a6e",
+	"9702230a8ea53601f5cd2dc00fdbc13d4df4a8c7",
+	"a7d7079b0fead91f3e65f86e8915cb59c1a4c664",
+	"c7198437980c041c805a1edcba50c1ce5db95118",
+}
 
 // registryToken is a stablecoin-registry token with its decimals.
 type registryToken struct {
@@ -28,11 +42,18 @@ type registryToken struct {
 	decimals uint8
 }
 
+// fundPrice is one on-chain share price.
+type fundPrice struct {
+	usd     float64
+	source  string    // erc4626 or erc7540
+	priceAt time.Time // when the NAV was set, if the vault says, else the read time
+}
+
 // SnapshotFundPrices writes tokenized_fund_prices rows for the floating-NAV
-// tokenized funds that price themselves on-chain: ERC-4626 vaults whose
-// underlying asset is a registry USD stablecoin, priced at convertToAssets of
-// one whole share. Funds that are not such vaults get no row, and a fund whose
-// read fails keeps its previous row.
+// tokenized funds that price themselves on-chain in a registry USD stablecoin:
+// an ERC-4626 vault share, or an ERC-7575 share token whose ERC-7540 vault
+// (Centrifuge, Nest) reports convertToAssets. Funds with neither get no row,
+// and a fund whose read fails keeps its previous row.
 func SnapshotFundPrices(ctx context.Context, conn clickhouse.Conn, caller lendingmarkets.Caller) error {
 	funds, err := queryRegistry(ctx, conn, "category = 'tokenized_fund' AND peg = 'NAV'")
 	if err != nil {
@@ -55,7 +76,7 @@ func SnapshotFundPrices(ctx context.Context, conn clickhouse.Conn, caller lendin
 	var errs []error
 	now := time.Now().UTC()
 	for _, f := range funds {
-		price, ok, err := readVaultPrice(ctx, caller, f, usd)
+		p, ok, err := readFundPrice(ctx, caller, f, usd, now)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("fund 0x%x: %w", f.token, err))
 			continue
@@ -63,14 +84,14 @@ func SnapshotFundPrices(ctx context.Context, conn clickhouse.Conn, caller lendin
 		if !ok {
 			continue
 		}
-		tuples = append(tuples, "(?, ?, ?, ?, ?)")
-		args = append(args, uint32(cChainID), string(f.token), price, "erc4626", now)
+		tuples = append(tuples, "(?, ?, ?, ?, ?, ?)")
+		args = append(args, uint32(cChainID), string(f.token), p.usd, p.source, p.priceAt, now)
 	}
 	if len(tuples) > 0 {
 		wctx, cancel := chwrapper.WriteContext(ctx)
 		defer cancel()
 		if err := conn.Exec(wctx, `
-			INSERT INTO tokenized_fund_prices (chain_id, token, price_usd, source, sampled_at)
+			INSERT INTO tokenized_fund_prices (chain_id, token, price_usd, source, price_at, sampled_at)
 			VALUES `+strings.Join(tuples, ", "), args...); err != nil {
 			return fmt.Errorf("failed to insert fund prices: %w", err)
 		}
@@ -97,43 +118,105 @@ func queryRegistry(ctx context.Context, conn clickhouse.Conn, where string) ([]r
 	return out, rows.Err()
 }
 
-// readVaultPrice returns the USD price of one whole share of an ERC-4626 vault
-// over a USD stablecoin in usd (token bytes -> decimals). ok is false, with no
-// error, when the fund is not such a vault: asset() reverts or is not a USD
-// stablecoin.
-func readVaultPrice(ctx context.Context, c lendingmarkets.Caller, f registryToken, usd map[string]uint8) (float64, bool, error) {
-	to := "0x" + hex.EncodeToString(f.token)
-	out, err := c.Call(ctx, to, selAsset)
-	if err != nil {
-		if strings.Contains(strings.ToLower(err.Error()), "revert") {
-			return 0, false, nil
-		}
-		return 0, false, err
-	}
+func isRevert(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "revert")
+}
+
+// word returns the address in a 32-byte ABI word, or nil.
+func word(out []byte) []byte {
 	if len(out) != 32 {
-		return 0, false, nil
+		return nil
 	}
-	assetDec, isUSD := usd[string(out[12:32])]
-	if !isUSD {
-		return 0, false, nil
+	return out[12:32]
+}
+
+func addrArg(a []byte) []byte { return append(make([]byte, 12), a...) }
+
+// readFundPrice returns the USD price of one whole share of fund f. ok is
+// false, with no error, when the fund has no on-chain price in a USD
+// stablecoin of usd (token bytes -> decimals).
+func readFundPrice(ctx context.Context, c lendingmarkets.Caller, f registryToken, usd map[string]uint8, now time.Time) (fundPrice, bool, error) {
+	fund := "0x" + hex.EncodeToString(f.token)
+
+	// ERC-4626: the fund token is the vault.
+	out, err := c.Call(ctx, fund, selAsset)
+	if err != nil && !isRevert(err) {
+		return fundPrice{}, false, err
+	}
+	if a := word(out); err == nil && a != nil {
+		if dec, isUSD := usd[string(a)]; isUSD {
+			v, err := convertShare(ctx, c, fund, f.decimals, dec)
+			if err != nil {
+				return fundPrice{}, false, err
+			}
+			return fundPrice{usd: v, source: "erc4626", priceAt: now}, true, nil
+		}
+		return fundPrice{}, false, nil
 	}
 
-	oneShare := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(f.decimals)), nil)
+	// ERC-7575: the fund token is a share token with one ERC-7540 vault per
+	// settlement asset.
+	for _, h := range preferredUSD {
+		stable, _ := hex.DecodeString(h)
+		dec, inRegistry := usd[string(stable)]
+		if !inRegistry {
+			continue
+		}
+		out, err := c.Call(ctx, fund, append(append([]byte{}, selVault...), addrArg(stable)...))
+		if isRevert(err) {
+			return fundPrice{}, false, nil // not an ERC-7575 share token
+		}
+		if err != nil {
+			return fundPrice{}, false, err
+		}
+		vaultAddr := word(out)
+		if vaultAddr == nil || bytes.Equal(vaultAddr, make([]byte, 20)) {
+			continue
+		}
+		vault := "0x" + hex.EncodeToString(vaultAddr)
+		// The vault must point back at this fund and this stablecoin.
+		share, err := c.Call(ctx, vault, selShare)
+		if err != nil || !bytes.Equal(word(share), f.token) {
+			return fundPrice{}, false, fmt.Errorf("vault %s does not hold this share", vault)
+		}
+		asset, err := c.Call(ctx, vault, selAsset)
+		if err != nil || !bytes.Equal(word(asset), stable) {
+			return fundPrice{}, false, fmt.Errorf("vault %s does not settle in 0x%s", vault, h)
+		}
+		v, err := convertShare(ctx, c, vault, f.decimals, dec)
+		if err != nil {
+			return fundPrice{}, false, err
+		}
+		p := fundPrice{usd: v, source: "erc7540", priceAt: now}
+		// Centrifuge vaults say when the NAV was last set.
+		if out, err := c.Call(ctx, vault, selPriceLastUpdated); err == nil && len(out) == 32 {
+			if ts := new(big.Int).SetBytes(out); ts.Sign() > 0 && ts.IsInt64() && ts.Int64() <= now.Unix() {
+				p.priceAt = time.Unix(ts.Int64(), 0).UTC()
+			}
+		}
+		return p, true, nil
+	}
+	return fundPrice{}, false, nil
+}
+
+// convertShare reads convertToAssets(one whole share) from vault and scales it
+// by the asset's decimals.
+func convertShare(ctx context.Context, c lendingmarkets.Caller, vault string, shareDec, assetDec uint8) (float64, error) {
+	oneShare := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(shareDec)), nil)
 	arg := make([]byte, 32)
 	oneShare.FillBytes(arg)
-	out, err = c.Call(ctx, to, append(append([]byte{}, selConvertToAssets...), arg...))
+	out, err := c.Call(ctx, vault, append(append([]byte{}, selConvertToAssets...), arg...))
 	if err != nil {
-		return 0, false, err
+		return 0, err
 	}
 	if len(out) != 32 {
-		return 0, false, fmt.Errorf("convertToAssets returned %d bytes", len(out))
+		return 0, fmt.Errorf("convertToAssets returned %d bytes", len(out))
 	}
-	assets := new(big.Int).SetBytes(out)
 	unit := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(assetDec)), nil)
-	price, _ := new(big.Float).Quo(new(big.Float).SetInt(assets), new(big.Float).SetInt(unit)).Float64()
+	price, _ := new(big.Float).Quo(new(big.Float).SetInt(new(big.Int).SetBytes(out)), new(big.Float).SetInt(unit)).Float64()
 	// A share worth nothing or a million dollars is a broken read, not a NAV.
 	if price <= 0 || price > 1e6 {
-		return 0, false, fmt.Errorf("implausible share price %v", price)
+		return 0, fmt.Errorf("implausible share price %v", price)
 	}
-	return price, true, nil
+	return price, nil
 }

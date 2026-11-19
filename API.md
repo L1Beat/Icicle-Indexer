@@ -698,15 +698,18 @@ Tokenized funds on a chain. On the C-Chain: BlackRock BUIDL, Franklin Templeton 
 
 - `supply` and `volume_24h` are in fund shares (base units, scale by `decimals`).
 - `peg: "USD"` is a $1-per-share money-market fund, priced at 1 (`price_source: "peg"`).
-- `peg: "NAV"` is a floating share price. It is priced only when the contract reports it on-chain: ERC-4626 vaults over a USD stablecoin (XDFIS-DeFi-2, hyTB), read every ~5 minutes by the indexer (`price_source: "erc4626"`, `price_at` is the read time). Other NAV funds (JAAA, ACRED, HINC, AoABTd, nOPAL) have no on-chain price and return `null`: do **not** value them at $1.
+- `peg: "NAV"` is a floating share price, priced only when it is reported on-chain in a USD stablecoin, read every ~5 minutes by the indexer:
+  - `price_source: "erc4626"`: the fund token is an ERC-4626 vault (XDFIS-DeFi-2, hyTB).
+  - `price_source: "erc7540"`: the fund's share token names an ERC-7540 vault (ERC-7575 `vault(USDC)`) whose `convertToAssets` gives the price. JAAA (Centrifuge) and nOPAL (Nest).
+  - ACRED, HINC and AoABTd have no on-chain price and return `null`: do **not** value them at $1.
 - Extra fields on top of the `/stablecoins` shape:
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `price_usd` | number \| null | USD per whole share |
 | `value_usd` | number \| null | `supply / 10^decimals × price_usd` |
-| `price_source` | string \| null | `peg` or `erc4626` |
-| `price_at` | string \| null | RFC3339 time of the on-chain read, null for `peg`. Prices older than 24h are dropped (null) |
+| `price_source` | string \| null | `peg`, `erc4626` or `erc7540` |
+| `price_at` | string \| null | RFC3339 time the NAV was set (Centrifuge vaults report it, typically daily), else the time of the on-chain read. Null for `peg`. A price is dropped (null) when its NAV is over 7 days old or it was not read for 24h |
 
 ### GET /api/v1/data/evm/{chainId}/tokenized-funds/timeseries
 

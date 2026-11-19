@@ -3510,15 +3510,16 @@
             "type": "string"
           },
           "price_at": {
-            "description": "when an on-chain price was read, null for peg prices",
+            "description": "when the NAV was set (Centrifuge reports it), else when it was read. Null for peg prices",
             "nullable": true,
             "type": "string"
           },
           "price_source": {
-            "description": "peg: $1 per share. erc4626: the vault's convertToAssets",
+            "description": "peg: $1 per share. erc4626: the fund vault's convertToAssets. erc7540: convertToAssets of the fund's ERC-7540 vault (Centrifuge, Nest)",
             "enum": [
               "peg",
-              "erc4626"
+              "erc4626",
+              "erc7540"
             ],
             "example": "erc4626",
             "nullable": true,
@@ -5630,7 +5631,7 @@
     },
     "/api/v1/data/evm/{chainId}/tokenized-funds": {
       "get": {
-        "description": "Returns tokenized money-market funds (e.g. BlackRock BUIDL, Franklin Templeton BENJI) with circulating supply (excludes addresses listed in stablecoin_excluded_holders), holder count, and 24h transfer stats. Same shape as /stablecoins. These are fund shares, not stablecoins, so they are not part of the /stablecoins list. supply is in shares. price_usd and value_usd: peg USD funds are priced at $1 per share (price_source peg). Peg NAV funds have a floating share price, priced only when the contract reports it on-chain (ERC-4626 vaults over a USD stablecoin, price_source erc4626, read every few minutes); otherwise the price fields are null. Never value a NAV fund at $1.",
+        "description": "Returns tokenized money-market funds (e.g. BlackRock BUIDL, Franklin Templeton BENJI) with circulating supply (excludes addresses listed in stablecoin_excluded_holders), holder count, and 24h transfer stats. Same shape as /stablecoins. These are fund shares, not stablecoins, so they are not part of the /stablecoins list. supply is in shares. price_usd and value_usd: peg USD funds are priced at $1 per share (price_source peg). Peg NAV funds have a floating share price, priced only when it is reported on-chain in a USD stablecoin, read every few minutes: the fund is an ERC-4626 vault (price_source erc4626), or its share token has an ERC-7540 vault such as Centrifuge's (price_source erc7540). Otherwise the price fields are null. A price whose NAV is more than 7 days old is null. Never value a NAV fund at $1.",
         "parameters": [
           {
             "description": "Chain ID (e.g. 43114 for Avalanche C-Chain)",

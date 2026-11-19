@@ -433,17 +433,21 @@ ALTER TABLE stablecoins ADD COLUMN IF NOT EXISTS doublecounted Bool DEFAULT fals
 ALTER TABLE stablecoins ADD COLUMN IF NOT EXISTS category LowCardinality(String) DEFAULT 'stablecoin' AFTER doublecounted;
 
 -- Tokenized fund share prices read on-chain by the C-Chain snapshotter (every
--- cycle). Only floating-NAV funds (stablecoins.peg = 'NAV') that are ERC-4626
--- vaults over a registry USD stablecoin get a row: price = convertToAssets(1 share).
--- The latest sample per token wins. Funds with no on-chain price have no row.
+-- cycle). Only floating-NAV funds (stablecoins.peg = 'NAV') priced in a registry
+-- USD stablecoin get a row: price = convertToAssets(1 share) of the fund itself
+-- (ERC-4626) or of its ERC-7540 vault found through the share token (ERC-7575,
+-- e.g. Centrifuge). The latest sample per token wins. Funds with no on-chain
+-- price have no row.
 CREATE TABLE IF NOT EXISTS tokenized_fund_prices (
     chain_id UInt32,
     token FixedString(20),
     price_usd Float64,  -- USD per whole share
-    source LowCardinality(String),  -- erc4626
+    source LowCardinality(String),  -- erc4626 or erc7540
+    price_at DateTime64(3, 'UTC') DEFAULT sampled_at,  -- when the NAV was set (Centrifuge priceLastUpdated), else the read time
     sampled_at DateTime64(3, 'UTC') DEFAULT now64(3)
 ) ENGINE = ReplacingMergeTree(sampled_at)
 ORDER BY (chain_id, token);
+ALTER TABLE tokenized_fund_prices ADD COLUMN IF NOT EXISTS price_at DateTime64(3, 'UTC') DEFAULT sampled_at AFTER source;
 
 -- Stablecoin excluded holders - wallets to subtract when computing circulating supply.
 -- Used for treasury / issuance / bridge contracts that hold tokens which haven't been
