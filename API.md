@@ -694,13 +694,13 @@ Time series for a stablecoin metric. Tokenized funds are left out, also when ask
 
 ### GET /api/v1/data/evm/{chainId}/tokenized-funds
 
-Tokenized funds on a chain. On the C-Chain: BlackRock BUIDL, Franklin Templeton BENJI, WisdomTree WTGXX, VanEck VBILL (peg `USD`), and Janus Henderson JAAA, Apollo ACRED, OpenTrade XDFIS-DeFi-2, Asseto AoABTd, Neuberger Berman HINC, Nest nOPAL, HiYield hyTB (peg `NAV`). Same response shape and methodology as `/stablecoins` (circulating supply, holders, 24h volume/transfers), with `category: "tokenized_fund"`. Fund shares are not stablecoins, so they are never part of the `/stablecoins` list or its totals.
+Tokenized funds on a chain. On the C-Chain: BlackRock BUIDL, Franklin Templeton BENJI, WisdomTree WTGXX, VanEck VBILL (peg `USD`), and Janus Henderson JAAA, Apollo ACRED, OpenTrade XDFIS-DeFi-2, Asseto AoABTd, Neuberger Berman HINC, Nest nOPAL, HiYield hyTB, Janus Henderson JTRSY (peg `NAV`). Same response shape and methodology as `/stablecoins` (circulating supply, holders, 24h volume/transfers), with `category: "tokenized_fund"`. Fund shares are not stablecoins, so they are never part of the `/stablecoins` list or its totals.
 
 - `supply` and `volume_24h` are in fund shares (base units, scale by `decimals`).
 - `peg: "USD"` is a $1-per-share money-market fund, priced at 1 (`price_source: "peg"`).
 - `peg: "NAV"` is a floating share price, priced only when it is reported on-chain in a USD stablecoin, read every ~5 minutes by the indexer:
   - `price_source: "erc4626"`: the fund token is an ERC-4626 vault (XDFIS-DeFi-2, hyTB).
-  - `price_source: "erc7540"`: the fund's share token names an ERC-7540 vault (ERC-7575 `vault(USDC)`) whose `convertToAssets` gives the price. JAAA (Centrifuge) and nOPAL (Nest).
+  - `price_source: "erc7540"`: the fund's share token names an ERC-7540 vault (ERC-7575 `vault(USDC)`) whose `convertToAssets` gives the price. JAAA and JTRSY (Centrifuge), nOPAL (Nest).
   - `price_source: "redstone"`: the fund's RedStone NAV feed on the C-Chain (`latestRoundData`, updated on a 0.01% move or every 24h). HINC and ACRED.
   - AoABTd has no on-chain price and returns `null`: do **not** value it at $1.
 - Extra fields on top of the `/stablecoins` shape:

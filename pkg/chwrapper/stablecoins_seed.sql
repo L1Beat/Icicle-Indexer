@@ -61,8 +61,7 @@ INSERT INTO stablecoins (chain_id, token, symbol, name, decimals, peg, issuer, b
 INSERT INTO stablecoins (chain_id, token, symbol, name, decimals, peg, issuer, bridged, added_at, doublecounted, category) VALUES
     (43114, unhex('53fc82f14f009009b440a706e31c9021e1196a2f'), 'BUIDL', 'BlackRock USD Institutional Digital Liquidity Fund', 6, 'USD', 'BlackRock', false, '2026-11-19 00:00:00', false, 'tokenized_fund'),
     (43114, unhex('e08b4c1005603427420e64252a8b120cace4d122'), 'BENJI',  'Franklin OnChain U.S. Government Money Fund', 18, 'USD', 'Franklin Templeton', false, '2026-11-19 00:00:00', false, 'tokenized_fund'),
-    -- Added 2026-11-19, name/symbol/decimals/totalSupply checked on-chain. JTRSY
-    -- (0xa5d465…627b, Janus Henderson Treasury) left out: 1 share on C-Chain.
+    -- Added 2026-11-19, name/symbol/decimals/totalSupply checked on-chain.
     (43114, unhex('870fd36b3bf7f5abeeea2c8d4abdf1dc4e33109d'), 'WTGXX', 'WisdomTree Government Money Market Digital Fund', 18, 'USD', 'WisdomTree', false, '2026-11-19 00:00:00', false, 'tokenized_fund'),
     (43114, unhex('7f4546ef315efc65336187fe3765ea779ac90183'), 'VBILL', 'VanEck Treasury Fund', 6, 'USD', 'VanEck', false, '2026-11-19 00:00:00', false, 'tokenized_fund'),
     (43114, unhex('58f93d6b1ef2f44ec379cb975657c132cbed3b6b'), 'JAAA', 'Janus Henderson AAA CLO Fund', 6, 'NAV', 'Janus Henderson', false, '2026-11-19 00:00:00', false, 'tokenized_fund'),
@@ -73,7 +72,9 @@ INSERT INTO stablecoins (chain_id, token, symbol, name, decimals, peg, issuer, b
     (43114, unhex('b2ea3e7b80317c4e20d1927034162176e25834e2'), 'AoABTd', 'AoABTd', 18, 'NAV', 'Asseto', false, '2026-11-19 12:00:00', false, 'tokenized_fund'),
     (43114, unhex('f5fa39a16449b1ee07aa52ae79c6b00567c59f83'), 'HINC', 'Neuberger Securitize High Income Tokenized Fund', 6, 'NAV', 'Neuberger Berman', false, '2026-11-19 12:00:00', false, 'tokenized_fund'),
     (43114, unhex('119dd7daff816f29d7ee47596ae5e4bdc4299165'), 'nOPAL', 'Nest BlackOpal LiquidStone II Vault', 6, 'NAV', 'Nest Credit', false, '2026-11-19 12:00:00', false, 'tokenized_fund'),
-    (43114, unhex('8475509d391e6ee5a8b7133221ce17019d307b3e'), 'hyTB', 'HiYield Treasury Bill Vault', 18, 'NAV', 'HiYield', false, '2026-11-19 12:00:00', false, 'tokenized_fund');
+    (43114, unhex('8475509d391e6ee5a8b7133221ce17019d307b3e'), 'hyTB', 'HiYield Treasury Bill Vault', 18, 'NAV', 'HiYield', false, '2026-11-19 12:00:00', false, 'tokenized_fund'),
+    -- JTRSY (Janus Henderson Treasury, Centrifuge): 1 share on C-Chain as of 2026-11-19, priced via its ERC-7540 vault.
+    (43114, unhex('a5d465251fbcc907f5dd6bb2145488dfc6a2627b'), 'JTRSY', 'Janus Henderson Treasury Fund', 6, 'NAV', 'Janus Henderson', false, '2026-11-19 20:00:00', false, 'tokenized_fund');
 
 -- Known issuer/treasury holders to exclude from circulating supply.
 -- Idempotent via fixed added_at + ReplacingMergeTree on (chain_id, token, holder).
