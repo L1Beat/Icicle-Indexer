@@ -694,7 +694,11 @@ Time series for a stablecoin metric. Tokenized funds are left out, also when ask
 
 ### GET /api/v1/data/evm/{chainId}/tokenized-funds
 
-Tokenized money-market funds on a chain (BlackRock BUIDL, Franklin Templeton BENJI on the C-Chain). Same response shape and methodology as `/stablecoins` (circulating supply, holders, 24h volume/transfers), with `category: "tokenized_fund"`. Fund shares are not stablecoins, so they are never part of the `/stablecoins` list or its totals.
+Tokenized funds on a chain. On the C-Chain: BlackRock BUIDL, Franklin Templeton BENJI, WisdomTree WTGXX, VanEck VBILL (peg `USD`), and Janus Henderson JAAA, Apollo ACRED (peg `NAV`). Same response shape and methodology as `/stablecoins` (circulating supply, holders, 24h volume/transfers), with `category: "tokenized_fund"`. Fund shares are not stablecoins, so they are never part of the `/stablecoins` list or its totals.
+
+- `supply` and `volume_24h` are in fund shares (base units, scale by `decimals`).
+- `peg: "USD"` is a $1-per-share money-market fund: shares × $1 is its USD value.
+- `peg: "NAV"` is a floating share price (credit or CLO funds). The API has no NAV feed, so do **not** value these at $1. Show shares, or price them from the issuer's NAV.
 
 ### GET /api/v1/data/evm/{chainId}/tokenized-funds/timeseries
 

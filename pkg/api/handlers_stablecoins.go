@@ -21,9 +21,12 @@ type Stablecoin struct {
 	Symbol   string `json:"symbol" example:"USDC"`
 	Name     string `json:"name" example:"USD Coin"`
 	Decimals uint8  `json:"decimals" example:"6"`
-	Peg      string `json:"peg" example:"USD"`
-	Issuer   string `json:"issuer,omitempty" example:"Circle"`
-	Bridged  bool   `json:"bridged" example:"false"`
+	// Peg is the currency a unit tracks. On /tokenized-funds it is "USD" for
+	// $1-per-share money-market funds and "NAV" for floating-NAV funds (credit or
+	// CLO funds such as ACRED and JAAA), whose share price the API does not carry.
+	Peg     string `json:"peg" example:"USD"`
+	Issuer  string `json:"issuer,omitempty" example:"Circle"`
+	Bridged bool   `json:"bridged" example:"false"`
 	// Doublecounted marks stablecoins whose reserves are themselves other counted
 	// stablecoins (e.g. avUSD, UTY, reUSD, FRXUSD). Sum all rows for the GROSS total;
 	// exclude doublecounted rows for the NET total (the DeFiLlama-style headline).
@@ -67,7 +70,7 @@ func (s *Server) handleListStablecoins(w http.ResponseWriter, r *http.Request) {
 // stablecoin registry, with the same fields and methodology as /stablecoins.
 //
 // @Summary List tokenized funds for a chain
-// @Description Returns tokenized money-market funds (e.g. BlackRock BUIDL, Franklin Templeton BENJI) with circulating supply (excludes addresses listed in stablecoin_excluded_holders), holder count, and 24h transfer stats. Same shape as /stablecoins. These are fund shares, not stablecoins, so they are not part of the /stablecoins list.
+// @Description Returns tokenized money-market funds (e.g. BlackRock BUIDL, Franklin Templeton BENJI) with circulating supply (excludes addresses listed in stablecoin_excluded_holders), holder count, and 24h transfer stats. Same shape as /stablecoins. These are fund shares, not stablecoins, so they are not part of the /stablecoins list. supply is in shares: peg USD means $1 per share, peg NAV means a floating share price that the API does not provide, so those funds cannot be valued at $1.
 // @Tags Data - EVM
 // @Produce json
 // @Param chainId path int true "Chain ID (e.g. 43114 for Avalanche C-Chain)"

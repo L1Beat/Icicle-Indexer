@@ -2226,6 +2226,10 @@ definitions:
         example: USD Coin
         type: string
       peg:
+        description: |-
+          Peg is the currency a unit tracks. On /tokenized-funds it is "USD" for
+          $1-per-share money-market funds and "NAV" for floating-NAV funds (credit or
+          CLO funds such as ACRED and JAAA), whose share price the API does not carry.
         example: USD
         type: string
       supply:
@@ -3436,10 +3440,13 @@ paths:
       - Data - EVM
   /api/v1/data/evm/{chainId}/tokenized-funds:
     get:
-      description: Returns tokenized money-market funds (e.g. BlackRock BUIDL, Franklin
+      description: 'Returns tokenized money-market funds (e.g. BlackRock BUIDL, Franklin
         Templeton BENJI) with circulating supply (excludes addresses listed in stablecoin_excluded_holders),
         holder count, and 24h transfer stats. Same shape as /stablecoins. These are
         fund shares, not stablecoins, so they are not part of the /stablecoins list.
+        supply is in shares: peg USD means $1 per share, peg NAV means a floating
+        share price that the API does not provide, so those funds cannot be valued
+        at $1.'
       parameters:
       - description: Chain ID (e.g. 43114 for Avalanche C-Chain)
         in: path
