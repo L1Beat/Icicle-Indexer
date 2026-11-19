@@ -55,10 +55,10 @@ type Stablecoin struct {
 // the price fields are null.
 type TokenizedFund struct {
 	Stablecoin
-	PriceUSD    *float64   `json:"price_usd" example:"1.065417"`                               // USD per whole share, null when unknown
-	ValueUSD    *float64   `json:"value_usd" example:"26483900.5"`                             // supply in whole shares times price_usd, null when unknown
-	PriceSource *string    `json:"price_source" example:"erc4626" enums:"peg,erc4626,erc7540"` // peg: $1 per share. erc4626: the fund vault's convertToAssets. erc7540: convertToAssets of the fund's ERC-7540 vault (Centrifuge, Nest)
-	PriceAt     *time.Time `json:"price_at"`                                                   // when the NAV was set (Centrifuge reports it), else when it was read. Null for peg prices
+	PriceUSD    *float64   `json:"price_usd" example:"1.065417"`                                        // USD per whole share, null when unknown
+	ValueUSD    *float64   `json:"value_usd" example:"26483900.5"`                                      // supply in whole shares times price_usd, null when unknown
+	PriceSource *string    `json:"price_source" example:"erc4626" enums:"peg,erc4626,erc7540,redstone"` // peg: $1 per share. erc4626: the fund vault's convertToAssets. erc7540: convertToAssets of the fund's ERC-7540 vault (Centrifuge, Nest). redstone: the fund's RedStone NAV feed
+	PriceAt     *time.Time `json:"price_at"`                                                            // when the NAV was set (Centrifuge priceLastUpdated, RedStone updatedAt), else when it was read. Null for peg prices
 }
 
 // An on-chain fund price is dropped when it was last read more than
@@ -104,7 +104,7 @@ func (s *Server) handleListStablecoins(w http.ResponseWriter, r *http.Request) {
 // stablecoin registry, with the same fields and methodology as /stablecoins.
 //
 // @Summary List tokenized funds for a chain
-// @Description Returns tokenized money-market funds (e.g. BlackRock BUIDL, Franklin Templeton BENJI) with circulating supply (excludes addresses listed in stablecoin_excluded_holders), holder count, and 24h transfer stats. Same shape as /stablecoins. These are fund shares, not stablecoins, so they are not part of the /stablecoins list. supply is in shares. price_usd and value_usd: peg USD funds are priced at $1 per share (price_source peg). Peg NAV funds have a floating share price, priced only when it is reported on-chain in a USD stablecoin, read every few minutes: the fund is an ERC-4626 vault (price_source erc4626), or its share token has an ERC-7540 vault such as Centrifuge's (price_source erc7540). Otherwise the price fields are null. A price whose NAV is more than 7 days old is null. Never value a NAV fund at $1.
+// @Description Returns tokenized money-market funds (e.g. BlackRock BUIDL, Franklin Templeton BENJI) with circulating supply (excludes addresses listed in stablecoin_excluded_holders), holder count, and 24h transfer stats. Same shape as /stablecoins. These are fund shares, not stablecoins, so they are not part of the /stablecoins list. supply is in shares. price_usd and value_usd: peg USD funds are priced at $1 per share (price_source peg). Peg NAV funds have a floating share price, priced only when it is reported on-chain in a USD stablecoin, read every few minutes: the fund is an ERC-4626 vault (price_source erc4626), or its share token has an ERC-7540 vault such as Centrifuge's (price_source erc7540), or it has a RedStone NAV feed (price_source redstone). Otherwise the price fields are null. A price whose NAV is more than 7 days old is null. Never value a NAV fund at $1.
 // @Tags Data - EVM
 // @Produce json
 // @Param chainId path int true "Chain ID (e.g. 43114 for Avalanche C-Chain)"

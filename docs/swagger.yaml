@@ -2578,16 +2578,18 @@ definitions:
         example: USD
         type: string
       price_at:
-        description: when the NAV was set (Centrifuge reports it), else when it was
-          read. Null for peg prices
+        description: when the NAV was set (Centrifuge priceLastUpdated, RedStone updatedAt),
+          else when it was read. Null for peg prices
         type: string
       price_source:
         description: 'peg: $1 per share. erc4626: the fund vault''s convertToAssets.
-          erc7540: convertToAssets of the fund''s ERC-7540 vault (Centrifuge, Nest)'
+          erc7540: convertToAssets of the fund''s ERC-7540 vault (Centrifuge, Nest).
+          redstone: the fund''s RedStone NAV feed'
         enum:
         - peg
         - erc4626
         - erc7540
+        - redstone
         example: erc4626
         type: string
       price_usd:
@@ -3527,9 +3529,10 @@ paths:
         $1 per share (price_source peg). Peg NAV funds have a floating share price,
         priced only when it is reported on-chain in a USD stablecoin, read every few
         minutes: the fund is an ERC-4626 vault (price_source erc4626), or its share
-        token has an ERC-7540 vault such as Centrifuge''s (price_source erc7540).
-        Otherwise the price fields are null. A price whose NAV is more than 7 days
-        old is null. Never value a NAV fund at $1.'
+        token has an ERC-7540 vault such as Centrifuge''s (price_source erc7540),
+        or it has a RedStone NAV feed (price_source redstone). Otherwise the price
+        fields are null. A price whose NAV is more than 7 days old is null. Never
+        value a NAV fund at $1.'
       parameters:
       - description: Chain ID (e.g. 43114 for Avalanche C-Chain)
         in: path

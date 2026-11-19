@@ -97,3 +97,35 @@ func TestReadFundPrice(t *testing.T) {
 	}, fund, usd, now)
 	assert.Error(t, err)
 }
+
+func abiStr(s string) []byte {
+	out := append(uintWord(32), uintWord(int64(len(s)))...)
+	pad := make([]byte, (len(s)+31)/32*32)
+	copy(pad, s)
+	return append(out, pad...)
+}
+
+func TestReadFundPriceRedStone(t *testing.T) {
+	now := time.Date(2026, 11, 19, 19, 0, 0, 0, time.UTC)
+	hinc := addr("f5fa39a16449b1ee07aa52ae79c6b00567c59f83")
+	feed := redstoneFeeds[hex.EncodeToString(hinc)].feed
+	round := append(append(append(append(uintWord(1), uintWord(97729722200)...), uintWord(1795107585)...), uintWord(1795107585)...), uintWord(1)...)
+	chain := fakeChain{
+		key(feed, selDescription):     abiStr("RedStone Price Feed for HINC_AVALANCHE_FUNDAMENTAL"),
+		key(feed, selDecimals):        uintWord(8),
+		key(feed, selLatestRoundData): round,
+	}
+	fund := registryToken{token: hinc, decimals: 6}
+
+	p, ok, err := readFundPrice(context.Background(), chain, fund, nil, now)
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.InDelta(t, 977.297222, p.usd, 1e-9)
+	assert.Equal(t, "redstone", p.source)
+	assert.Equal(t, time.Unix(1795107585, 0).UTC(), p.priceAt)
+
+	// A feed that names another data feed is rejected, not read.
+	chain[key(feed, selDescription)] = abiStr("RedStone Price Feed for ACRED_FUNDAMENTAL")
+	_, _, err = readFundPrice(context.Background(), chain, fund, nil, now)
+	assert.Error(t, err)
+}

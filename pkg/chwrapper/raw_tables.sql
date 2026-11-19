@@ -436,14 +436,14 @@ ALTER TABLE stablecoins ADD COLUMN IF NOT EXISTS category LowCardinality(String)
 -- cycle). Only floating-NAV funds (stablecoins.peg = 'NAV') priced in a registry
 -- USD stablecoin get a row: price = convertToAssets(1 share) of the fund itself
 -- (ERC-4626) or of its ERC-7540 vault found through the share token (ERC-7575,
--- e.g. Centrifuge). The latest sample per token wins. Funds with no on-chain
--- price have no row.
+-- e.g. Centrifuge), or the fund's curated RedStone NAV feed. The latest sample
+-- per token wins. Funds with no on-chain price have no row.
 CREATE TABLE IF NOT EXISTS tokenized_fund_prices (
     chain_id UInt32,
     token FixedString(20),
     price_usd Float64,  -- USD per whole share
-    source LowCardinality(String),  -- erc4626 or erc7540
-    price_at DateTime64(3, 'UTC') DEFAULT sampled_at,  -- when the NAV was set (Centrifuge priceLastUpdated), else the read time
+    source LowCardinality(String),  -- erc4626, erc7540 or redstone
+    price_at DateTime64(3, 'UTC') DEFAULT sampled_at,  -- when the NAV was set (Centrifuge priceLastUpdated, RedStone updatedAt), else the read time
     sampled_at DateTime64(3, 'UTC') DEFAULT now64(3)
 ) ENGINE = ReplacingMergeTree(sampled_at)
 ORDER BY (chain_id, token);

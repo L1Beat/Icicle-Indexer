@@ -24,7 +24,29 @@ var (
 	selVault            = []byte{0xf8, 0x15, 0xc0, 0x3d} // vault(address), ERC-7575 share token
 	selShare            = []byte{0xa8, 0xd5, 0xfd, 0x65} // share(), ERC-7575 vault
 	selPriceLastUpdated = []byte{0x52, 0xaa, 0xea, 0xd8} // priceLastUpdated(), Centrifuge vaults
+	selDescription      = []byte{0x72, 0x84, 0xe4, 0x16} // description(), Chainlink-style feed
+	selDecimals         = []byte{0x31, 0x3c, 0xe5, 0x67} // decimals()
+	selLatestRoundData  = []byte{0xfe, 0xaf, 0x96, 0x8c} // latestRoundData()
 )
+
+// navFeed is a RedStone NAV feed (Chainlink AggregatorV3 interface) for a fund
+// with no price in its own contracts. id is the RedStone data feed ID: the
+// feed's description() must name it, so a wrong or repointed address is
+// rejected rather than read.
+type navFeed struct {
+	feed string
+	id   string
+}
+
+// redstoneFeeds maps a fund token (lowercase hex, no 0x) to its RedStone NAV
+// feed on the C-Chain. Addresses from RedStone's relayer manifest
+// (redstone-oracles-monorepo, relayer-manifests-multi-feed/avalancheMultiFeed.json,
+// adapter 0x3587a73AA02519335A8a6053a97657BECe0bC2Cc), checked on-chain 2026-11-19.
+// Updated on a 0.01% move or every 24h.
+var redstoneFeeds = map[string]navFeed{
+	"f5fa39a16449b1ee07aa52ae79c6b00567c59f83": {"0xc9e11c60e24bef478cc999fa9fa2d89cc098a86e", "HINC_AVALANCHE_FUNDAMENTAL"}, // HINC
+	"7c64925002bfa705834b118a923e9911bee32875": {"0x4bad96dd1c7d541270a0c92e1d4e5f12eeea7a57", "ACRED_FUNDAMENTAL"},          // ACRED
+}
 
 // preferredUSD are the USD stablecoins tried first, in order, when asking an
 // ERC-7575 share token for its vault: USDC, USDT, USDC.e, USDT.e. Fund vaults
@@ -45,15 +67,15 @@ type registryToken struct {
 // fundPrice is one on-chain share price.
 type fundPrice struct {
 	usd     float64
-	source  string    // erc4626 or erc7540
+	source  string    // erc4626, erc7540 or redstone
 	priceAt time.Time // when the NAV was set, if the vault says, else the read time
 }
 
 // SnapshotFundPrices writes tokenized_fund_prices rows for the floating-NAV
-// tokenized funds that price themselves on-chain in a registry USD stablecoin:
-// an ERC-4626 vault share, or an ERC-7575 share token whose ERC-7540 vault
-// (Centrifuge, Nest) reports convertToAssets. Funds with neither get no row,
-// and a fund whose read fails keeps its previous row.
+// tokenized funds with an on-chain USD share price: a curated RedStone NAV
+// feed, an ERC-4626 vault share in a registry USD stablecoin, or an ERC-7575
+// share token whose ERC-7540 vault (Centrifuge, Nest) reports convertToAssets.
+// Funds with none get no row, and a fund whose read fails keeps its previous row.
 func SnapshotFundPrices(ctx context.Context, conn clickhouse.Conn, caller lendingmarkets.Caller) error {
 	funds, err := queryRegistry(ctx, conn, "category = 'tokenized_fund' AND peg = 'NAV'")
 	if err != nil {
@@ -138,6 +160,15 @@ func addrArg(a []byte) []byte { return append(make([]byte, 12), a...) }
 func readFundPrice(ctx context.Context, c lendingmarkets.Caller, f registryToken, usd map[string]uint8, now time.Time) (fundPrice, bool, error) {
 	fund := "0x" + hex.EncodeToString(f.token)
 
+	// A curated NAV feed wins: it is the issuer's published NAV.
+	if nf, ok := redstoneFeeds[hex.EncodeToString(f.token)]; ok {
+		p, err := readNAVFeed(ctx, c, nf, now)
+		if err != nil {
+			return fundPrice{}, false, err
+		}
+		return p, true, nil
+	}
+
 	// ERC-4626: the fund token is the vault.
 	out, err := c.Call(ctx, fund, selAsset)
 	if err != nil && !isRevert(err) {
@@ -219,4 +250,57 @@ func convertShare(ctx context.Context, c lendingmarkets.Caller, vault string, sh
 		return 0, fmt.Errorf("implausible share price %v", price)
 	}
 	return price, nil
+}
+
+// readNAVFeed reads a RedStone NAV feed: USD per share from latestRoundData,
+// stamped with its updatedAt.
+func readNAVFeed(ctx context.Context, c lendingmarkets.Caller, nf navFeed, now time.Time) (fundPrice, error) {
+	out, err := c.Call(ctx, nf.feed, selDescription)
+	if err != nil {
+		return fundPrice{}, err
+	}
+	if desc := abiString(out); !strings.HasSuffix(desc, " "+nf.id) {
+		return fundPrice{}, fmt.Errorf("feed %s describes itself as %q, want %s", nf.feed, desc, nf.id)
+	}
+	out, err = c.Call(ctx, nf.feed, selDecimals)
+	if err != nil {
+		return fundPrice{}, err
+	}
+	if len(out) != 32 || new(big.Int).SetBytes(out).Cmp(big.NewInt(36)) > 0 {
+		return fundPrice{}, fmt.Errorf("feed %s: bad decimals", nf.feed)
+	}
+	dec := new(big.Int).SetBytes(out).Int64()
+	out, err = c.Call(ctx, nf.feed, selLatestRoundData)
+	if err != nil {
+		return fundPrice{}, err
+	}
+	if len(out) != 5*32 {
+		return fundPrice{}, fmt.Errorf("feed %s: latestRoundData returned %d bytes", nf.feed, len(out))
+	}
+	answer := new(big.Int).SetBytes(out[32:64]) // int256, a negative NAV is caught below
+	if out[32]&0x80 != 0 {
+		return fundPrice{}, fmt.Errorf("feed %s: negative answer", nf.feed)
+	}
+	updated := new(big.Int).SetBytes(out[96:128])
+	if updated.Sign() <= 0 || !updated.IsInt64() || updated.Int64() > now.Unix() {
+		return fundPrice{}, fmt.Errorf("feed %s: bad updatedAt %s", nf.feed, updated)
+	}
+	unit := new(big.Int).Exp(big.NewInt(10), big.NewInt(dec), nil)
+	price, _ := new(big.Float).Quo(new(big.Float).SetInt(answer), new(big.Float).SetInt(unit)).Float64()
+	if price <= 0 || price > 1e6 {
+		return fundPrice{}, fmt.Errorf("feed %s: implausible share price %v", nf.feed, price)
+	}
+	return fundPrice{usd: price, source: "redstone", priceAt: time.Unix(updated.Int64(), 0).UTC()}, nil
+}
+
+// abiString decodes an ABI-encoded string return value, or "".
+func abiString(out []byte) string {
+	if len(out) < 64 {
+		return ""
+	}
+	n := new(big.Int).SetBytes(out[32:64])
+	if !n.IsInt64() || 64+n.Int64() > int64(len(out)) {
+		return ""
+	}
+	return string(out[64 : 64+n.Int64()])
 }
