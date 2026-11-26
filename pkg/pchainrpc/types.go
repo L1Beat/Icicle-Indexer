@@ -130,12 +130,6 @@ type Output struct {
 	Addresses [][]byte // Multiple addresses
 }
 
-// ParseBlock parses a raw P-chain block into a normalized structure
-func ParseBlock(blk interface{}, blockBytes []byte) (*NormalizedBlock, error) {
-	// This will be implemented in fetcher.go using the platformvm block parsing
-	return nil, nil
-}
-
 // TxTypeString returns a human-readable transaction type using reflection
 func TxTypeString(tx *txs.Tx) string {
 	if tx == nil || tx.Unsigned == nil {
