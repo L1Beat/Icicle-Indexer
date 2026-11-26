@@ -152,3 +152,17 @@ func TestResolverMapsNativeBenqiToWavax(t *testing.T) {
 func has(data, selector string) bool {
 	return len(data) >= len(selector) && data[:len(selector)] == selector
 }
+
+// word encodes n as a 32-byte ABI word.
+func word(n *big.Int) []byte {
+	w := make([]byte, 32)
+	if n != nil && n.Sign() > 0 {
+		nb := n.Bytes()
+		if len(nb) <= 32 {
+			copy(w[32-len(nb):], nb)
+		} else {
+			copy(w, nb[len(nb)-32:])
+		}
+	}
+	return w
+}

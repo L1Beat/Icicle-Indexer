@@ -78,7 +78,7 @@ func (q *DexQuoter) QuoteRoute(ctx context.Context, tokenIn common.Address, _ ui
 // getAmountsOut returns the final output amount for one router and path, or nil if
 // the call reverts (no pair on that route).
 func (q *DexQuoter) getAmountsOut(ctx context.Context, router common.Address, amountIn *big.Int, path []common.Address) *big.Int {
-	res, err := q.r.EthCall(ctx, router.Hex(), encodeGetAmountsOut(amountIn, path), "latest")
+	res, err := q.r.EthCall(ctx, router.Hex(), lending.EncodeGetAmountsOut(amountIn, path), "latest")
 	if err != nil {
 		return nil
 	}
