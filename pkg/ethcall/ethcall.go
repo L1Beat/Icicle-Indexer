@@ -11,11 +11,21 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // Caller runs eth_call against a contract and returns the raw return data.
 type Caller interface {
 	Call(ctx context.Context, to string, data []byte) ([]byte, error)
+}
+
+// HTTPClient is the shared HTTP client for C-Chain contract reads.
+var HTTPClient = &http.Client{Timeout: 15 * time.Second}
+
+// CChainURL returns the C-Chain JSON-RPC URL of the avalanchego node at
+// nodeURL, which may be the node's base URL or its P-Chain endpoint.
+func CChainURL(nodeURL string) string {
+	return strings.TrimSuffix(strings.TrimRight(nodeURL, "/"), "/ext/bc/P") + "/ext/bc/C/rpc"
 }
 
 // RPCCaller is a Caller over a JSON-RPC endpoint (C-Chain).

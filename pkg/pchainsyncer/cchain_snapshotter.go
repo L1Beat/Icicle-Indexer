@@ -3,7 +3,6 @@ package pchainsyncer
 import (
 	"context"
 	"log/slog"
-	"strings"
 	"time"
 
 	"icicle/pkg/bridges"
@@ -72,8 +71,8 @@ func (s *CChainSnapshotter) runOnce(ctx context.Context) {
 		slog.Warn("Failed to roll up DEX volume", "error", err)
 	}
 	// Bridge transfers into and out of the C-Chain.
-	base := strings.TrimSuffix(strings.TrimRight(s.nodeURL, "/"), "/ext/bc/P")
-	caller := ethcall.RPCCaller{URL: base + "/ext/bc/C/rpc", Client: liquidRPCClient}
+	rpcURL := ethcall.CChainURL(s.nodeURL)
+	caller := ethcall.RPCCaller{URL: rpcURL, Client: ethcall.HTTPClient}
 	if err := bridges.Sync(ctx, s.conn, caller); err != nil {
 		slog.Warn("Failed to sync bridge transfers", "error", err)
 	}

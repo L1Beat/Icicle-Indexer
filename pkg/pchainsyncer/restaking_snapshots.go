@@ -17,8 +17,8 @@ import (
 // Suzaku L1 that has a vault. nodeURL is the avalanchego base URL. An L1 that
 // fails to read is skipped (its previous rows stay), and its error is returned.
 func SnapshotRestaking(ctx context.Context, conn clickhouse.Conn, nodeURL string) error {
-	base := strings.TrimSuffix(strings.TrimRight(nodeURL, "/"), "/ext/bc/P")
-	caller := ethcall.RPCCaller{URL: base + "/ext/bc/C/rpc", Client: liquidRPCClient}
+	rpcURL := ethcall.CChainURL(nodeURL)
+	caller := ethcall.RPCCaller{URL: rpcURL, Client: ethcall.HTTPClient}
 
 	l1s, readErr := restaking.ReadSuzaku(ctx, caller)
 	if len(l1s) == 0 {

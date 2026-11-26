@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"icicle/pkg/chwrapper"
+	"icicle/pkg/ethcall"
 	"icicle/pkg/lendingmarkets"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -30,8 +31,8 @@ var lendingHistoryRPCClient = &http.Client{Timeout: 30 * time.Second}
 func TrackLendingLTVChanges(ctx context.Context, conn clickhouse.Conn, nodeURL string) error {
 	ctx, cancel := context.WithTimeout(ctx, lendingLTVBudget)
 	defer cancel()
-	base := strings.TrimSuffix(strings.TrimRight(nodeURL, "/"), "/ext/bc/P")
-	h := lendingmarkets.RPCHistory{URL: base + "/ext/bc/C/rpc", Client: lendingHistoryRPCClient}
+	rpcURL := ethcall.CChainURL(nodeURL)
+	h := lendingmarkets.RPCHistory{URL: rpcURL, Client: lendingHistoryRPCClient}
 
 	known, err := knownLTVs(ctx, conn)
 	if err != nil {
