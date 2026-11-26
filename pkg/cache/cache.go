@@ -3,6 +3,7 @@ package cache
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"strconv"
 
@@ -117,7 +118,7 @@ func (c *Cache) GetCompleteBlock(blockNum int64, fetch func() ([]byte, error)) (
 	// Store in cache
 	if err := c.db.Set(key, data, pebble.NoSync); err != nil {
 		// Log error but don't fail the request
-		fmt.Printf("Warning: failed to cache block %d: %v\n", blockNum, err)
+		slog.Warn("Failed to cache block", "block", blockNum, "error", err)
 	}
 
 	return data, nil

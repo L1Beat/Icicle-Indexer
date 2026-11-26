@@ -2,7 +2,6 @@ package chwrapper
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"os"
 	"strconv"
@@ -44,11 +43,6 @@ const (
 // EnvInt reads a positive integer from an environment variable, falling back to
 // defaultVal when unset, unparseable, or non-positive.
 func EnvInt(key string, defaultVal int) int {
-	return getEnvInt(key, defaultVal)
-}
-
-// getEnvInt reads an integer from environment variable with a default value
-func getEnvInt(key string, defaultVal int) int {
 	if val := os.Getenv(key); val != "" {
 		if parsed, err := strconv.Atoi(val); err == nil && parsed > 0 {
 			return parsed
@@ -59,10 +53,10 @@ func getEnvInt(key string, defaultVal int) int {
 
 func Connect() (driver.Conn, error) {
 	// Read pool settings from environment variables
-	maxOpenConns := getEnvInt("CH_MAX_OPEN_CONNS", DefaultMaxOpenConns)
-	maxIdleConns := getEnvInt("CH_MAX_IDLE_CONNS", DefaultMaxIdleConns)
-	dialTimeoutSec := getEnvInt("CH_DIAL_TIMEOUT_SEC", int(DefaultDialTimeout.Seconds()))
-	readTimeoutSec := getEnvInt("CH_READ_TIMEOUT_SEC", int(DefaultReadTimeout.Seconds()))
+	maxOpenConns := EnvInt("CH_MAX_OPEN_CONNS", DefaultMaxOpenConns)
+	maxIdleConns := EnvInt("CH_MAX_IDLE_CONNS", DefaultMaxIdleConns)
+	dialTimeoutSec := EnvInt("CH_DIAL_TIMEOUT_SEC", int(DefaultDialTimeout.Seconds()))
+	readTimeoutSec := EnvInt("CH_READ_TIMEOUT_SEC", int(DefaultReadTimeout.Seconds()))
 
 	slog.Info("ClickHouse pool config", "max_open_conns", maxOpenConns, "max_idle_conns", maxIdleConns, "dial_timeout_sec", dialTimeoutSec, "read_timeout_sec", readTimeoutSec)
 
@@ -106,7 +100,7 @@ func Connect() (driver.Conn, error) {
 
 	if err := conn.Ping(ctx); err != nil {
 		if exception, ok := err.(*clickhouse.Exception); ok {
-			fmt.Printf("Exception [%d] %s \n%s\n", exception.Code, exception.Message, exception.StackTrace)
+			slog.Error("ClickHouse ping failed", "code", exception.Code, "message", exception.Message, "stack_trace", exception.StackTrace)
 		}
 		return nil, err
 	}
@@ -129,7 +123,7 @@ func Connect() (driver.Conn, error) {
 //
 // The timeout is configurable via CH_WRITE_TIMEOUT_SEC (default 120s).
 func WriteContext(parent context.Context) (context.Context, context.CancelFunc) {
-	sec := getEnvInt("CH_WRITE_TIMEOUT_SEC", int(DefaultWriteTimeout.Seconds()))
+	sec := EnvInt("CH_WRITE_TIMEOUT_SEC", int(DefaultWriteTimeout.Seconds()))
 	return context.WithTimeout(parent, time.Duration(sec)*time.Second)
 }
 
@@ -142,6 +136,6 @@ func WriteContext(parent context.Context) (context.Context, context.CancelFunc) 
 //
 // The timeout is configurable via CH_QUERY_TIMEOUT_SEC (default 300s).
 func ReadContext(parent context.Context) (context.Context, context.CancelFunc) {
-	sec := getEnvInt("CH_QUERY_TIMEOUT_SEC", int(DefaultQueryTimeout.Seconds()))
+	sec := EnvInt("CH_QUERY_TIMEOUT_SEC", int(DefaultQueryTimeout.Seconds()))
 	return context.WithTimeout(parent, time.Duration(sec)*time.Second)
 }
