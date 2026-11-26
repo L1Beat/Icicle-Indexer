@@ -10,15 +10,14 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"icicle/pkg/ethcall"
 	"math/big"
 	"strings"
 	"time"
 )
 
 // Caller runs eth_call against a contract and returns the raw return data.
-type Caller interface {
-	Call(ctx context.Context, to string, data []byte) ([]byte, error)
-}
+type Caller = ethcall.Caller
 
 var (
 	selAsset            = []byte{0x38, 0xd5, 0x2e, 0x0f} // asset()

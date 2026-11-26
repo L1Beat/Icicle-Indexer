@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"icicle/pkg/chwrapper"
+	"icicle/pkg/ethcall"
 	"icicle/pkg/restaking"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -17,7 +18,7 @@ import (
 // fails to read is skipped (its previous rows stay), and its error is returned.
 func SnapshotRestaking(ctx context.Context, conn clickhouse.Conn, nodeURL string) error {
 	base := strings.TrimSuffix(strings.TrimRight(nodeURL, "/"), "/ext/bc/P")
-	caller := restaking.RPCCaller{URL: base + "/ext/bc/C/rpc", Client: liquidRPCClient}
+	caller := ethcall.RPCCaller{URL: base + "/ext/bc/C/rpc", Client: liquidRPCClient}
 
 	l1s, readErr := restaking.ReadSuzaku(ctx, caller)
 	if len(l1s) == 0 {

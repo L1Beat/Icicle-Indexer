@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"icicle/pkg/ethcall"
 	"math/big"
 	"strings"
 
@@ -54,9 +55,7 @@ const (
 const secondsPerYear = 365 * 24 * 60 * 60
 
 // Caller runs eth_call against a contract and returns the raw return data.
-type Caller interface {
-	Call(ctx context.Context, to string, data []byte) ([]byte, error)
-}
+type Caller = ethcall.Caller
 
 // Market is one protocol x asset market.
 type Market struct {

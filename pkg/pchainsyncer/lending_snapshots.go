@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"icicle/pkg/chwrapper"
+	"icicle/pkg/ethcall"
 	"icicle/pkg/lendingmarkets"
-	"icicle/pkg/restaking"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 )
@@ -22,7 +22,7 @@ import (
 // error is returned.
 func SnapshotLendingMarkets(ctx context.Context, conn clickhouse.Conn, nodeURL string) error {
 	base := strings.TrimSuffix(strings.TrimRight(nodeURL, "/"), "/ext/bc/P")
-	caller := restaking.RPCCaller{URL: base + "/ext/bc/C/rpc", Client: liquidRPCClient}
+	caller := ethcall.RPCCaller{URL: base + "/ext/bc/C/rpc", Client: liquidRPCClient}
 
 	markets, readErr := lendingmarkets.ReadAll(ctx, caller)
 	if len(markets) == 0 {
@@ -167,7 +167,7 @@ func BackfillLendingHistory(ctx context.Context, conn clickhouse.Conn, nodeURL s
 		if time.Now().After(deadline) {
 			break
 		}
-		caller := restaking.RPCCaller{URL: base + "/ext/bc/C/rpc", Client: liquidRPCClient, Block: fmt.Sprintf("0x%x", d.block)}
+		caller := ethcall.RPCCaller{URL: base + "/ext/bc/C/rpc", Client: liquidRPCClient, Block: fmt.Sprintf("0x%x", d.block)}
 		// A protocol that did not exist yet (Aave V4) fails and is skipped.
 		markets, readErr := lendingmarkets.ReadAll(ctx, caller)
 		if len(markets) == 0 {
@@ -296,7 +296,7 @@ func RebackfillLendingProtocol(ctx context.Context, conn clickhouse.Conn, nodeUR
 
 	base := strings.TrimSuffix(strings.TrimRight(nodeURL, "/"), "/ext/bc/P")
 	for i, d := range days {
-		caller := restaking.RPCCaller{URL: base + "/ext/bc/C/rpc", Client: liquidRPCClient, Block: fmt.Sprintf("0x%x", d.block)}
+		caller := ethcall.RPCCaller{URL: base + "/ext/bc/C/rpc", Client: liquidRPCClient, Block: fmt.Sprintf("0x%x", d.block)}
 		markets, err := read(ctx, caller)
 		if err != nil {
 			return fmt.Errorf("%s %s at block %d: %w", protocol, d.day.Format("2006-01-02"), d.block, err)
