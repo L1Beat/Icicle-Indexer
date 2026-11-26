@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"icicle/pkg/cache"
+	"icicle/pkg/cchainsnapshot"
 	"icicle/pkg/chwrapper"
 	"icicle/pkg/pchainrpc"
 
@@ -72,7 +73,7 @@ type PChainSyncer struct {
 
 	// Validator syncer and the C-Chain snapshotter started with it
 	validatorSyncer   *ValidatorSyncer
-	cchainSnapshotter *CChainSnapshotter
+	cchainSnapshotter *cchainsnapshot.Snapshotter
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -155,7 +156,7 @@ func NewPChainSyncer(cfg Config) (*PChainSyncer, error) {
 			fetcher,
 			cfg.CHConn,
 		)
-		ps.cchainSnapshotter = NewCChainSnapshotter(cfg.CHConn, fetcher.RpcURL(), cfg.CChainSnapshotInterval)
+		ps.cchainSnapshotter = cchainsnapshot.New(cfg.CHConn, fetcher.RpcURL(), cfg.CChainSnapshotInterval)
 	}
 
 	return ps, nil

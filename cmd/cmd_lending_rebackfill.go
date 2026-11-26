@@ -4,8 +4,8 @@ import (
 	"context"
 	"log"
 
+	"icicle/pkg/cchainsnapshot"
 	"icicle/pkg/chwrapper"
-	"icicle/pkg/pchainsyncer"
 )
 
 // RunLendingRebackfill re-reads one protocol's past lending_market_snapshots
@@ -31,7 +31,7 @@ func RunLendingRebackfill(ctx context.Context, protocol string) {
 		log.Fatalf("Failed to connect to ClickHouse: %v", err)
 	}
 	defer conn.Close()
-	if err := pchainsyncer.RebackfillLendingProtocol(ctx, conn, nodeURL, protocol); err != nil {
+	if err := cchainsnapshot.RebackfillLendingProtocol(ctx, conn, nodeURL, protocol); err != nil {
 		log.Fatalf("Lending rebackfill failed: %v", err)
 	}
 }

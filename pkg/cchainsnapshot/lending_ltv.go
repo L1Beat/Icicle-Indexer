@@ -1,4 +1,4 @@
-package pchainsyncer
+package cchainsnapshot
 
 import (
 	"context"
