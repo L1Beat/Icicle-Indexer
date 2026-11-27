@@ -54,39 +54,6 @@ func RetryableExec(ctx context.Context, conn driver.Conn, query string, args ...
 	return lastErr
 }
 
-// RetryableQuery executes a query that returns rows with retry logic
-func RetryableQuery(ctx context.Context, conn driver.Conn, query string, args ...interface{}) (driver.Rows, error) {
-	var lastErr error
-	backoff := InitialBackoff
-
-	for attempt := 1; attempt <= MaxRetries; attempt++ {
-		rows, err := conn.Query(ctx, query, args...)
-		if err == nil {
-			return rows, nil
-		}
-
-		if !isRetryableError(err) {
-			return nil, err
-		}
-
-		lastErr = err
-		if attempt < MaxRetries {
-			slog.Warn("Retrying ClickHouse operation", "attempt", attempt, "max_retries", MaxRetries, "error", err, "backoff", backoff)
-			time.Sleep(backoff)
-			backoff = min(backoff*2, MaxBackoff)
-		}
-	}
-
-	return nil, lastErr
-}
-
-// RetryableQueryRow executes a query that returns a single row
-// Note: QueryRow doesn't return error immediately, it's deferred to Scan
-// The caller should use WithRetry at a higher level if needed
-func RetryableQueryRow(ctx context.Context, conn driver.Conn, query string, args ...interface{}) driver.Row {
-	return conn.QueryRow(ctx, query, args...)
-}
-
 // WithRetry wraps a function that may fail with retryable errors
 func WithRetry(operation func() error) error {
 	var lastErr error

@@ -2,14 +2,13 @@ package lendingmarkets
 
 import (
 	"context"
+	"icicle/pkg/ethcall"
 	"math/big"
 	"net/http"
 	"os"
 	"strconv"
 	"testing"
 	"time"
-
-	"icicle/pkg/restaking"
 )
 
 // TestReadAll_Live reads the real markets. Set LENDING_LIVE_RPC to a C-Chain
@@ -19,7 +18,7 @@ func TestReadAll_Live(t *testing.T) {
 	if url == "" {
 		t.Skip("LENDING_LIVE_RPC not set")
 	}
-	c := restaking.RPCCaller{URL: url, Client: &http.Client{Timeout: 15 * time.Second}}
+	c := ethcall.RPCCaller{URL: url, Client: &http.Client{Timeout: 15 * time.Second}}
 	start := time.Now()
 	ms, err := ReadAll(context.Background(), c)
 	if err != nil {
@@ -57,7 +56,7 @@ func TestEMode_Live(t *testing.T) {
 	if url == "" {
 		t.Skip("LENDING_LIVE_RPC not set")
 	}
-	c := restaking.RPCCaller{URL: url, Client: &http.Client{Timeout: 15 * time.Second}}
+	c := ethcall.RPCCaller{URL: url, Client: &http.Client{Timeout: 15 * time.Second}}
 	for _, read := range []func(context.Context, Caller) ([]EModeEntry, error){ReadAaveV3EMode, ReadAaveV4Spokes} {
 		es, err := read(context.Background(), c)
 		if err != nil {

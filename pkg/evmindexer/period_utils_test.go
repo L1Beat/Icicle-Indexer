@@ -88,7 +88,7 @@ func TestNextPeriod(t *testing.T) {
 			name:        "week",
 			input:       time.Date(2025, 6, 15, 14, 30, 0, 0, time.UTC), // Sunday
 			granularity: "week",
-			expected:    time.Date(2025, 6, 22, 0, 0, 0, 0, time.UTC),   // Next Sunday
+			expected:    time.Date(2025, 6, 22, 0, 0, 0, 0, time.UTC), // Next Sunday
 		},
 		{
 			name:        "month boundary",

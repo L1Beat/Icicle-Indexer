@@ -1,4 +1,4 @@
-package pchainsyncer
+package rwaprices
 
 import (
 	"context"
@@ -43,19 +43,19 @@ func hx(b []byte) string { return "0x" + hex.EncodeToString(b) }
 func TestReadFundPrice(t *testing.T) {
 	now := time.Date(2026, 11, 19, 19, 0, 0, 0, time.UTC)
 	usd := map[string]uint8{string(usdc): 6}
-	fund := registryToken{token: fundAddr, decimals: 6}
+	fund := Token{Address: fundAddr, Decimals: 6}
 	ctx := context.Background()
 
 	// ERC-4626: the fund is a vault over USDC (XDFIS-DeFi-2, hyTB).
-	p, ok, err := readFundPrice(ctx, fakeChain{
+	p, ok, err := Read(ctx, fakeChain{
 		key(hx(fundAddr), selAsset):           addrArg(usdc),
 		key(hx(fundAddr), selConvertToAssets): uintWord(1065417),
 	}, fund, usd, now)
 	require.NoError(t, err)
 	require.True(t, ok)
-	assert.InDelta(t, 1.065417, p.usd, 1e-12)
-	assert.Equal(t, "erc4626", p.source)
-	assert.Equal(t, now, p.priceAt)
+	assert.InDelta(t, 1.065417, p.USD, 1e-12)
+	assert.Equal(t, "erc4626", p.Source)
+	assert.Equal(t, now, p.PriceAt)
 
 	// ERC-7575 share token with a Centrifuge ERC-7540 vault (JAAA): the NAV
 	// time comes from priceLastUpdated.
@@ -66,32 +66,32 @@ func TestReadFundPrice(t *testing.T) {
 		key(hx(vaultAdr), selConvertToAssets):  uintWord(1057215),
 		key(hx(vaultAdr), selPriceLastUpdated): uintWord(1795003200),
 	}
-	p, ok, err = readFundPrice(ctx, centrifuge, fund, usd, now)
+	p, ok, err = Read(ctx, centrifuge, fund, usd, now)
 	require.NoError(t, err)
 	require.True(t, ok)
-	assert.InDelta(t, 1.057215, p.usd, 1e-12)
-	assert.Equal(t, "erc7540", p.source)
-	assert.Equal(t, time.Unix(1795003200, 0).UTC(), p.priceAt)
+	assert.InDelta(t, 1.057215, p.USD, 1e-12)
+	assert.Equal(t, "erc7540", p.Source)
+	assert.Equal(t, time.Unix(1795003200, 0).UTC(), p.PriceAt)
 
 	// A vault without priceLastUpdated (Nest nOPAL) is stamped with the read time.
 	delete(centrifuge, key(hx(vaultAdr), selPriceLastUpdated))
-	p, ok, err = readFundPrice(ctx, centrifuge, fund, usd, now)
+	p, ok, err = Read(ctx, centrifuge, fund, usd, now)
 	require.NoError(t, err)
 	require.True(t, ok)
-	assert.Equal(t, now, p.priceAt)
+	assert.Equal(t, now, p.PriceAt)
 
 	// A vault that does not point back at the fund is an error, not a price.
 	centrifuge[key(hx(vaultAdr), selShare)] = addrArg(addr("0000000000000000000000000000000000000001"))
-	_, _, err = readFundPrice(ctx, centrifuge, fund, usd, now)
+	_, _, err = Read(ctx, centrifuge, fund, usd, now)
 	assert.Error(t, err)
 
 	// Neither a vault nor a share token (ACRED, HINC): no price, no error.
-	_, ok, err = readFundPrice(ctx, fakeChain{}, fund, usd, now)
+	_, ok, err = Read(ctx, fakeChain{}, fund, usd, now)
 	require.NoError(t, err)
 	assert.False(t, ok)
 
 	// A zero share price is a broken read.
-	_, _, err = readFundPrice(ctx, fakeChain{
+	_, _, err = Read(ctx, fakeChain{
 		key(hx(fundAddr), selAsset):           addrArg(usdc),
 		key(hx(fundAddr), selConvertToAssets): uintWord(0),
 	}, fund, usd, now)
@@ -115,18 +115,18 @@ func TestReadFundPriceRedStone(t *testing.T) {
 		key(feed, selDecimals):        uintWord(8),
 		key(feed, selLatestRoundData): round,
 	}
-	fund := registryToken{token: hinc, decimals: 6}
+	fund := Token{Address: hinc, Decimals: 6}
 
-	p, ok, err := readFundPrice(context.Background(), chain, fund, nil, now)
+	p, ok, err := Read(context.Background(), chain, fund, nil, now)
 	require.NoError(t, err)
 	require.True(t, ok)
-	assert.InDelta(t, 977.297222, p.usd, 1e-9)
-	assert.Equal(t, "redstone", p.source)
-	assert.Equal(t, time.Unix(1795107585, 0).UTC(), p.priceAt)
+	assert.InDelta(t, 977.297222, p.USD, 1e-9)
+	assert.Equal(t, "redstone", p.Source)
+	assert.Equal(t, time.Unix(1795107585, 0).UTC(), p.PriceAt)
 
 	// A feed that names another data feed is rejected, not read.
 	chain[key(feed, selDescription)] = abiStr("RedStone Price Feed for ACRED_FUNDAMENTAL")
-	_, _, err = readFundPrice(context.Background(), chain, fund, nil, now)
+	_, _, err = Read(context.Background(), chain, fund, nil, now)
 	assert.Error(t, err)
 }
 
@@ -140,17 +140,17 @@ func TestReadFundPriceChainlinkGold(t *testing.T) {
 		key(feed, selDecimals):        uintWord(8),
 		key(feed, selLatestRoundData): round,
 	}
-	gold := registryToken{token: xaut, decimals: 6}
+	gold := Token{Address: xaut, Decimals: 6}
 
-	p, ok, err := readFundPrice(context.Background(), chain, gold, nil, now)
+	p, ok, err := Read(context.Background(), chain, gold, nil, now)
 	require.NoError(t, err)
 	require.True(t, ok)
-	assert.InDelta(t, 3624.88998976, p.usd, 1e-9)
-	assert.Equal(t, "chainlink", p.source)
-	assert.Equal(t, time.Unix(1795124239, 0).UTC(), p.priceAt)
+	assert.InDelta(t, 3624.88998976, p.USD, 1e-9)
+	assert.Equal(t, "chainlink", p.Source)
+	assert.Equal(t, time.Unix(1795124239, 0).UTC(), p.PriceAt)
 
 	// A Chainlink description must match exactly: a suffix is not enough.
 	chain[key(feed, selDescription)] = abiStr("PAXG / XAU / USD")
-	_, _, err = readFundPrice(context.Background(), chain, gold, nil, now)
+	_, _, err = Read(context.Background(), chain, gold, nil, now)
 	assert.Error(t, err)
 }

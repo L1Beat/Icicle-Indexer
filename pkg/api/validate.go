@@ -38,4 +38,3 @@ func validateTxHash(r *http.Request) (string, error) {
 	}
 	return raw, nil
 }
-

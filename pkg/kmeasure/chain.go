@@ -10,7 +10,6 @@ package kmeasure
 
 import (
 	"context"
-	"encoding/hex"
 	"math/big"
 
 	"github.com/ava-labs/libevm/common"
@@ -55,37 +54,4 @@ func callUint(ctx context.Context, r EthReader, to common.Address, sig string) (
 		return nil, err
 	}
 	return lending.Word(lending.DecodeHexBytes(res), 0), nil
-}
-
-// --- ABI encoding for router getAmountsOut(uint256, address[]) ---
-
-func word(n *big.Int) []byte {
-	w := make([]byte, 32)
-	if n != nil && n.Sign() > 0 {
-		nb := n.Bytes()
-		if len(nb) <= 32 {
-			copy(w[32-len(nb):], nb)
-		} else {
-			copy(w, nb[len(nb)-32:])
-		}
-	}
-	return w
-}
-
-func addrWord(a common.Address) []byte {
-	w := make([]byte, 32)
-	copy(w[12:], a.Bytes())
-	return w
-}
-
-// encodeGetAmountsOut builds calldata for getAmountsOut(uint256 amountIn, address[] path).
-func encodeGetAmountsOut(amountIn *big.Int, path []common.Address) string {
-	var b []byte
-	b = append(b, word(amountIn)...)         // amountIn
-	b = append(b, word(big.NewInt(0x40))...) // offset to the path array
-	b = append(b, word(big.NewInt(int64(len(path))))...)
-	for _, a := range path {
-		b = append(b, addrWord(a)...)
-	}
-	return lending.Selector("getAmountsOut(uint256,address[])") + hex.EncodeToString(b)
 }

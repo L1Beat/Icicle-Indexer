@@ -28,7 +28,7 @@ func baseValue(amount, price1e18 *big.Int, dec uint8) *big.Int {
 type stubParams struct{}
 
 func (stubParams) BonusBps(string, common.Address) (uint64, bool) { return 800, true } // 8%
-func (stubParams) CloseFactorBps(string, *big.Int) uint64         { return 5000 }       // 50%
+func (stubParams) CloseFactorBps(string, *big.Int) uint64         { return 5000 }      // 50%
 
 // stubQuoter prices swaps off a table, with a per-input liquidity factor so we can
 // model an illiquid collateral whose executable output is far below oracle value.
@@ -69,7 +69,9 @@ func TestComputeK(t *testing.T) {
 	}
 
 	usdcAmt := func(d int64) *big.Int { return new(big.Int).Mul(big.NewInt(d), pow10(6)) }
-	avaxAmt := func(milli int64) *big.Int { return new(big.Int).Div(new(big.Int).Mul(big.NewInt(milli), pow10(18)), big.NewInt(1000)) }
+	avaxAmt := func(milli int64) *big.Int {
+		return new(big.Int).Div(new(big.Int).Mul(big.NewInt(milli), pow10(18)), big.NewInt(1000))
+	}
 
 	positions := []Position{
 		{ // profitable: $10k USDC debt, $15k WAVAX collateral, deep liquidity

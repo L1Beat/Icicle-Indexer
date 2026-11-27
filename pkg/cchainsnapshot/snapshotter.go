@@ -1,41 +1,44 @@
-package pchainsyncer
+// Package cchainsnapshot runs the C-Chain snapshot cycle: restaking, lending
+// markets and their LTV history, DEX volume, bridges, perps, ICM and RWA
+// prices. The protocol packages read the chain; this package writes their
+// ClickHouse rows. pchainsyncer starts it alongside the validator sync.
+package cchainsnapshot
 
 import (
 	"context"
 	"log/slog"
-	"strings"
 	"time"
 
 	"icicle/pkg/bridges"
 	"icicle/pkg/dexvolume"
+	"icicle/pkg/ethcall"
 	"icicle/pkg/icm"
 	"icicle/pkg/perps"
-	"icicle/pkg/restaking"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 )
 
-// CChainSnapshotter refreshes the C-Chain contract-read and rollup tables on
+// Snapshotter refreshes the C-Chain contract-read and rollup tables on
 // its own interval, apart from the validator sync, which is heavy and usually
 // runs much less often. Each step is independent: one failing does not skip
 // the others.
-type CChainSnapshotter struct {
+type Snapshotter struct {
 	conn     clickhouse.Conn
 	nodeURL  string // avalanchego base URL (the P-Chain fetcher's), C-Chain RPC is derived
 	interval time.Duration
 }
 
-// NewCChainSnapshotter builds a snapshotter. interval defaults to 5 minutes.
-func NewCChainSnapshotter(conn clickhouse.Conn, nodeURL string, interval time.Duration) *CChainSnapshotter {
+// New builds a snapshotter. interval defaults to 5 minutes.
+func New(conn clickhouse.Conn, nodeURL string, interval time.Duration) *Snapshotter {
 	if interval <= 0 {
 		interval = 5 * time.Minute
 	}
-	return &CChainSnapshotter{conn: conn, nodeURL: nodeURL, interval: interval}
+	return &Snapshotter{conn: conn, nodeURL: nodeURL, interval: interval}
 }
 
 // Start runs one cycle now and then every interval until ctx is cancelled. A
 // cycle that overruns delays the next one rather than overlapping it.
-func (s *CChainSnapshotter) Start(ctx context.Context) {
+func (s *Snapshotter) Start(ctx context.Context) {
 	slog.Info("Starting C-Chain snapshotter", "interval", s.interval)
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
@@ -50,7 +53,7 @@ func (s *CChainSnapshotter) Start(ctx context.Context) {
 	}
 }
 
-func (s *CChainSnapshotter) runOnce(ctx context.Context) {
+func (s *Snapshotter) runOnce(ctx context.Context) {
 	start := time.Now()
 	// Restaking collateral (Suzaku vaults securing L1s).
 	if err := SnapshotRestaking(ctx, s.conn, s.nodeURL); err != nil {
@@ -72,8 +75,8 @@ func (s *CChainSnapshotter) runOnce(ctx context.Context) {
 		slog.Warn("Failed to roll up DEX volume", "error", err)
 	}
 	// Bridge transfers into and out of the C-Chain.
-	base := strings.TrimSuffix(strings.TrimRight(s.nodeURL, "/"), "/ext/bc/P")
-	caller := restaking.RPCCaller{URL: base + "/ext/bc/C/rpc", Client: liquidRPCClient}
+	rpcURL := ethcall.CChainURL(s.nodeURL)
+	caller := ethcall.RPCCaller{URL: rpcURL, Client: ethcall.HTTPClient}
 	if err := bridges.Sync(ctx, s.conn, caller); err != nil {
 		slog.Warn("Failed to sync bridge transfers", "error", err)
 	}
@@ -85,7 +88,7 @@ func (s *CChainSnapshotter) runOnce(ctx context.Context) {
 	if err := icm.Sync(ctx, s.conn, caller); err != nil {
 		slog.Warn("Failed to sync ICM messages", "error", err)
 	}
-	// Share prices of floating-NAV tokenized funds that are ERC-4626 vaults.
+	// USD prices of floating-price registry assets (funds, equities, gold).
 	if err := SnapshotFundPrices(ctx, s.conn, caller); err != nil {
 		slog.Warn("Failed to snapshot tokenized fund prices", "error", err)
 	}

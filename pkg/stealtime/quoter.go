@@ -164,7 +164,7 @@ func (q *blockQuoter) Stats() (calls, failures int) {
 }
 
 func (q *blockQuoter) getAmountsOut(ctx context.Context, router common.Address, amountIn *big.Int, path []common.Address, bh string) *big.Int {
-	res, err := q.rpc.EthCall(ctx, router.Hex(), encodeGetAmountsOut(amountIn, path), bh)
+	res, err := q.rpc.EthCall(ctx, router.Hex(), lending.EncodeGetAmountsOut(amountIn, path), bh)
 	if err != nil {
 		return nil
 	}
@@ -202,17 +202,6 @@ func addrWord(a common.Address) []byte {
 	w := make([]byte, 32)
 	copy(w[12:], a.Bytes())
 	return w
-}
-
-func encodeGetAmountsOut(amountIn *big.Int, path []common.Address) string {
-	var b []byte
-	b = append(b, wordOf(amountIn)...)
-	b = append(b, wordOf(big.NewInt(0x40))...)
-	b = append(b, wordOf(big.NewInt(int64(len(path))))...)
-	for _, a := range path {
-		b = append(b, addrWord(a)...)
-	}
-	return lending.Selector("getAmountsOut(uint256,address[])") + hex.EncodeToString(b)
 }
 
 // encodeFindBestPath encodes findBestPathFromAmountIn(address[] route, uint128 amountIn).

@@ -237,7 +237,7 @@ func TestHandleListBlocks_Cursor(t *testing.T) {
 			require.Len(t, args, 3)
 			assert.Equal(t, uint32(43114), args[0])
 			assert.Equal(t, uint64(99), args[1]) // cursor block
-			assert.Equal(t, 21, args[2])          // fetchLimit = 20+1
+			assert.Equal(t, 21, args[2])         // fetchLimit = 20+1
 			return NewMockRows([]string{"chain_id", "block_number", "hash", "parent_hash", "block_time", "miner", "size", "gas_limit", "gas_used", "base_fee_per_gas", "tx_count"}, [][]interface{}{}), nil
 		},
 	}

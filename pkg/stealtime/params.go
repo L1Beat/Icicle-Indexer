@@ -12,7 +12,6 @@ import (
 
 var (
 	mantissaPerBps = new(big.Int).Exp(big.NewInt(10), big.NewInt(14), nil) // 1e18 -> 10000
-	hf095          = new(big.Int).Div(new(big.Int).Mul(big.NewInt(95), lending.WAD), big.NewInt(100))
 )
 
 // blockParams implements prefilter.ParamsProvider as of a fixed historical block,
@@ -55,7 +54,7 @@ func (p *blockParams) BonusBps(protocol string, collateral common.Address) (uint
 	res, err := p.rpc.EthCall(p.ctx, p.aaveDataProvider.Hex(), lending.EncodeCall1Addr("getReserveConfigurationData(address)", collateral.Hex()), blockHex(p.block))
 	v := uint64(0)
 	if err == nil {
-		v = premium(lending.Word(lending.DecodeHexBytes(res), 3).Uint64()) // word3 = liquidationBonus multiplier
+		v = lending.LiquidationPremium(lending.Word(lending.DecodeHexBytes(res), 3).Uint64()) // word3 = liquidationBonus multiplier
 	}
 	p.mu.Lock()
 	p.aaveBonus[collateral] = v
@@ -66,15 +65,8 @@ func (p *blockParams) BonusBps(protocol string, collateral common.Address) (uint
 func (p *blockParams) CloseFactorBps(protocol string, hf *big.Int) uint64 {
 	if protocol == "benqi" {
 		p.loadBenqi()
-		if p.benqiClose > 0 {
-			return p.benqiClose
-		}
-		return 5000
 	}
-	if hf != nil && hf.Sign() > 0 && hf.Cmp(hf095) < 0 {
-		return 10000
-	}
-	return 5000
+	return lending.CloseFactorBps(protocol, hf, p.benqiClose)
 }
 
 func (p *blockParams) loadBenqi() {
@@ -86,7 +78,7 @@ func (p *blockParams) loadBenqi() {
 	p.benqiLoaded = true
 	bh := blockHex(p.block)
 	if res, err := p.rpc.EthCall(p.ctx, p.benqiComptroller.Hex(), lending.EncodeCall0("liquidationIncentiveMantissa()"), bh); err == nil {
-		p.benqiBonus = premium(toBps(lending.Word(lending.DecodeHexBytes(res), 0)))
+		p.benqiBonus = lending.LiquidationPremium(toBps(lending.Word(lending.DecodeHexBytes(res), 0)))
 	}
 	if res, err := p.rpc.EthCall(p.ctx, p.benqiComptroller.Hex(), lending.EncodeCall0("closeFactorMantissa()"), bh); err == nil {
 		p.benqiClose = toBps(lending.Word(lending.DecodeHexBytes(res), 0))
@@ -98,11 +90,4 @@ func toBps(mantissa *big.Int) uint64 {
 		return 0
 	}
 	return new(big.Int).Div(mantissa, mantissaPerBps).Uint64()
-}
-
-func premium(multiplierBps uint64) uint64 {
-	if multiplierBps <= 10000 {
-		return 0
-	}
-	return multiplierBps - 10000
 }

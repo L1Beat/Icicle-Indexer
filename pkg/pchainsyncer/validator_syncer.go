@@ -282,8 +282,8 @@ func (vs *ValidatorSyncer) syncOnce(ctx context.Context) error {
 		slog.Warn("Failed to snapshot liquid staking", "error", err)
 	}
 
-	// Restaking, lending and DEX snapshots run in CChainSnapshotter on their
-	// own interval.
+	// Restaking, lending and DEX snapshots run in cchainsnapshot.Snapshotter on
+	// their own interval.
 
 	duration := time.Since(startTime)
 	slog.Info("Validator state sync completed", "total_validators", totalValidators, "primary_network", primaryValidatorCount, "l1_validators", l1ValidatorCount, "l1_subnets", len(l1Subnets), "regular_validators", regularValidatorCount, "regular_subnets", len(regularSubnets), "duration", duration)

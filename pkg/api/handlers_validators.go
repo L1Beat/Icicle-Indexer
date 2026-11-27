@@ -13,12 +13,12 @@ import (
 // Validator represents a validator (L1 or legacy subnet)
 type Validator struct {
 	// Common fields
-	SubnetID         string    `json:"subnet_id"`
-	ValidationID     string    `json:"validation_id"`
-	NodeID           string    `json:"node_id"`
-	Weight           uint64    `json:"weight"`
-	StartTime        time.Time `json:"start_time"`
-	Active           bool      `json:"active"`
+	SubnetID     string    `json:"subnet_id"`
+	ValidationID string    `json:"validation_id"`
+	NodeID       string    `json:"node_id"`
+	Weight       uint64    `json:"weight"`
+	StartTime    time.Time `json:"start_time"`
+	Active       bool      `json:"active"`
 
 	// Staked amount in WHOLE tokens (PoS only; omitted for PoA / unresolved chains).
 	// Decimal string with full precision: weight * weight_to_value_factor / 10^decimals.

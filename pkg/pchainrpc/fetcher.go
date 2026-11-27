@@ -63,25 +63,6 @@ func ConvertPChainAddressToCB58(addr string) (string, error) {
 	return cb58.Encode(addrBytes)
 }
 
-// ConvertCB58ToPChainAddressFuji converts a short CB58 address to P-Chain bech32 format for Fuji testnet
-func ConvertCB58ToPChainAddressFuji(shortAddr string) (string, error) {
-	if strings.HasPrefix(shortAddr, "P-") {
-		return shortAddr, nil
-	}
-
-	addrBytes, err := cb58.Decode(shortAddr)
-	if err != nil {
-		return "", fmt.Errorf("failed to decode CB58 address %s: %w", shortAddr, err)
-	}
-
-	bech32Addr, err := address.FormatBech32("fuji", addrBytes)
-	if err != nil {
-		return "", fmt.Errorf("failed to format bech32 address: %w", err)
-	}
-
-	return "P-" + bech32Addr, nil
-}
-
 type FetcherOptions struct {
 	RpcURL         string
 	MaxConcurrency int           // Maximum concurrent RPC requests
@@ -90,7 +71,6 @@ type FetcherOptions struct {
 	RetryDelay     time.Duration // Initial retry delay
 	Cache          *cache.Cache  // Optional cache for complete blocks
 }
-
 
 // pooledRequester implements EndpointRequester with proper connection pooling
 type pooledRequester struct {
@@ -1509,34 +1489,13 @@ func ParseUTXOHex(utxoHex string) (*ParsedUTXO, error) {
 	}, nil
 }
 
-// FindRefundUTXO searches UTXOs for a specific txID and outputIndex
-func (f *Fetcher) FindRefundUTXO(ctx context.Context, addresses []string, targetTxID ids.ID, targetOutputIndex uint32) (*ParsedUTXO, error) {
-	response, err := f.GetUTXOs(ctx, addresses)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, utxoHex := range response.UTXOs {
-		parsed, err := ParseUTXOHex(utxoHex)
-		if err != nil {
-			continue // Skip malformed UTXOs
-		}
-
-		if parsed.TxID == targetTxID && parsed.OutputIndex == targetOutputIndex {
-			return parsed, nil
-		}
-	}
-
-	return nil, fmt.Errorf("refund UTXO not found for txID %s outputIndex %d", targetTxID, targetOutputIndex)
-}
-
 // GetL1ValidatorResponse represents the response from platform.getL1Validator
 type GetL1ValidatorResponse struct {
-	NodeID               string `json:"nodeID"`
-	Weight               string `json:"weight"`
-	StartTime            string `json:"startTime"`
-	ValidationID         string `json:"validationID"`
-	PublicKey            string `json:"publicKey"`
+	NodeID                string `json:"nodeID"`
+	Weight                string `json:"weight"`
+	StartTime             string `json:"startTime"`
+	ValidationID          string `json:"validationID"`
+	PublicKey             string `json:"publicKey"`
 	RemainingBalanceOwner struct {
 		Locktime  string   `json:"locktime"`
 		Threshold string   `json:"threshold"`
@@ -1547,10 +1506,10 @@ type GetL1ValidatorResponse struct {
 		Threshold string   `json:"threshold"`
 		Addresses []string `json:"addresses"`
 	} `json:"deactivationOwner"`
-	MinNonce  string `json:"minNonce"`
-	Balance   string `json:"balance"`
-	SubnetID  string `json:"subnetID"`
-	Height    string `json:"height"`
+	MinNonce string `json:"minNonce"`
+	Balance  string `json:"balance"`
+	SubnetID string `json:"subnetID"`
+	Height   string `json:"height"`
 }
 
 // GetL1Validator fetches L1 validator info including remainingBalanceOwner

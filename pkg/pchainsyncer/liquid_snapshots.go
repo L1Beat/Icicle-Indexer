@@ -4,26 +4,23 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
 	"icicle/pkg/chwrapper"
+	"icicle/pkg/ethcall"
 	"icicle/pkg/liquidstaking"
 	"icicle/pkg/pchainrpc"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
 )
 
-var liquidRPCClient = &http.Client{Timeout: 15 * time.Second}
-
 // SnapshotLiquidStakingToday writes today's liquid_staking_snapshots row for
 // each live protocol. nodeURL is the avalanchego base URL, whose C-Chain RPC
 // serves the token reads. A protocol whose contract read fails is skipped, so
 // a bad cycle never overwrites today's row with zeros.
 func SnapshotLiquidStakingToday(ctx context.Context, conn clickhouse.Conn, nodeURL string) error {
-	base := strings.TrimSuffix(strings.TrimRight(nodeURL, "/"), "/ext/bc/P")
-	rpcURL := base + "/ext/bc/C/rpc"
+	rpcURL := ethcall.CChainURL(nodeURL)
 	today := time.Now().UTC().Format("2006-01-02")
 
 	var errs []error
@@ -39,7 +36,7 @@ func SnapshotLiquidStakingToday(ctx context.Context, conn clickhouse.Conn, nodeU
 }
 
 func snapshotLiquidProtocol(ctx context.Context, conn clickhouse.Conn, rpcURL, today string, p liquidstaking.Protocol) error {
-	st, err := liquidstaking.ReadTokenState(ctx, liquidRPCClient, rpcURL, p)
+	st, err := liquidstaking.ReadTokenState(ctx, ethcall.HTTPClient, rpcURL, p)
 	if err != nil {
 		return err
 	}

@@ -1,8 +1,8 @@
 package cmd
 
 import (
-	"icicle/pkg/cache"
 	"fmt"
+	"icicle/pkg/cache"
 	"log"
 	"log/slog"
 	"sync"

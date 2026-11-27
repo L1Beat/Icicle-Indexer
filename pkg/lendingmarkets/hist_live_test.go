@@ -2,12 +2,11 @@ package lendingmarkets
 
 import (
 	"context"
+	"icicle/pkg/ethcall"
 	"net/http"
 	"os"
 	"testing"
 	"time"
-
-	"icicle/pkg/restaking"
 )
 
 func TestReadAll_HistoricalLive(t *testing.T) {
@@ -16,7 +15,7 @@ func TestReadAll_HistoricalLive(t *testing.T) {
 	if url == "" || block == "" {
 		t.Skip("LENDING_LIVE_RPC / LENDING_LIVE_BLOCK not set")
 	}
-	c := restaking.RPCCaller{URL: url, Client: &http.Client{Timeout: 30 * time.Second}, Block: block}
+	c := ethcall.RPCCaller{URL: url, Client: &http.Client{Timeout: 30 * time.Second}, Block: block}
 	start := time.Now()
 	ms, err := ReadAll(context.Background(), c)
 	t.Logf("%d markets in %s, err=%v", len(ms), time.Since(start), err)

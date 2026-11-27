@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"icicle/pkg/chwrapper"
+	"icicle/pkg/ethcall"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"golang.org/x/crypto/sha3"
@@ -18,9 +19,7 @@ import (
 // Caller runs eth_call against a contract and returns the raw return data.
 // Errors that start with "rpc error:" are the node's answer (a revert, or no
 // such function) and other errors are transport failures.
-type Caller interface {
-	Call(ctx context.Context, to string, data []byte) ([]byte, error)
-}
+type Caller = ethcall.Caller
 
 // Contract is one emitter of a generic bridge event, as checked on-chain.
 type Contract struct {

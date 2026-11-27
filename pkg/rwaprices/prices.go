@@ -1,22 +1,23 @@
-package pchainsyncer
+// Package rwaprices reads on-chain USD prices for the floating-price registry
+// assets (tokenized funds, equities, commodities) on the C-Chain: a curated
+// RedStone or Chainlink feed, an ERC-4626 vault share, or an ERC-7575 share
+// token priced through its ERC-7540 vault. It only reads; pchainsyncer writes
+// the tokenized_fund_prices rows.
+package rwaprices
 
 import (
 	"bytes"
 	"context"
 	"encoding/hex"
-	"errors"
 	"fmt"
+	"icicle/pkg/ethcall"
 	"math/big"
 	"strings"
 	"time"
-
-	"icicle/pkg/chwrapper"
-	"icicle/pkg/lendingmarkets"
-
-	"github.com/ClickHouse/clickhouse-go/v2"
 )
 
-const cChainID = 43114
+// Caller runs eth_call against a contract and returns the raw return data.
+type Caller = ethcall.Caller
 
 var (
 	selAsset            = []byte{0x38, 0xd5, 0x2e, 0x0f} // asset()
@@ -68,87 +69,17 @@ var preferredUSD = []string{
 	"c7198437980c041c805a1edcba50c1ce5db95118",
 }
 
-// registryToken is a stablecoin-registry token with its decimals.
-type registryToken struct {
-	token    []byte // 20 bytes
-	decimals uint8
+// Token is a stablecoin-registry token with its decimals.
+type Token struct {
+	Address  []byte // 20 bytes
+	Decimals uint8
 }
 
-// fundPrice is one on-chain share price.
-type fundPrice struct {
-	usd     float64
-	source  string    // erc4626, erc7540, redstone or chainlink
-	priceAt time.Time // when the NAV was set, if the vault says, else the read time
-}
-
-// SnapshotFundPrices writes tokenized_fund_prices rows for the floating-price
-// registry assets (tokenized funds, equity and commodities: every peg but USD)
-// with an on-chain USD price per share: a curated RedStone or Chainlink feed, an ERC-4626 vault share in a
-// registry USD stablecoin, or an ERC-7575 share token whose ERC-7540 vault
-// (Centrifuge, Nest) reports convertToAssets. Assets with none get no row,
-// and an asset whose read fails keeps its previous row.
-func SnapshotFundPrices(ctx context.Context, conn clickhouse.Conn, caller lendingmarkets.Caller) error {
-	funds, err := queryRegistry(ctx, conn, "category != 'stablecoin' AND peg != 'USD'")
-	if err != nil {
-		return err
-	}
-	if len(funds) == 0 {
-		return nil
-	}
-	usdList, err := queryRegistry(ctx, conn, "category = 'stablecoin' AND peg = 'USD'")
-	if err != nil {
-		return err
-	}
-	usd := make(map[string]uint8, len(usdList))
-	for _, t := range usdList {
-		usd[string(t.token)] = t.decimals
-	}
-
-	var tuples []string
-	var args []interface{}
-	var errs []error
-	now := time.Now().UTC()
-	for _, f := range funds {
-		p, ok, err := readFundPrice(ctx, caller, f, usd, now)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("fund 0x%x: %w", f.token, err))
-			continue
-		}
-		if !ok {
-			continue
-		}
-		tuples = append(tuples, "(?, ?, ?, ?, ?, ?)")
-		args = append(args, uint32(cChainID), string(f.token), p.usd, p.source, p.priceAt, now)
-	}
-	if len(tuples) > 0 {
-		wctx, cancel := chwrapper.WriteContext(ctx)
-		defer cancel()
-		if err := conn.Exec(wctx, `
-			INSERT INTO tokenized_fund_prices (chain_id, token, price_usd, source, price_at, sampled_at)
-			VALUES `+strings.Join(tuples, ", "), args...); err != nil {
-			return fmt.Errorf("failed to insert fund prices: %w", err)
-		}
-	}
-	return errors.Join(errs...)
-}
-
-func queryRegistry(ctx context.Context, conn clickhouse.Conn, where string) ([]registryToken, error) {
-	rows, err := conn.Query(ctx, `SELECT token, decimals FROM stablecoins FINAL WHERE chain_id = ? AND `+where, uint32(cChainID))
-	if err != nil {
-		return nil, fmt.Errorf("failed to read stablecoin registry: %w", err)
-	}
-	defer rows.Close()
-	var out []registryToken
-	for rows.Next() {
-		var t registryToken
-		var token string
-		if err := rows.Scan(&token, &t.decimals); err != nil {
-			return nil, err
-		}
-		t.token = []byte(token)
-		out = append(out, t)
-	}
-	return out, rows.Err()
+// Price is one on-chain share price.
+type Price struct {
+	USD     float64
+	Source  string    // erc4626, erc7540, redstone or chainlink
+	PriceAt time.Time // when the NAV was set, if the vault says, else the read time
 }
 
 func isRevert(err error) bool {
@@ -165,17 +96,17 @@ func word(out []byte) []byte {
 
 func addrArg(a []byte) []byte { return append(make([]byte, 12), a...) }
 
-// readFundPrice returns the USD price of one whole share of fund f. ok is
+// Read returns the USD price of one whole share of fund f. ok is
 // false, with no error, when the fund has no on-chain price in a USD
 // stablecoin of usd (token bytes -> decimals).
-func readFundPrice(ctx context.Context, c lendingmarkets.Caller, f registryToken, usd map[string]uint8, now time.Time) (fundPrice, bool, error) {
-	fund := "0x" + hex.EncodeToString(f.token)
+func Read(ctx context.Context, c Caller, f Token, usd map[string]uint8, now time.Time) (Price, bool, error) {
+	fund := "0x" + hex.EncodeToString(f.Address)
 
 	// A curated feed wins: it is the issuer's published NAV or the market price.
-	if nf, ok := priceFeeds[hex.EncodeToString(f.token)]; ok {
+	if nf, ok := priceFeeds[hex.EncodeToString(f.Address)]; ok {
 		p, err := readNAVFeed(ctx, c, nf, now)
 		if err != nil {
-			return fundPrice{}, false, err
+			return Price{}, false, err
 		}
 		return p, true, nil
 	}
@@ -183,17 +114,17 @@ func readFundPrice(ctx context.Context, c lendingmarkets.Caller, f registryToken
 	// ERC-4626: the fund token is the vault.
 	out, err := c.Call(ctx, fund, selAsset)
 	if err != nil && !isRevert(err) {
-		return fundPrice{}, false, err
+		return Price{}, false, err
 	}
 	if a := word(out); err == nil && a != nil {
 		if dec, isUSD := usd[string(a)]; isUSD {
-			v, err := convertShare(ctx, c, fund, f.decimals, dec)
+			v, err := convertShare(ctx, c, fund, f.Decimals, dec)
 			if err != nil {
-				return fundPrice{}, false, err
+				return Price{}, false, err
 			}
-			return fundPrice{usd: v, source: "erc4626", priceAt: now}, true, nil
+			return Price{USD: v, Source: "erc4626", PriceAt: now}, true, nil
 		}
-		return fundPrice{}, false, nil
+		return Price{}, false, nil
 	}
 
 	// ERC-7575: the fund token is a share token with one ERC-7540 vault per
@@ -206,10 +137,10 @@ func readFundPrice(ctx context.Context, c lendingmarkets.Caller, f registryToken
 		}
 		out, err := c.Call(ctx, fund, append(append([]byte{}, selVault...), addrArg(stable)...))
 		if isRevert(err) {
-			return fundPrice{}, false, nil // not an ERC-7575 share token
+			return Price{}, false, nil // not an ERC-7575 share token
 		}
 		if err != nil {
-			return fundPrice{}, false, err
+			return Price{}, false, err
 		}
 		vaultAddr := word(out)
 		if vaultAddr == nil || bytes.Equal(vaultAddr, make([]byte, 20)) {
@@ -218,32 +149,32 @@ func readFundPrice(ctx context.Context, c lendingmarkets.Caller, f registryToken
 		vault := "0x" + hex.EncodeToString(vaultAddr)
 		// The vault must point back at this fund and this stablecoin.
 		share, err := c.Call(ctx, vault, selShare)
-		if err != nil || !bytes.Equal(word(share), f.token) {
-			return fundPrice{}, false, fmt.Errorf("vault %s does not hold this share", vault)
+		if err != nil || !bytes.Equal(word(share), f.Address) {
+			return Price{}, false, fmt.Errorf("vault %s does not hold this share", vault)
 		}
 		asset, err := c.Call(ctx, vault, selAsset)
 		if err != nil || !bytes.Equal(word(asset), stable) {
-			return fundPrice{}, false, fmt.Errorf("vault %s does not settle in 0x%s", vault, h)
+			return Price{}, false, fmt.Errorf("vault %s does not settle in 0x%s", vault, h)
 		}
-		v, err := convertShare(ctx, c, vault, f.decimals, dec)
+		v, err := convertShare(ctx, c, vault, f.Decimals, dec)
 		if err != nil {
-			return fundPrice{}, false, err
+			return Price{}, false, err
 		}
-		p := fundPrice{usd: v, source: "erc7540", priceAt: now}
+		p := Price{USD: v, Source: "erc7540", PriceAt: now}
 		// Centrifuge vaults say when the NAV was last set.
 		if out, err := c.Call(ctx, vault, selPriceLastUpdated); err == nil && len(out) == 32 {
 			if ts := new(big.Int).SetBytes(out); ts.Sign() > 0 && ts.IsInt64() && ts.Int64() <= now.Unix() {
-				p.priceAt = time.Unix(ts.Int64(), 0).UTC()
+				p.PriceAt = time.Unix(ts.Int64(), 0).UTC()
 			}
 		}
 		return p, true, nil
 	}
-	return fundPrice{}, false, nil
+	return Price{}, false, nil
 }
 
 // convertShare reads convertToAssets(one whole share) from vault and scales it
 // by the asset's decimals.
-func convertShare(ctx context.Context, c lendingmarkets.Caller, vault string, shareDec, assetDec uint8) (float64, error) {
+func convertShare(ctx context.Context, c Caller, vault string, shareDec, assetDec uint8) (float64, error) {
 	oneShare := new(big.Int).Exp(big.NewInt(10), big.NewInt(int64(shareDec)), nil)
 	arg := make([]byte, 32)
 	oneShare.FillBytes(arg)
@@ -265,44 +196,44 @@ func convertShare(ctx context.Context, c lendingmarkets.Caller, vault string, sh
 
 // readNAVFeed reads a RedStone or Chainlink feed: USD per token from
 // latestRoundData, stamped with its updatedAt.
-func readNAVFeed(ctx context.Context, c lendingmarkets.Caller, nf navFeed, now time.Time) (fundPrice, error) {
+func readNAVFeed(ctx context.Context, c Caller, nf navFeed, now time.Time) (Price, error) {
 	out, err := c.Call(ctx, nf.feed, selDescription)
 	if err != nil {
-		return fundPrice{}, err
+		return Price{}, err
 	}
 	desc := abiString(out)
 	if nf.source == "redstone" && !strings.HasSuffix(desc, " "+nf.id) || nf.source != "redstone" && desc != nf.id {
-		return fundPrice{}, fmt.Errorf("feed %s describes itself as %q, want %s", nf.feed, desc, nf.id)
+		return Price{}, fmt.Errorf("feed %s describes itself as %q, want %s", nf.feed, desc, nf.id)
 	}
 	out, err = c.Call(ctx, nf.feed, selDecimals)
 	if err != nil {
-		return fundPrice{}, err
+		return Price{}, err
 	}
 	if len(out) != 32 || new(big.Int).SetBytes(out).Cmp(big.NewInt(36)) > 0 {
-		return fundPrice{}, fmt.Errorf("feed %s: bad decimals", nf.feed)
+		return Price{}, fmt.Errorf("feed %s: bad decimals", nf.feed)
 	}
 	dec := new(big.Int).SetBytes(out).Int64()
 	out, err = c.Call(ctx, nf.feed, selLatestRoundData)
 	if err != nil {
-		return fundPrice{}, err
+		return Price{}, err
 	}
 	if len(out) != 5*32 {
-		return fundPrice{}, fmt.Errorf("feed %s: latestRoundData returned %d bytes", nf.feed, len(out))
+		return Price{}, fmt.Errorf("feed %s: latestRoundData returned %d bytes", nf.feed, len(out))
 	}
 	answer := new(big.Int).SetBytes(out[32:64]) // int256, a negative NAV is caught below
 	if out[32]&0x80 != 0 {
-		return fundPrice{}, fmt.Errorf("feed %s: negative answer", nf.feed)
+		return Price{}, fmt.Errorf("feed %s: negative answer", nf.feed)
 	}
 	updated := new(big.Int).SetBytes(out[96:128])
 	if updated.Sign() <= 0 || !updated.IsInt64() || updated.Int64() > now.Unix() {
-		return fundPrice{}, fmt.Errorf("feed %s: bad updatedAt %s", nf.feed, updated)
+		return Price{}, fmt.Errorf("feed %s: bad updatedAt %s", nf.feed, updated)
 	}
 	unit := new(big.Int).Exp(big.NewInt(10), big.NewInt(dec), nil)
 	price, _ := new(big.Float).Quo(new(big.Float).SetInt(answer), new(big.Float).SetInt(unit)).Float64()
 	if price <= 0 || price > 1e6 {
-		return fundPrice{}, fmt.Errorf("feed %s: implausible share price %v", nf.feed, price)
+		return Price{}, fmt.Errorf("feed %s: implausible share price %v", nf.feed, price)
 	}
-	return fundPrice{usd: price, source: nf.source, priceAt: time.Unix(updated.Int64(), 0).UTC()}, nil
+	return Price{USD: price, Source: nf.source, PriceAt: time.Unix(updated.Int64(), 0).UTC()}, nil
 }
 
 // abiString decodes an ABI-encoded string return value, or "".
