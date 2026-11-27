@@ -94,22 +94,10 @@ func (r *IndexRunner) getWatermarkWithGranularity(indexerName string, granularit
 
 // saveWatermark saves watermark to DB (for incrementals)
 func (r *IndexRunner) saveWatermark(indexerName string, wm *Watermark) error {
-	ctx, cancel := chwrapper.WriteContext(context.Background())
-	defer cancel()
-	query := `
-	INSERT INTO indexer_watermarks (chain_id, indexer_name, granularity, last_period, last_block_num)
-	VALUES (?, ?, ?, ?, ?)`
-
-	return r.conn.Exec(ctx, query, r.chainId, indexerName, "", wm.LastPeriod, wm.LastBlockNum)
+	return chwrapper.WriteWatermark(context.Background(), r.conn, r.chainId, indexerName, "", wm.LastPeriod, wm.LastBlockNum)
 }
 
 // saveWatermarkWithGranularity saves watermark to DB for granular metrics
 func (r *IndexRunner) saveWatermarkWithGranularity(indexerName string, granularity string, wm *Watermark) error {
-	ctx, cancel := chwrapper.WriteContext(context.Background())
-	defer cancel()
-	query := `
-	INSERT INTO indexer_watermarks (chain_id, indexer_name, granularity, last_period, last_block_num)
-	VALUES (?, ?, ?, ?, ?)`
-
-	return r.conn.Exec(ctx, query, r.chainId, indexerName, granularity, wm.LastPeriod, wm.LastBlockNum)
+	return chwrapper.WriteWatermark(context.Background(), r.conn, r.chainId, indexerName, granularity, wm.LastPeriod, wm.LastBlockNum)
 }

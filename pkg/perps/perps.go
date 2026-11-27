@@ -155,28 +155,11 @@ func Through(ctx context.Context, conn driver.Conn) (time.Time, error) {
 }
 
 func readWatermark(ctx context.Context, conn driver.Conn, name string) (time.Time, error) {
-	var t time.Time
-	rows, err := conn.Query(ctx, `
-		SELECT last_period FROM indexer_watermarks FINAL
-		WHERE chain_id = ? AND indexer_name = ?`, uint32(ChainID), name)
-	if err != nil {
-		return t, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		if err := rows.Scan(&t); err != nil {
-			return t, err
-		}
-	}
-	return t.UTC(), rows.Err()
+	return chwrapper.ReadPeriodWatermark(ctx, conn, uint32(ChainID), name)
 }
 
 func writeWatermark(ctx context.Context, conn driver.Conn, name string, t time.Time) error {
-	wctx, cancel := chwrapper.WriteContext(ctx)
-	defer cancel()
-	return conn.Exec(wctx, `
-		INSERT INTO indexer_watermarks (chain_id, indexer_name, granularity, last_period, last_block_num)
-		VALUES (?, ?, 'time', ?, 0)`, uint32(ChainID), name, t)
+	return chwrapper.WriteWatermark(ctx, conn, uint32(ChainID), name, "time", t, 0)
 }
 
 // event is one perp_events row.
