@@ -17,19 +17,6 @@ import (
 //go:embed schema.sql
 var schemaSQL string
 
-// indexerWatermarksDDL mirrors the table the EVM indexer owns. The lending engine
-// runs as its own service, so it creates the table if absent and shares it.
-const indexerWatermarksDDL = `
-CREATE TABLE IF NOT EXISTS indexer_watermarks (
-    chain_id UInt32,
-    indexer_name String,
-    granularity LowCardinality(String),
-    last_period DateTime64(3, 'UTC'),
-    last_block_num UInt64,
-    updated_at DateTime64(3, 'UTC') DEFAULT now64(3)
-) ENGINE = ReplacingMergeTree(updated_at)
-ORDER BY (chain_id, indexer_name, granularity)`
-
 // Store is the ClickHouse access layer for the lending engine, scoped to one chain.
 type Store struct {
 	conn    driver.Conn
@@ -46,8 +33,12 @@ func NewStore(conn driver.Conn, chainID uint32) (*Store, error) {
 }
 
 func (s *Store) initSchema() error {
-	stmts := append([]string{indexerWatermarksDDL}, splitStatements(schemaSQL)...)
-	for _, stmt := range stmts {
+	// indexer_watermarks is shared with the indexer. The lending engine runs as
+	// its own service, so it creates the table too if it is absent.
+	if err := chwrapper.CreateIndexerWatermarks(context.Background(), s.conn); err != nil {
+		return fmt.Errorf("lending: create table: %w", err)
+	}
+	for _, stmt := range splitStatements(schemaSQL) {
 		stmt = strings.TrimSpace(stmt)
 		if stmt == "" {
 			continue

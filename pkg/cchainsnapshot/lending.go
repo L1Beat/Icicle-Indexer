@@ -95,21 +95,8 @@ var lendingHistoryStart = time.Date(2021, 8, 18, 0, 0, 0, 0, time.UTC)
 
 // BackfillLendingHistory fills lending_market_snapshots for past days.
 func BackfillLendingHistory(ctx context.Context, conn clickhouse.Conn, nodeURL string) error {
-	var covered time.Time
-	rows, err := conn.Query(ctx, `
-		SELECT last_period FROM indexer_watermarks FINAL
-		WHERE chain_id = 43114 AND indexer_name = ?`, lendingHistoryWatermark)
+	covered, err := chwrapper.ReadPeriodWatermark(ctx, conn, cChainID, lendingHistoryWatermark)
 	if err != nil {
-		return err
-	}
-	for rows.Next() {
-		if err := rows.Scan(&covered); err != nil {
-			rows.Close()
-			return err
-		}
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
 		return err
 	}
 	if covered.IsZero() {
@@ -176,24 +163,14 @@ func BackfillLendingHistory(ctx context.Context, conn clickhouse.Conn, nodeURL s
 		if err := insertLendingMarkets(ctx, conn, markets, d.at.UTC()); err != nil {
 			return err
 		}
-		wctx, cancel := chwrapper.WriteContext(ctx)
-		err := conn.Exec(wctx, `
-			INSERT INTO indexer_watermarks (chain_id, indexer_name, granularity, last_period, last_block_num)
-			VALUES (43114, ?, 'day', ?, ?)`, lendingHistoryWatermark, d.day, uint64(d.block))
-		cancel()
-		if err != nil {
+		if err := chwrapper.WriteWatermark(ctx, conn, cChainID, lendingHistoryWatermark, "day", d.day, uint64(d.block)); err != nil {
 			return err
 		}
 		done++
 	}
 	// Days with no blocks in raw_blocks would never be visited; move past them.
 	if done == len(days) && (len(days) == 0 || !days[len(days)-1].day.Equal(from)) {
-		wctx, cancel := chwrapper.WriteContext(ctx)
-		err := conn.Exec(wctx, `
-			INSERT INTO indexer_watermarks (chain_id, indexer_name, granularity, last_period, last_block_num)
-			VALUES (43114, ?, 'day', ?, 0)`, lendingHistoryWatermark, from)
-		cancel()
-		if err != nil {
+		if err := chwrapper.WriteWatermark(ctx, conn, cChainID, lendingHistoryWatermark, "day", from, 0); err != nil {
 			return err
 		}
 	}

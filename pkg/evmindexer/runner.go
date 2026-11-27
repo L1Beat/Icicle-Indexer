@@ -53,8 +53,10 @@ type IndexRunner struct {
 
 // NewIndexRunner creates a new indexer runner for a single chain
 func NewIndexRunner(chainId uint32, conn driver.Conn, sqlDir string, startBlock uint64, rpcURL string) (*IndexRunner, error) {
-	// Create tables from indexer_tables.sql (metrics and indexer_watermarks)
-	// Execute each CREATE TABLE statement
+	if err := chwrapper.CreateIndexerWatermarks(context.Background(), conn); err != nil {
+		return nil, fmt.Errorf("failed to create indexer_watermarks: %w", err)
+	}
+	// Create the remaining tables from indexer_tables.sql
 	statements := splitSQL(indexerTablesSQL)
 	for _, stmt := range statements {
 		if strings.TrimSpace(stmt) == "" {

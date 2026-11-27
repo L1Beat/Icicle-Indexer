@@ -290,11 +290,7 @@ func syncRange(ctx context.Context, conn driver.Conn, caller Caller, from, to, d
 		if err := syncWindow(ctx, conn, caller, from, end); err != nil {
 			return fmt.Errorf("window %s..%s: %w", from.Format(time.RFC3339), end.Format(time.RFC3339), err)
 		}
-		wctx, cancel := chwrapper.WriteContext(ctx)
-		err := conn.Exec(wctx, `
-			INSERT INTO indexer_watermarks (chain_id, indexer_name, granularity, last_period, last_block_num)
-			VALUES (?, ?, 'time', ?, 0)`, uint32(ChainID), mark, end)
-		cancel()
+		err := chwrapper.WriteWatermark(ctx, conn, uint32(ChainID), mark, "time", end, 0)
 		if err != nil {
 			return err
 		}
@@ -313,20 +309,7 @@ func Through(ctx context.Context, conn driver.Conn) (time.Time, error) {
 }
 
 func readWatermark(ctx context.Context, conn driver.Conn, name string) (time.Time, error) {
-	var t time.Time
-	rows, err := conn.Query(ctx, `
-		SELECT last_period FROM indexer_watermarks FINAL
-		WHERE chain_id = ? AND indexer_name = ?`, uint32(ChainID), name)
-	if err != nil {
-		return t, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		if err := rows.Scan(&t); err != nil {
-			return t, err
-		}
-	}
-	return t.UTC(), rows.Err()
+	return chwrapper.ReadPeriodWatermark(ctx, conn, uint32(ChainID), name)
 }
 
 func syncWindow(ctx context.Context, conn driver.Conn, caller Caller, from, to time.Time) error {

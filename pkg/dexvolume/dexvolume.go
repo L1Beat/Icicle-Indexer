@@ -412,21 +412,8 @@ func backfillHistory(ctx context.Context, conn driver.Conn) error {
 		return nil
 	}
 
-	var covered time.Time
-	rows, err := conn.Query(ctx, `
-		SELECT last_period FROM indexer_watermarks FINAL
-		WHERE chain_id = ? AND indexer_name = ?`, uint32(ChainID), historyWatermark)
+	covered, err := chwrapper.ReadPeriodWatermark(ctx, conn, uint32(ChainID), historyWatermark)
 	if err != nil {
-		return err
-	}
-	for rows.Next() {
-		if err := rows.Scan(&covered); err != nil {
-			rows.Close()
-			return err
-		}
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
 		return err
 	}
 	if covered.IsZero() {
@@ -450,12 +437,7 @@ func backfillHistory(ctx context.Context, conn driver.Conn) error {
 		if err := rollup(ctx, conn, from, covered); err != nil {
 			return fmt.Errorf("history rollup %s..%s: %w", from.Format("2006-01-02"), covered.Format("2006-01-02"), err)
 		}
-		wctx, cancel := chwrapper.WriteContext(ctx)
-		err := conn.Exec(wctx, `
-			INSERT INTO indexer_watermarks (chain_id, indexer_name, granularity, last_period, last_block_num)
-			VALUES (?, ?, 'day', ?, 0)`, uint32(ChainID), historyWatermark, from)
-		cancel()
-		if err != nil {
+		if err := chwrapper.WriteWatermark(ctx, conn, uint32(ChainID), historyWatermark, "day", from, 0); err != nil {
 			return err
 		}
 		slog.Info("DEX history rolled up", "from", from.Format("2006-01-02"), "to", covered.Format("2006-01-02"), "duration", time.Since(start))
